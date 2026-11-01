@@ -233,6 +233,19 @@ class MoosasGeometry(object):
         #         return "holes outside"
         return None
 
+    def move_points(self, points, displacement, tolerance=geom.POINT_PRECISION) -> bool:
+        """Move coordinates matching ``points`` and refresh the face normal."""
+        displacement = np.asarray(displacement, dtype=float)
+        changed = False
+        for coordinates in [self.__face] + self.__holes:
+            for index, coordinate in enumerate(coordinates):
+                if any(np.all(np.abs(coordinate - point) <= tolerance) for point in points):
+                    coordinates[index] = coordinate + displacement
+                    changed = True
+        if changed:
+            self.__normal = Vector(faceNormal(self.face))
+        return changed
+
     @property
     def face(self) -> shapely.Geometry:
         """
@@ -2313,6 +2326,8 @@ class MoosasEdge:
             `__botBound` and `__topBound` attributes in place and updates the orientation
             of walls and their glazing elements.
         """
+        self.__botBound = []
+        self.__topBound = []
         for _wall in self.wall:
             self.__botBound.append(_wall.force_2d())
             self.__topBound.append(_wall.force_2d(top=True))
@@ -3291,6 +3306,10 @@ class MoosasSpace(object):
             self.neighbor[neighbor_id] = [element]
         else:
             self.neighbor[neighbor_id] += [element]
+
+    def clear_neighbors(self):
+        """Clear derived space adjacency before rebuilding it."""
+        self.neighbor.clear()
 
     def addInternalMass(self, wall: MoosasWall):
         """

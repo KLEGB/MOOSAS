@@ -63,6 +63,16 @@ class MoosasModel(MoosasContainer):
 
         return save_model(self, file_path, **format_options)
 
+    def move_opaque(self, target, distance: float) -> MoosasModel:
+        from .operation import move_opaque
+
+        return move_opaque(self, target, distance)
+
+    def move_glazing(self, target, displacement) -> MoosasModel:
+        from .operation import move_glazing
+
+        return move_glazing(self, target, displacement)
+
     def autoDescribe(self):
         """automatically generate description for each space and element in the model, based on their geometry and settings.
         the description will be stored in the 'description' attribute of each space and element, and can be used in the analysis or output.
@@ -164,4 +174,3 @@ class MoosasModel(MoosasContainer):
         #           f"Corridor {len(Corridor)} area: {np.sum([s.area for s in Corridor])},"
         #           f"privateSpace {len(privateSpace)} area: {np.sum([s.area for s in privateSpace])},"
         #           f"MainSpace {len(MainSpace)} area: {np.sum([s.area for s in MainSpace])}")
-
