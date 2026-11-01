@@ -2,47 +2,94 @@
 Convexification utilities aligned with the current cuger implementation.
 """
 
-from ...utils import np, shapely
+from ...utils import GeometryError, np, shapely
 from .polygon import GeometryBasic, GeometryOperator, GeometryValidator
 
 
+def _validate_partition(parts, source, *, convex=False):
+    tolerance = max(1e-8, source.area * 1e-9)
+    if not parts or any(not part.is_valid or part.area <= 0 for part in parts):
+        raise GeometryError(source, "Double-cut decomposition produced an invalid partition.")
+    if convex and any(
+        part.interiors or part.convex_hull.area - part.area > tolerance
+        for part in parts
+    ):
+        raise GeometryError(source, "Double-cut decomposition did not produce convex, hole-free faces.")
+    union = shapely.union_all(parts)
+    if (
+        union.symmetric_difference(source).area > tolerance
+        or abs(sum(part.area for part in parts) - union.area) > tolerance
+    ):
+        raise GeometryError(source, "Double-cut decomposition lost area or produced overlapping faces.")
+
+
+def _cut_hole(polygon):
+    """Open one hole with two disjoint visible vertex-to-vertex connectors."""
+    shell = np.asarray(polygon.exterior.coords)[:-1, :2]
+    hole = np.asarray(polygon.interiors[0].coords)[:-1, :2]
+    distances = np.linalg.norm(shell[:, None] - hole[None, :], axis=2)
+    boundary = polygon.boundary
+    first = None
+    for flat_index in np.argsort(distances, axis=None, kind="stable"):
+        shell_index, hole_index = np.unravel_index(flat_index, distances.shape)
+        endpoints = [shell[shell_index], hole[hole_index]]
+        line = shapely.LineString(endpoints)
+        if line.length == 0 or not polygon.covers(line):
+            continue
+        # A visible connector touches the boundary only at its two endpoints.
+        if not boundary.intersection(line).equals(shapely.MultiPoint(endpoints)):
+            continue
+        if first is None:
+            first = line
+            continue
+        if first.intersects(line):
+            continue
+        network = shapely.union_all([boundary, first, line])
+        cells = [
+            cell for cell in shapely.get_parts(
+                shapely.polygonize(shapely.get_parts(network))
+            )
+            if polygon.covers(cell.representative_point())
+        ]
+        if len(cells) != 2:
+            continue
+        if sum(len(cell.interiors) for cell in cells) != len(polygon.interiors) - 1:
+            continue
+        _validate_partition(cells, polygon)
+        return cells
+    raise GeometryError(polygon, "No valid pair of double-cut hole connectors found.")
+
+
 def _convex_parts_with_holes(face, holes):
-    """Triangulate a polygon with holes and merge adjacent triangles when convex."""
+    """Remove holes using double cuts, then convexify the resulting simple faces."""
     face = np.asarray(face, dtype=float)
-    polygon = shapely.polygons(
+    polygon = shapely.Polygon(
         face[:, :2],
         holes=[np.asarray(hole, dtype=float)[:, :2] for hole in holes],
     )
-    pieces = [
-        part
-        for part in shapely.get_parts(shapely.constrained_delaunay_triangles(polygon))
-        if shapely.area(part) > 1e-6
-    ]
+    if not polygon.is_valid or polygon.is_empty or polygon.area <= 0:
+        raise GeometryError(polygon, "Double-cut decomposition requires a valid polygon with holes.")
 
-    merged = True
-    while merged:
-        merged = False
-        for first_idx in range(len(pieces) - 1):
-            for second_idx in range(first_idx + 1, len(pieces)):
-                if shapely.length(
-                    shapely.intersection(
-                        shapely.boundary(pieces[first_idx]),
-                        shapely.boundary(pieces[second_idx]),
-                    )
-                ) <= 1e-6:
-                    continue
-                union = shapely.union(pieces[first_idx], pieces[second_idx])
-                if len(shapely.get_parts(union)) != 1:
-                    continue
-                if shapely.area(shapely.convex_hull(union)) - shapely.area(union) > 1e-6:
-                    continue
-                pieces[first_idx] = union
-                pieces.pop(second_idx)
-                merged = True
-                break
-            if merged:
-                break
+    pending = [polygon]
+    simple = []
+    while pending:
+        piece = pending.pop()
+        if piece.interiors:
+            pending.extend(_cut_hole(piece))
+        else:
+            simple.append(piece)
+    _validate_partition(simple, polygon)
 
+    pieces = []
+    for piece in simple:
+        vertices = GeometryOperator.reorder_vertices(
+            np.asarray(piece.exterior.coords)[:-1], is_upward=True
+        )
+        faces, _ = GeometryOperator.split_poly(vertices, list(range(len(vertices))))
+        subparts = [shapely.Polygon(vertices[indices]) for indices in faces]
+        _validate_partition(subparts, piece, convex=True)
+        pieces.extend(subparts)
+    _validate_partition(pieces, polygon, convex=True)
     z_value = float(np.mean(face[:, 2])) if face.shape[1] > 2 else 0.0
     result = []
     for piece in pieces:

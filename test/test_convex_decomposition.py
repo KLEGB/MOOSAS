@@ -7,12 +7,13 @@ from shapely.affinity import rotate, translate
 
 from MoosasPy.transform.geometry.contour import _merge_tiny_partitions
 from MoosasPy.transform.geometry.cleanse import splitFaces
-from MoosasPy.transform.geometry.convexify import GeometryConvexifier
+from MoosasPy.transform.geometry.convexify import GeometryConvexifier, _cut_hole
 from MoosasPy.transform.geometry.element import MoosasFace, MoosasFloor, MoosasSkylight
 from MoosasPy.transform.geometry.polygon import GeometryOperator
+from MoosasPy.transform.geometry.triangulation import triangulate2dFace
 from MoosasPy.model import MoosasModel
 from MoosasPy.transform.stages.assembly import cap_floor_simple
-from MoosasPy.utils import TopologyError
+from MoosasPy.utils import GeometryError, TopologyError
 from MoosasPy.utils.constant import geom
 
 
@@ -226,13 +227,105 @@ def test_subminimum_zone_merging_preserves_courtyard_holes():
     assert sum(part.area for part in result) == pytest.approx(expected.area)
 
 
-def test_holed_decomposition_uses_convex_merging_without_filling_holes():
+def test_holed_decomposition_uses_double_cuts_without_filling_holes():
     exterior = np.array([(0, 0, 3), (12, 0, 3), (12, 10, 3), (0, 10, 3)])
     hole = np.array([(4, 3, 3), (8, 3, 3), (8, 7, 3), (4, 7, 3)])
     faces, _ = GeometryConvexifier.convexify_faces_2d([exterior], [[hole]])
     parts = [shapely.Polygon(face[:, :2]) for face in faces]
     assert_partition(parts, shapely.Polygon(exterior[:, :2], [hole[:, :2]]))
     assert all(np.all(face[:, 2] == 3) for face in faces)
+
+
+@pytest.mark.parametrize("offset,scale", [((0, 0), 1), ((10000, -25000), 1), ((17, 29), 0.01)])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_double_cuts_preserve_multiple_unequal_holes(offset, scale, reverse):
+    exterior = np.array([(0, 0), (20, 0), (20, 16), (0, 16)], dtype=float)
+    holes = [
+        np.array([(2, 2), (6, 2), (6, 5), (2, 5)], dtype=float),
+        np.array([(10, 7), (15, 7), (16, 10), (13, 13), (10, 11)], dtype=float),
+    ]
+    rings = [ring * scale + offset for ring in [exterior, *holes]]
+    rings = [np.column_stack((ring, np.full(len(ring), 3))) for ring in rings]
+    if reverse:
+        rings = [ring[::-1] for ring in rings]
+    before = [ring.copy() for ring in rings]
+
+    faces, _ = GeometryConvexifier.convexify_faces_2d([rings[0]], [rings[1:]])
+
+    assert_partition(
+        [shapely.Polygon(face[:, :2]) for face in faces],
+        shapely.Polygon(rings[0][:, :2], [ring[:, :2] for ring in rings[1:]]),
+    )
+    assert all(np.all(face[:, 2] == 3) for face in faces)
+    for actual, expected in zip(rings, before):
+        np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("footprint", [
+    [(0, 0), (50, 0), (50, 18), (40, 18), (40, 8), (30, 8),
+     (30, 18), (20, 18), (20, 8), (10, 8), (10, 18), (0, 18)],
+    [(0, 0), (35, 0), (35, 35), (25, 35), (25, 8), (10, 8),
+     (10, 35), (0, 35)],
+])
+def test_offset_band_with_disconnected_cores_uses_simple_double_cut_regions(footprint):
+    source = shapely.Polygon(footprint)
+    core = source.buffer(-4.572, join_style="mitre")
+    assert len(shapely.get_parts(core)) > 1
+    band = source.difference(core)
+    assert band.is_valid
+    assert len(band.interiors) > 1
+
+    pending = [band]
+    simple = []
+    while pending:
+        piece = pending.pop()
+        if piece.interiors:
+            cells = _cut_hole(piece)
+            assert sum(len(cell.interiors) for cell in cells) == len(piece.interiors) - 1
+            pending.extend(cells)
+        else:
+            simple.append(piece)
+    assert all(piece.is_valid and piece.exterior.is_simple for piece in simple)
+
+    faces, _ = triangulate2dFace(
+        shapely.Polygon(band.exterior), [shapely.Polygon(ring) for ring in band.interiors]
+    )
+    assert_partition(faces, band)
+
+
+def test_double_cuts_are_shared_by_2d_and_model_face_entry_points():
+    exterior = np.array([(0, 0, 3), (20, 0, 3), (20, 16, 3), (0, 16, 3)])
+    holes = [
+        np.array([(2, 2, 3), (6, 2, 3), (6, 5, 3), (2, 5, 3)]),
+        np.array([(10, 7, 3), (15, 7, 3), (16, 10, 3), (13, 13, 3), (10, 11, 3)]),
+    ]
+    faces_2d, _ = GeometryConvexifier.convexify_faces_2d([exterior.copy()], [holes])
+    categories, face_ids, normals, faces_3d, _ = GeometryConvexifier.convexify_faces(
+        [0], ["floor"], [np.array([0, 0, 1])], [exterior.copy()], [holes],
+    )
+    expected = shapely.Polygon(exterior[:, :2], [hole[:, :2] for hole in holes])
+    assert_partition([shapely.Polygon(face[:, :2]) for face in faces_3d], expected)
+    assert len(faces_2d) == len(faces_3d) == len(set(face_ids))
+    assert categories == [0] * len(faces_3d)
+    assert all(np.array_equal(normal, [0, 0, 1]) for normal in normals)
+
+
+def test_double_cuts_report_failed_simple_polygon_split(monkeypatch):
+    monkeypatch.setattr(GeometryOperator, "split_poly", lambda vertices, indices: ([[0, 1, 2]], []))
+    exterior = np.array([(0, 0, 0), (12, 0, 0), (12, 10, 0), (0, 10, 0)])
+    hole = np.array([(4, 3, 0), (8, 3, 0), (8, 7, 0), (4, 7, 0)])
+    with pytest.raises(GeometryError, match="lost area|overlapping"):
+        GeometryConvexifier.convexify_faces_2d([exterior], [[hole]])
+
+
+def test_double_cuts_report_missing_connector_pair(monkeypatch):
+    monkeypatch.setattr(shapely, "polygonize", lambda lines: shapely.GeometryCollection())
+    source = shapely.Polygon(
+        [(0, 0), (12, 0), (12, 10), (0, 10)],
+        [[(4, 3), (8, 3), (8, 7), (4, 7)]],
+    )
+    with pytest.raises(GeometryError, match="No valid pair"):
+        _cut_hole(source)
 
 
 def test_horizontal_face_split_keeps_small_remaining_physical_fragments():

@@ -1,4 +1,4 @@
-"""Triangulation helpers shared by geometry consumers."""
+"""Convex face decomposition helpers shared by geometry consumers."""
 
 from .convexify import GeometryConvexifier
 from .geos import Projection, simplify
@@ -6,7 +6,7 @@ from ...utils import np, shapely
 
 
 def triangulate2dFace(boundary: shapely.Geometry, holes: np.ndarray[shapely.Geometry] = None):
-    """Triangulate a 2D face with optional holes into convex faces and divide lines."""
+    """Decompose a 2D face, opening optional holes with double cuts before splitting."""
     boundary = shapely.polygons(
         shapely.get_coordinates(shapely.force_3d(boundary, z=0), include_z=True)
     )
