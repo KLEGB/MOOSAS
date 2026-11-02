@@ -29,10 +29,6 @@ def q(name):
     return f'{{{NS}}}{name}'
 
 
-def document_digest(text):
-    return hashlib.sha256(ET.canonicalize(text,strip_text=True,rewrite_prefixes=True).encode()).hexdigest()
-
-
 def units(root):
     try:
         return (LENGTH[root.get('lengthUnit', 'Meters')], AREA[root.get('areaUnit', 'SquareMeters')],
@@ -326,8 +322,8 @@ def project(root, *, source_name='', source_sha256=None):
     return dict(schema='moosas.external-thermal-model', version=1, source_format='gbXML',
                 required_surface_ids=required_surface_ids,
                 source_name=source_name, source_sha256=source_sha256 or hashlib.sha256(raw.encode()).hexdigest(),
-                source_xml_sha256=document_digest(raw),energy_defaults=energy_defaults,
-                source_xml=raw, surface_settings=surfaces, zone_settings=zones, schedules=schedules,
+                energy_defaults=energy_defaults,
+                surface_settings=surfaces, zone_settings=zones, schedules=schedules,
                 records=records, unresolved=unresolved,
                 precedence='External supplied values are authoritative; defaults fill missing fields only.')
 
@@ -389,23 +385,7 @@ def attach(model, evidence):
 def from_graph(model, graph):
     payload = graph.value(DOC,GBE.projection)
     evidence = json.loads(str(payload)) if payload is not None else model.energy_settings.get('external_thermal_model')
-    if evidence:
-        from .exchange import restore_exchange
-        tree = restore_exchange(graph)
-        if tree is not None:
-            current = project(tree.getroot(),source_name=evidence['source_name'],source_sha256=evidence['source_sha256'])
-            if current['source_xml_sha256'] != evidence.get('source_xml_sha256'):
-                # Live gbXML resource triples are a deliberate source edit.
-                # Refresh only previously projected fields, leaving unrelated
-                # model settings explicit and retaining original-file identity.
-                for space in list(model.spaceList)+list(model.voidList):
-                    for key in evidence['zone_settings'].get(str(space.id),{}):
-                        if key in space.explicit_settings:
-                            space.explicit_settings.remove(key)
-                    for element in space.getAllFaces(to_dict=False):
-                        element.explicit_settings.difference_update(evidence['surface_settings'].get(str(element.Uid),{}))
-                evidence = current
-        attach(model,evidence)
+    attach(model,evidence)
 
 
 def encode(model, graph):

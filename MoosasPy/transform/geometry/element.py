@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import re
-import warnings
 
 from .geos import Projection, Vector, faceNormal, is_ccw, simplify, overlapArea, equals, selfIntersect, makeValid, bBox
 from .triangulation import triangulate2dFace
@@ -2280,9 +2279,9 @@ class MoosasEdge:
     'level': The lower elevation of the envelope, which is used to reduce the scope of floor identification
     'toplevel': The upper elevation of the envelope, which is used to reduce the ceiling identification area
     """
-    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', '__legacySharedWalls', 'internalMass')
+    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', 'internalMass')
 
-    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None, *, legacy_shared_walls=()):
+    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None):
         """
         Initialize a boundary object composed of walls.
         
@@ -2299,7 +2298,6 @@ class MoosasEdge:
         self.__botBound = []
         self.__topBound = []
         self.__explicitBoundary = boundary is not None
-        self.__legacySharedWalls = frozenset(legacy_shared_walls)
         self.Uid = generate_code(4)
         # 创建底面和顶面投影多边形。
         if len(self.wall) < 3:
@@ -2560,8 +2558,6 @@ class MoosasEdge:
             # connectors and misaligns every following normal with its wall.
             factors = []
             for wall in self.wall:
-                # Actual wall Faces retain sub-grid endpoints even when a
-                # legacy recognition projection has collapsed to one Point.
                 points = np.unique(
                     shapely.get_coordinates(wall.face, include_z=True)[:, :2],
                     axis=0,
@@ -2596,74 +2592,6 @@ class MoosasEdge:
                     if plus != minus:
                         sign = -1 if plus else 1
                         break
-                if sign is None:
-                    # Older RDF writers serialized boundaryWKT on a 1 cm
-                    # recognition grid while retaining exact XYZ wall Faces.
-                    # A 1 mm-only probe then misses both sides of a valid wall.
-                    # Relax *orientation probing*, never the stored geometry,
-                    # only for a demonstrably centimetre-quantized ring and
-                    # within that grid's diagonal quantization error.
-                    ring = shapely.get_coordinates(self.__botBound)
-                    legacy_grid = np.allclose(ring * 100., np.round(ring * 100.),
-                                              rtol=0., atol=1e-7)
-                    cap = min(length * .25, np.sqrt(2.) * .01 + 1e-8)
-                    if legacy_grid:
-                        for step in sorted({min(cap, d) for d in (.002, .005, .01, cap)}):
-                            plus = shapely.contains(self.__botBound, shapely.Point(center + normal * step))
-                            minus = shapely.contains(self.__botBound, shapely.Point(center - normal * step))
-                            if plus != minus:
-                                sign = -1 if plus else 1
-                                warnings.warn('Legacy centimetre-quantized boundaryWKT: '
-                                              'wall orientation resolved within serialization precision.',
-                                              UserWarning, stacklevel=2)
-                                break
-                if sign is None:
-                    # Legacy shared Wall objects can span several rooms. Its
-                    # global midpoint can be metres outside this room although
-                    # a genuine subsegment bounds it. Probe the supported,
-                    # parallel room-ring segments, not that global midpoint.
-                    tolerance = cap if legacy_grid else 1e-6
-                    direction = vector / length
-                    votes = set()
-                    for polygon in shapely.get_parts(self.__botBound):
-                        if shapely.get_type_id(polygon) != 3:
-                            continue
-                        for ring in (polygon.exterior, *polygon.interiors):
-                            coords = np.asarray(ring.coords)[:, :2]
-                            for start, end in zip(coords, coords[1:]):
-                                delta = end-start
-                                span = float(np.linalg.norm(delta))
-                                if span <= 1e-12 or abs(float(delta@direction))/span < np.cos(np.radians(15)):
-                                    continue
-                                limits = sorted((float((start-points[ia])@direction), float((end-points[ia])@direction)))
-                                lo, hi = max(0., limits[0]), min(length, limits[1])
-                                if hi-lo <= max(1e-7, min(.01, length*.1)):
-                                    continue
-                                local = points[ia]+direction*(lo+hi)/2
-                                if self.__botBound.boundary.distance(shapely.Point(local)) > tolerance+1e-8:
-                                    continue
-                                for step in sorted({min(tolerance, d) for d in (1e-6, .001, .005, tolerance)}):
-                                    plus = shapely.contains(self.__botBound, shapely.Point(local+normal*step))
-                                    minus = shapely.contains(self.__botBound, shapely.Point(local-normal*step))
-                                    if plus != minus:
-                                        votes.add(-1 if plus else 1)
-                                        break
-                    if len(votes) == 1:
-                        sign = votes.pop()
-                if sign is None and legacy_grid and getattr(wall,'Uid',None) in self.__legacySharedWalls:
-                    # Old RDF Edge interfaces also listed shared Walls that
-                    # only touch this room at a corner. They have no local
-                    # outward normal. Keep the source plane normal; the energy
-                    # adapter clips each owner to its actual positive-area patch.
-                    # This is reader-authorized only for multiply-owned source
-                    # elements, not a general detached-wall fallback.
-                    line=shapely.LineString([points[ia],points[ib]])
-                    if line.distance(self.__botBound)<=cap and line.intersection(self.__botBound.buffer(-cap)).is_empty:
-                        source=np.asarray(wall.normal,dtype=float)
-                        factors.append(Vector([float(source[0]*length),float(source[1]*length),0.]))
-                        warnings.warn('Legacy shared-wall interface has only corner contact with this room; '
-                                      'source normal retained for per-owner area clipping.',UserWarning,stacklevel=2)
-                        continue
                 if sign is None:
                     raise GeometryError(
                         wall.face,
@@ -2956,7 +2884,7 @@ class MoosasSpace(object):
 
             "zone_template": None
         }
-        self.applySettings('climatezone3_GB55015-2021_RESIDENTIAL')
+        self.applySettings('residential_hot_summer_cold_winter_A_GB55015-2021_RESIDENTIAL')
 
 
     @classmethod

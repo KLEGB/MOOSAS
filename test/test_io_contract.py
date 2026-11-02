@@ -93,7 +93,7 @@ def test_save_rejects_raw_geometry_targets(suffix: str):
         model.save(f"raw-geometry{suffix}")
 
 
-@pytest.mark.parametrize("suffix", (".graph.json", ".gbxml"))
+@pytest.mark.parametrize("suffix", (".graph.json",))
 def test_load_rejects_save_only_model_formats(suffix: str):
     with pytest.raises(ValueError, match="Unsupported model load format"):
         MoosasModel.load(f"model{suffix}")
@@ -236,8 +236,8 @@ def test_single_room_formats_round_trip(tmp_path, suffix):
     assert len(restored.spaceList) == 1
     assert len(restored.glazingList) == 1
     assert restored.spaceList[0].area == pytest.approx(16)
-    # The 0.1 m inset and existing floor quantization leave a 0.799 m IDF window.
-    expected_area = 0.799 ** 2 if suffix == ".idf" else 1.0
+    # The 0.1 m inset window survives IDF export at full precision.
+    expected_area = 0.8 ** 2 if suffix == ".idf" else 1.0
     assert restored.glazingList[0].area == pytest.approx(expected_area)
 
 

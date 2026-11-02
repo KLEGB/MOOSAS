@@ -319,14 +319,14 @@ class SimulationContractTests(unittest.TestCase):
 
     def test_energy_airflow_coupler_aggregates_hourly_energy_into_days(self):
         coupler = object.__new__(EnergyAirflowCoupler)
-        zone = SimpleNamespace(params={"zone_name": "zone-1", "zone_area": 20.0})
+        zone = SimpleNamespace(zone_id="zone-1", area_m2=20.0)
         hourly = [
             {"heating": "1", "cooling": "2", "lighting": "3"}
             for _ in range(24)
         ]
 
         result = coupler._format_energy_result(
-            {"zones": [zone]},
+            SimpleNamespace(zones=[zone]),
             {"zone_hours": [hourly]},
         )
 

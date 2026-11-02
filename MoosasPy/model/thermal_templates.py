@@ -16,80 +16,23 @@ DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'building_templat
 
 def load_thermal_library(filename=None):
     filename = Path(filename or DEFAULT_LIBRARY)
-    def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f'Duplicate thermal template key: {key}')
-            result[key] = value
-        return result
-    data = json.loads(filename.read_text(encoding='utf-8'), object_pairs_hook=unique,
-                      parse_constant=lambda x: (_ for _ in ()).throw(ValueError(f'Invalid JSON number {x}')))
+    data = json.loads(filename.read_text(encoding='utf-8'))
     if data.get('schema') != 'moosas.thermal-templates' or data.get('version') != 1:
         raise ValueError('Unsupported thermal template schema/version')
-    required = {'standard', 'envelopes', 'operations', 'assumptions', 'templates', 'aliases', 'legacy_templates'}
-    if not required <= data.keys():
-        raise ValueError(f'Missing thermal library sections: {required - data.keys()}')
-    def check(value, key='root'):
-        if isinstance(value, dict):
-            for k, v in value.items(): check(v, f'{key}/{k}')
-        elif isinstance(value, list):
-            for v in value: check(v, key)
-        elif isinstance(value, (int, float)) and (not math.isfinite(value) or value < 0):
-            raise ValueError(f'{key}: expected finite nonnegative value')
-    check(data)
-    for name, spec in data['templates'].items():
-        if spec['envelope'] not in data['envelopes'] or spec['operation'] not in data['operations']:
-            raise ValueError(f'{name}: unknown envelope/operation reference')
-    for alias, name in data['aliases'].items():
-        if name not in data['templates']:
-            raise ValueError(f'{alias}: unknown alias target {name}')
-    for name, rule in data['envelopes'].items():
-        for field in ('roof_u', 'wall_u', 'window_u'):
-            if field not in rule:
-                raise ValueError(f'{name}: missing {field}')
-        for field in ('roof_u', 'wall_u', 'window_u', 'skylight_u', 'exposed_floor_u'):
-            value = rule.get(field)
-            if value is not None and any(v <= 0 for v in _numbers(value)):
-                raise ValueError(f'{name}/{field}: U must be positive')
-        if any(v > 1 for v in _numbers(rule.get('window_shgc', []))):
-            raise ValueError(f'{name}: SHGC must be in 0..1')
-        bins = rule.get('wwr_bins', [])
-        if bins != sorted(set(bins)) or any(not 0 < b <= 1 for b in bins):
-            raise ValueError(f'{name}: invalid WWR bins')
-        if bins and len(rule['window_u']) != len(bins):
-            raise ValueError(f'{name}: window U rows do not match WWR bins')
-        shgc = rule.get('window_shgc')
-        if shgc and len(shgc) != len(bins):
-            raise ValueError(f'{name}: SHGC rows do not match WWR bins')
-        for field in ('roof_u','wall_u','exposed_floor_u'):
-            if isinstance(rule.get(field),list) and len(rule[field]) != 2:
-                raise ValueError(f'{name}/{field}: conditional column requires two values')
-    for role in ('glass','wall','slab'):
-        material = data['assumptions'][role]
-        rho, tau = material.get('solar_reflectance',0),material.get('solar_transmittance',0)
-        if rho+tau>1 or any(not 0<=material[k]<=1 for k in ('outside_emissivity','inside_emissivity')):
-            raise ValueError(f'{role}: invalid optical coefficients')
-    for name, op in data['operations'].items():
-        if op['zone_ppsm'] <= 0 or op['zone_h_temp'] > op['zone_c_temp']:
-            raise ValueError(f'{name}: invalid density/setpoints')
-        for field in ('occupancy', 'lighting', 'equipment', 'hvac'):
-            for day in ('weekday', 'weekend'):
-                values = op['profiles'][field][day]
-                if len(values) != 24 or any(not 0 <= x <= 1 for x in values):
-                    raise ValueError(f'{name}/{field}/{day}: requires 24 factors in 0..1')
     return data
 
 
-def _numbers(value):
+def _strictest(value):
+    """Stricter table limit for unknown columns: the lowest numeric leaf."""
     if isinstance(value, list):
-        return [n for v in value for n in _numbers(v)]
-    return [] if value is None else [float(value)]
+        numbers = [n for n in (_strictest(v) for v in value) if n is not None]
+        return min(numbers) if numbers else None
+    return value
 
 
 def building_templates(filename=None):
     library = load_thermal_library(filename)
-    result = deepcopy(library['legacy_templates'])
+    result = {}
     for name, spec in library['templates'].items():
         op = library['operations'][spec['operation']]
         op = deepcopy(op)
@@ -97,16 +40,23 @@ def building_templates(filename=None):
             cold = 'severe_cold' in spec['envelope'] or spec['envelope'].startswith('residential_cold')
             op['zone_infiltration'] = op['zone_nightACH'] = .5 if cold else 1.
             op['zone_collingEER'] = 3.6
+        envelope = library['envelopes'][spec['envelope']]
         payload = dict(id=name, standard=deepcopy(library['standard']),
-                       envelope=deepcopy(library['envelopes'][spec['envelope']]),
+                       envelope=deepcopy(envelope),
                        operation=deepcopy(op), assumptions=deepcopy(library['assumptions']),
                        context=deepcopy(spec.get('context', {})))
         result[name] = {k: v for k, v in op.items() if k.startswith('zone_')}
+        # Whole-zone exporters (IDF) need flat representative envelope values.
+        # SHGC without a prescribed limit follows the library optics convention
+        # rho = 1 - SHGC applied to the assumed glass reflectance.
+        shgc = _strictest(envelope.get('window_shgc'))
+        result[name].update(
+            zone_wallU=_strictest(envelope['wall_u']),
+            zone_winU=_strictest(envelope['window_u']),
+            zone_win_SHGC=shgc if shgc is not None else 1. - library['assumptions']['glass']['solar_reflectance'],
+        )
         result[name].update(type=spec['operation'], standard=library['standard']['id'],
                             _thermal_template=payload)
-    for alias, target in library['aliases'].items():
-        result[alias] = deepcopy(result[target])
-        result[alias]['_thermal_template']['alias'] = alias
     return result
 
 

@@ -71,7 +71,7 @@ class DomainBoundaryTests(unittest.TestCase):
         )
         weather = SimpleNamespace()
 
-        with self.assertRaisesRegex(ValueError, "Precomputed"):
+        with self.assertRaisesRegex(ValueError, "irradiance_by_surface"):
             build_energy_input(model, weather, require_radiation=True)
 
     def test_energy_requires_explicit_weather(self):

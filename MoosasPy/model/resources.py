@@ -5,8 +5,8 @@ import os
 import tempfile
 import uuid
 
-from ..utils.standard import loadBuildingTemplate
 from ..utils.tools import path
+from .thermal_templates import building_templates
 
 
 def configure_model_resources(model, schedule_path: str | None = None, template_path: str | None = None):
@@ -14,7 +14,7 @@ def configure_model_resources(model, schedule_path: str | None = None, template_
     replace_templates = template_path is not None
     template_path = template_path or os.path.join(path.dataBaseDir, "building_template.json")
     if replace_templates or not model.buildingTemplate:
-        model.buildingTemplate = loadBuildingTemplate(template_path)
+        model.buildingTemplate = building_templates(template_path)
     if not model.schedule:
         load_schedule(model, schedule_path)
     return model

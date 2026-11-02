@@ -9,7 +9,7 @@
 | --- | --- |
 | `MoosasPy/simulation/energy/input.py` | SI 输入数据类型、校验、模型几何与运行日程解析 |
 | `MoosasPy/simulation/energy/runner.py` | CES3 编解码、持久 EXE 会话、预热、逐时运行、断点续算与结果汇总 |
-| `MoosasPy/model/io/gbxml/` | gbXML 导入导出、热工来源信息与往返保真 |
+| `MoosasPy/model/io/gbxml/` | gbXML 导入导出与热工来源信息 |
 | `MoosasPy/model/thermal_templates.py` | 模型共享的模板读取、校验与应用 |
 | `MoosasPy/model/energy_metadata.py` | RDF/XML/JSON 模型持久化共享的能耗元数据 |
 | `MoosasPy/db/building_template.json` | 热工模板数据 |
@@ -208,7 +208,7 @@ arrays, checkpoint and annual summary. They are generated artifacts, not templat
 
 ### 结构和范围
 
-`schema` 和 `version` 标识契约。`envelopes` 保存表格规则，`operations` 保存用途及参考运行条件，`assumptions` 集中保存工程假设，`templates` 引用前两者，`aliases` 兼容旧名称，`legacy_templates` 单独保留未经本次复核的 GB/T 51350 旧记录。
+`schema` 和 `version` 标识契约。`envelopes` 保存表格规则，`operations` 保存用途及参考运行条件，`assumptions` 集中保存工程假设，`templates` 引用前两者。
 
 住宅对应表 3.1.8-1～11、3.1.9-1～5；甲类公共建筑对应表 3.1.10-1～6；乙类公共建筑对应表 3.1.11-1～2。共 55 个用途与围护组合。没有规范表格支持的公共建筑温和 B 区等组合不生成。乙类应按附录 B 的单体面积及建筑群面积条件另行选择，程序不从单个房间面积推断类别。隔墙及不采暖地下室上部楼板等限值作为扩展资料保留；当前相邻区域按绝热处理，不把这些限值用于区间传热。入口门及阳台栏板不属于本次适配范围。
 
@@ -216,7 +216,7 @@ arrays, checkpoint and annual summary. They are generated artifacts, not templat
 
 SHGC 是整体太阳得热系数限值，独立于传给 CETUS 的太阳透射率。窗的方向分列保留在 `shgc_directions` 中；外法线 +Y 为北，计算时应用 `EnergyDefaults.north_angle_degrees`。住宅窗墙比按房间同朝向合计，公共建筑按全模型同朝向合计，选择房间子集不会改变该比值。地下部分和绝热部分不计入外立面窗墙比。
 
-默认资源入口已改为 JSON；CSV 仅保留为历史文件及显式 CSV 调用兼容入口。旧的 `climatezone1..5_GB55015-2021_*` 名称映射到各气候区的 A 子区、公共建筑甲类。别名并不判定项目所在地气候子区。新建空间默认使用夏热冬冷 A 区住宅，实际项目应显式选择适用模板。
+模板资源入口为 JSON，模板名称即 `templates` 中的结构化名称。新建空间默认使用夏热冬冷 A 区住宅（`residential_hot_summer_cold_winter_A_GB55015-2021_RESIDENTIAL`），实际项目应显式选择适用模板。
 
 ### 使用接口
 
@@ -263,7 +263,7 @@ result = EnergyRunner(
 
 ```powershell
 python -B -m pytest test/test_thermal_templates.py -q
-python -B test/accept_cetus_energy.py --template climatezone2_GB55015-2021_OFFICE --template-overrides-model --output-dir test/output/cetus_thermal_templates --hours 8760
+python -B test/accept_cetus_energy.py --template public_A_cold_GB55015-2021_OFFICE --template-overrides-model --output-dir test/output/cetus_thermal_templates --hours 8760
 ```
 
 验收脚本保存 JSON 库与引擎哈希、逐表面解析值、边界表、逐时能耗和最终状态。测试覆盖所有 55 个模板的实际二进制注册和计算、自定义 JSON 数值修改、运行覆盖、典型周强度换算，以及三种模型格式的往返。

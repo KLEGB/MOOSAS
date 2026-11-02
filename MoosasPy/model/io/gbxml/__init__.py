@@ -691,28 +691,17 @@ def convert_rdf_to_gbxml(
         rdflib parser format.  Defaults to ``turtle``.
     """
 
-    from .exchange import restore_exchange, validate_references
     graph = Graph().parse(str(input_path), format=rdf_format)
-    from .energy import DOC as THERMAL_DOC,GBE
-    evidence = graph.value(THERMAL_DOC,GBE.projection)
-    if evidence is not None:
-        from .exchange import DOC as EXCHANGE_DOC,EX,capture_exchange
-        if graph.value(EXCHANGE_DOC,EX.xmlSkeleton) is None:
-            import json
-            capture_exchange(etree.fromstring(json.loads(str(evidence))['source_xml']),graph)
-    tree = restore_exchange(graph)
-    if tree is None:
-        spaces, space_id_map = _collect_spaces(graph)
-        surfaces = _collect_surfaces(graph, space_id_map)
-        tree = build_gbxml_tree(
-            spaces,
-            surfaces,
-            building_id=building_id,
-            campus_id=campus_id,
-            building_type=building_type,
-            gbxml_version=gbxml_version,
-        )
-    validate_references(tree.getroot())
+    spaces, space_id_map = _collect_spaces(graph)
+    surfaces = _collect_surfaces(graph, space_id_map)
+    tree = build_gbxml_tree(
+        spaces,
+        surfaces,
+        building_id=building_id,
+        campus_id=campus_id,
+        building_type=building_type,
+        gbxml_version=gbxml_version,
+    )
     etree.indent(tree, space="  ")
     tree.write(str(output_path), xml_declaration=True, encoding="utf-8")
     return tree
@@ -898,17 +887,10 @@ def convert_gbxml_to_rdf(
                 if face_uri is not None:
                     graph.add((face_uri, MOOSAS.hasHole, opening_face_uri))
 
-    from .exchange import capture_exchange
-    capture_exchange(root, graph)
     from .energy import capture
     capture(root, graph, input_path)
     graph.serialize(destination=str(output_path), format=rdf_format)
     return graph
-
-
-# Backward-compatible aliases with concise names for IO package users.
-rdf_to_gbxml = convert_rdf_to_gbxml
-gbxml_to_rdf = convert_gbxml_to_rdf
 
 
 def is_gbxml(file_path: str | Path) -> bool:
@@ -931,7 +913,7 @@ def load_gbxml(file_path: str | Path):
 
 
 def save_gbxml(model, file_path: str | Path):
-    """Export model geometry, thermal evidence and exchange metadata."""
+    """Export model geometry and thermal evidence."""
     from ..rdf import writeRDF
 
     with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_") as directory:

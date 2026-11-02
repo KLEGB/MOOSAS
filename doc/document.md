@@ -321,7 +321,7 @@ Important energy-setting fields include:
 | `zone_infiltration`, `zone_nightACH` | Infiltration and night ventilation rates. |
 | `zone_template` | Applied template identifier. |
 
-Building templates are stored in `MoosasPy/db/building_template.csv`; schedule
+Building templates are stored in `MoosasPy/db/building_template.json`; schedule
 libraries are stored under `MoosasPy/db/schedule/`.
 
 ### Weather Data

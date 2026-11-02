@@ -1627,12 +1627,9 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     # print()
     # load Space
     loaded_spaces = []
-    space_uris = set(map(str,spList))
-    shared_edge_cache = {}
     for i, spaceUri in enumerate(spList):
         spaceUri = URIRef(str(spaceUri))
         topology = {"Floor": [], "Ceiling": [], "Edge": []}
-        legacy_shared_walls = set()
 
         # New format: Space --interfaceOf--> Interface --interfaceOf--> element_*
         interfaceList = mixItemListToList(rdfGraph.getSubject(rdfGraph.bot.interfaceOf, spaceUri))
@@ -1668,12 +1665,6 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
                 orderVal = _first_or_none(rdfGraph.getObject(interfaceUri, rdfGraph.moosas.subElementOrder))
                 order = int(float(orderVal)) if orderVal is not None else 0
                 topology["Edge"].append((order, element))
-                key=str(elementUris[0])
-                if key not in shared_edge_cache:
-                    owners={str(owner) for interface in rdfGraph.subjects(rdfGraph.bot.interfaceOf,elementUris[0])
-                            for owner in rdfGraph.objects(interface,rdfGraph.bot.interfaceOf) if str(owner) in space_uris}
-                    shared_edge_cache[key]=len(owners)>1
-                if shared_edge_cache[key]:legacy_shared_walls.add(element.Uid)
 
         floorTopo = MoosasFloor(topology["Floor"]) if len(topology["Floor"]) > 0 else None
         ceilTopo = MoosasFloor(topology["Ceiling"]) if len(topology["Ceiling"]) > 0 else None
@@ -1685,7 +1676,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
             rdfGraph.getObject(spaceUri, rdfGraph.moosas.boundaryWKT)
         )
         boundary = shapely.from_wkt(str(boundary_wkt)) if boundary_wkt is not None else None
-        edgeTopo = MoosasEdge(edgeElements, boundary=boundary,legacy_shared_walls=legacy_shared_walls)
+        edgeTopo = MoosasEdge(edgeElements, boundary=boundary)
 
         spc = MoosasSpace(
             _floor=floorTopo,
