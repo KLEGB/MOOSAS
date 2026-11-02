@@ -47,7 +47,7 @@ class ExampleIntegrationTests(unittest.TestCase):
             (0.0, 4.5, 9.0, 13.5, 18.0, 22.5, 27.0, 31.5, 36.0, 40.5, 45.0),
         )
         self.assertTrue(all(space.area > 0 for space in self.model.spaceList))
-        self.assertAlmostEqual(sum(space.area for space in self.model.spaceList), 28199.015, places=3)
+        self.assertAlmostEqual(sum(space.area for space in self.model.spaceList), 28198.908, places=3)
 
         neighbor_pairs = {
             tuple(sorted((str(space.id), str(neighbor_id))))
@@ -129,7 +129,8 @@ class ExampleIntegrationTests(unittest.TestCase):
 
         result = EnergyRunner(model=self.model, weather=weather).run()
 
-        self.assertEqual(result.commands, ())
+        self.assertEqual(len(result.commands), 1)
+        self.assertEqual(result.commands[0].returncode, 0)
         self.assertEqual(len(result.data["spaces"]), 70)
         self.assertEqual(len(result.data["months"]), 12)
 
@@ -141,10 +142,10 @@ class ExampleIntegrationTests(unittest.TestCase):
             self.assertGreaterEqual(value, 0.0)
             component_total += value
         self.assertGreater(component_total, 0.0)
-        self.assertAlmostEqual(float(total["cooling"]), 5.45, places=2)
-        self.assertAlmostEqual(float(total["heating"]), 7.28, places=2)
-        self.assertAlmostEqual(float(total["lighting"]), 9.47, places=2)
-        self.assertAlmostEqual(float(total["equipment"]), 14.08, places=2)
+        self.assertAlmostEqual(float(total["cooling"]), 6.75, places=2)
+        self.assertAlmostEqual(float(total["heating"]), 48.64, places=2)
+        self.assertAlmostEqual(float(total["lighting"]), 7.30, places=2)
+        self.assertAlmostEqual(float(total["equipment"]), 19.42, places=2)
         self.assertAlmostEqual(float(total["total"]), component_total, places=6)
 
 

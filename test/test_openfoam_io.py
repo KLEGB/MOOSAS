@@ -26,9 +26,9 @@ def geo_model():
 
 
 @pytest.mark.parametrize("index,area,base", [
-    (0, 32.3712, 0.0), (1, 87.21875, 0.0),
-    (2, 32.3712, 4.4), (3, 87.21875, 4.4),
-    (4, 32.3712, 8.8), (5, 87.21875, 8.8),
+    (0, 32.400552, 0.0), (1, 87.168652, 0.0),
+    (2, 32.400552, 4.4), (3, 87.168652, 4.4),
+    (4, 32.400552, 8.8), (5, 87.168652, 8.8),
 ])
 def test_save_real_geo_room_through_model(geo_model, tmp_path, index, area, base):
     target = tmp_path / "room" / "room.foam"
@@ -62,7 +62,7 @@ def test_export_real_geo_through_function(tmp_path):
     model = transform(str(source), input_type="geo", stdout=StringIO())
     result = exportFoam(model, str(tmp_path / "room.foam"), space_index=0, layers=4)
     assert result.primary_path == tmp_path / "room.foam"
-    check_volume_mesh(tmp_path, 33.0368 * 9.26)
+    check_volume_mesh(tmp_path, 33.0760407 * 9.26)
 
 
 @pytest.mark.parametrize("entry_point", ["model", "dispatcher"])

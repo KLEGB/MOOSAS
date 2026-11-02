@@ -229,13 +229,24 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
             try:
                 shadow_area = 0
                 matched_faces = []
+                covered = shapely.Polygon()
                 for face_index in face_indices:
-                    intersection_area = shapely.area(shapely.intersection(
+                    region = shapely.intersection(
                         footprints[model.edgeList[edge_index]],
                         model.faceList[face_index].force_2d(),
                         grid_size=geom.POINT_PRECISION,
-                    ))
+                    )
+                    # Mixed-dimension intersections carry zero-area parts only.
+                    region = shapely.union_all([part for part in shapely.get_parts(region)
+                                                if shapely.get_dimensions(part) == 2])
+                    intersection_area = shapely.area(region)
                     if intersection_area > geom.POINT_PRECISION ** 2:
+                        # Coincident slabs (e.g. a podium roof under a tower
+                        # floor) duplicate coverage; keep the first cover only.
+                        new_area = shapely.area(shapely.difference(region, covered, grid_size=geom.POINT_PRECISION))
+                        if new_area <= geom.AREA_PRECISION < intersection_area - new_area:
+                            continue
+                        covered = shapely.union_all([covered, region])
                         shadow_area += intersection_area
                         matched_faces.append(model.faceList[face_index])
                 floor = MoosasFloor(matched_faces)
@@ -263,6 +274,7 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
             try:
                 shadow_area = 0
                 matched_faces = []
+                covered = shapely.Polygon()
                 edge_projection = model.edgeList[edge_index].force_2d(top=True)
                 if not shapely.is_valid(edge_projection):
                     edge_projection = footprints[model.edgeList[edge_index]]
@@ -275,11 +287,20 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
                         ]),
                     )
                 for face_index in face_indices:
-                    intersection_area = shapely.area(shapely.intersection(
+                    region = shapely.intersection(
                         edge_projection, model.faceList[face_index].force_2d(),
                         grid_size=geom.POINT_PRECISION,
-                    ))
+                    )
+                    # Mixed-dimension intersections carry zero-area parts only.
+                    region = shapely.union_all([part for part in shapely.get_parts(region)
+                                                if shapely.get_dimensions(part) == 2])
+                    intersection_area = shapely.area(region)
                     if intersection_area > geom.POINT_PRECISION ** 2:
+                        # Coincident slabs duplicate coverage; keep the first cover only.
+                        new_area = shapely.area(shapely.difference(region, covered, grid_size=geom.POINT_PRECISION))
+                        if new_area <= geom.AREA_PRECISION < intersection_area - new_area:
+                            continue
+                        covered = shapely.union_all([covered, region])
                         shadow_area += intersection_area
                         matched_faces.append(model.faceList[face_index])
                 if matched_faces:

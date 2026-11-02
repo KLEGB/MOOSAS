@@ -65,7 +65,7 @@ def outdoor_conditions():
 @pytest.mark.parametrize("scenario", ["indoor", "outdoor"])
 def test_real_geo_saves_complete_case(building, indoor_model, tmp_path, scenario):
     model = indoor_model if scenario == "indoor" else building
-    options = dict(space_index=37) if scenario == "indoor" else {}
+    options = dict(space_index=39) if scenario == "indoor" else {}
     conditions = indoor_conditions() if scenario == "indoor" else outdoor_conditions()
     result = exportFoam(model, tmp_path / "case.foam", scenario=scenario, grid_size=2,
                         conditions=conditions, **options)
@@ -85,7 +85,7 @@ def test_indoor_rejects_unknown_openings_before_writing(indoor_model, tmp_path):
     conditions = indoor_conditions()
     conditions["inlet"]["opening"] = "missing"
     with pytest.raises(ValueError, match="opening"):
-        exportFoam(indoor_model, tmp_path / "case.foam", scenario="indoor", space_index=37,
+        exportFoam(indoor_model, tmp_path / "case.foam", scenario="indoor", space_index=39,
                    conditions=conditions)
     assert not list(tmp_path.iterdir())
 
@@ -108,7 +108,7 @@ def test_indoor_rejects_outward_inlet_velocity(indoor_model, tmp_path):
     conditions = indoor_conditions()
     conditions["inlet"]["velocity"] = [-0.409451, -0.286966, 0]
     with pytest.raises(ValueError, match="into the room"):
-        exportFoam(indoor_model, tmp_path / "case.foam", scenario="indoor", space_index=37,
+        exportFoam(indoor_model, tmp_path / "case.foam", scenario="indoor", space_index=39,
                    conditions=conditions)
     assert not list(tmp_path.iterdir())
 
@@ -144,7 +144,7 @@ def _run_case_with_openfoam(case_dir):
 def test_iteration_limit_is_not_reported_as_success(indoor_model, tmp_path, iterations):
     conditions = indoor_conditions()
     conditions["iterations"] = iterations
-    exportFoam(indoor_model, tmp_path / "case.foam", scenario="indoor", space_index=37,
+    exportFoam(indoor_model, tmp_path / "case.foam", scenario="indoor", space_index=39,
                grid_size=2, conditions=conditions)
     logs = _run_case_with_openfoam(tmp_path)
     assert "solution converged" not in logs["foamRun"].lower()
@@ -156,7 +156,7 @@ def test_iteration_limit_is_not_reported_as_success(indoor_model, tmp_path, iter
 def test_real_geo_solves_and_conserves_flow(building, indoor_model, tmp_path, scenario):
     model = indoor_model if scenario == "indoor" else building
     conditions = indoor_conditions() if scenario == "indoor" else outdoor_conditions()
-    options = dict(space_index=37) if scenario == "indoor" else {}
+    options = dict(space_index=39) if scenario == "indoor" else {}
     exportFoam(model, tmp_path / "case.foam", scenario=scenario, grid_size=2 if scenario == "indoor" else 4,
                conditions=conditions, **options)
     logs = _run_case_with_openfoam(tmp_path)

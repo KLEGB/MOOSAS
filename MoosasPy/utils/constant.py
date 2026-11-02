@@ -49,21 +49,24 @@ class geom:
     @staticmethod
     def round(num,precision):
         """
-        Round the input number or array to the specified precision using floor rounding.
-        
+        Round the input number or array to the nearest multiple of the precision.
+
+        Nearest rounding matches GEOS ``set_precision`` so importer quantization
+        and recognition-grid snapping place vertices on the same grid.
+
         Parameters
         ----------
         num : array-like or scalar
             The number or array of numbers to be rounded.
         precision : float
-            The precision to which the numbers are to be rounded down.
-        
+            The grid to which the numbers are rounded.
+
         Returns
         -------
         float or numpy.ndarray
-            The rounded number or array, where each element is rounded down to the nearest multiple of precision.
+            The rounded number or array, where each element is rounded to the nearest multiple of precision.
         """
-        return np.floor(np.array(num)/precision)*precision
+        return np.round(np.array(num)/precision)*precision
 
 class settings:
     PLUGIN_MENU_STRING = "Moosas"
