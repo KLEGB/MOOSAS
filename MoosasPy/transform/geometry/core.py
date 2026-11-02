@@ -1,384 +1,252 @@
-"""Minimal building-core insertion for boundary preparation."""
+"""Offset thermal zoning with original-length, zero-width hole constraints."""
+from __future__ import annotations
 
-import math
+import networkx as nx
+from scipy.spatial import Voronoi
+from shapely.geometry.polygon import orient
 
-from ...utils import np, shapely
-from .polygon import GeometryBasic
+from ...utils import GeometryError, np, shapely
+from ...utils.constant import geom
+from .convexify import _validate_partition, _convex_parts_with_holes
 
 
-def _group_horizontal_face_levels(faces, normal, min_face_area=1e-5):
-    horizontal = []
-    for idx, face_normal in enumerate(normal):
-        if np.abs(face_normal[2]) <= 0.7:
-            continue
+_GRID = 1e-9
+_SAMPLE_STEP = 0.1
+_LINE_TOLERANCE = 1e-7
 
-        face = np.asarray(faces[idx], dtype=float)
-        if len(face) < 3:
-            continue
-        if GeometryBasic.polygon_area_3d(face) <= min_face_area:
-            continue
 
-        horizontal.append((float(np.mean(face[:, 2])), idx))
+def _polygons(geometry):
+    return [part for part in shapely.get_parts(geometry) if part.geom_type == "Polygon"]
 
-    if not horizontal:
+
+def _lines(geometry):
+    if geometry.is_empty:
         return []
+    if geometry.geom_type == "LineString":
+        return [geometry]
+    if geometry.geom_type in ("MultiLineString", "GeometryCollection"):
+        return [line for part in shapely.get_parts(geometry) for line in _lines(part)]
+    return []
 
-    z_values = [item[0] for item in horizontal]
-    z_range = max(z_values) - min(z_values)
-    z_tol = max(0.05, z_range * 0.01)
 
-    groups = []
-    for z_center, idx in sorted(horizontal, key=lambda item: item[0]):
-        if not groups:
-            groups.append({"z_values": [z_center], "indices": [idx]})
+def _medial_lines(polygon):
+    polygon = orient(polygon)
+    points, labels, rings = [], [], []
+    for ring_id, ring in enumerate([polygon.exterior, *polygon.interiors]):
+        xy = np.asarray(ring.coords)[:-1, :2]
+        rings.append(xy)
+        for edge, (a, b) in enumerate(zip(xy, np.roll(xy, -1, axis=0))):
+            count = max(1, int(np.ceil(np.linalg.norm(b - a) / _SAMPLE_STEP)))
+            for fraction in np.arange(count) / count:
+                points.append(a + fraction * (b - a))
+                labels.append((ring_id, edge))
+    diagram = Voronoi(np.asarray(points))
+    result = []
+    for sites, indices in zip(diagram.ridge_points, diagram.ridge_vertices):
+        if len(indices) != 2 or -1 in indices:
             continue
-
-        current_mean = float(np.mean(groups[-1]["z_values"]))
-        if abs(z_center - current_mean) <= z_tol:
-            groups[-1]["z_values"].append(z_center)
-            groups[-1]["indices"].append(idx)
-        else:
-            groups.append({"z_values": [z_center], "indices": [idx]})
-
-    return groups
-
-
-def _compute_dominant_xy_axes(faces, edge_tol=1e-6):
-    orient_x = 0.0
-    orient_y = 0.0
-
-    for face in faces:
-        verts = np.asarray(face, dtype=float)
-        if len(verts) < 2:
-            continue
-
-        for idx in range(len(verts)):
-            edge = verts[(idx + 1) % len(verts), :2] - verts[idx, :2]
-            length = float(np.linalg.norm(edge))
-            if length <= edge_tol:
+        (ring_a, edge_a), (ring_b, edge_b) = [labels[i] for i in sites]
+        if ring_a == ring_b:
+            xy = rings[ring_a]
+            if edge_a == edge_b:
                 continue
-
-            theta = math.atan2(edge[1], edge[0])
-            orient_x += length * math.cos(4.0 * theta)
-            orient_y += length * math.sin(4.0 * theta)
-
-    if abs(orient_x) <= edge_tol and abs(orient_y) <= edge_tol:
-        angle = 0.0
-    else:
-        angle = 0.25 * math.atan2(orient_y, orient_x)
-
-    x_axis = np.array([math.cos(angle), math.sin(angle)], dtype=float)
-    y_axis = np.array([-math.sin(angle), math.cos(angle)], dtype=float)
-    return x_axis, y_axis
-
-
-def _project_xy_bounds(face, x_axis, y_axis):
-    verts = np.asarray(face, dtype=float)
-    proj_x = verts[:, :2] @ x_axis
-    proj_y = verts[:, :2] @ y_axis
-    return (
-        float(np.min(proj_x)),
-        float(np.max(proj_x)),
-        float(np.min(proj_y)),
-        float(np.max(proj_y)),
+            if (edge_a + 1) % len(xy) == edge_b:
+                vertex = edge_b
+            elif (edge_b + 1) % len(xy) == edge_a:
+                vertex = edge_a
+            else:
+                vertex = None
+            if vertex is not None:
+                a = xy[vertex] - xy[vertex - 1]
+                b = xy[(vertex + 1) % len(xy)] - xy[vertex]
+                # Convex-corner spokes are not longitudinal strip centerlines.
+                if a[0] * b[1] - a[1] * b[0] > 0:
+                    continue
+        line = shapely.LineString(diagram.vertices[indices])
+        if line.length > _GRID and polygon.covers(line):
+            result.append(line)
+    # Voronoi vertices on parallel sides may differ by nanometers after rotation.
+    return shapely.union_all(
+        shapely.get_parts(shapely.set_precision(shapely.union_all(result), 1e-7)),
+        grid_size=1e-7,
     )
 
 
-def _build_rect_face(center_xy, x_axis, y_axis, span_x, span_y, z_value):
-    half_x = 0.5 * span_x
-    half_y = 0.5 * span_y
-    xy = np.array(
-        [
-            center_xy - half_x * x_axis - half_y * y_axis,
-            center_xy + half_x * x_axis - half_y * y_axis,
-            center_xy + half_x * x_axis + half_y * y_axis,
-            center_xy - half_x * x_axis + half_y * y_axis,
-        ],
-        dtype=float,
+def _collapse_narrow_core(source, core, minimum_width):
+    # GEOS drops nearly collapsed buffers; retain the threshold within 0.2mm.
+    radius = (minimum_width - 2e-4) / 2
+    wide = shapely.union_all([
+        part.buffer(-radius, join_style="mitre").buffer(radius, join_style="mitre")
+        for part in _polygons(core)
+    ]).intersection(core)
+    wide = wide.simplify(0.005, preserve_topology=True)
+    wide = shapely.set_precision(shapely.snap(wide, core, 1e-6).intersection(source), _GRID)
+    removed = shapely.union_all(_polygons(
+        shapely.set_precision(core.difference(wide), _GRID)
+    ))
+    if removed.area <= 1e-7:
+        return wide, []
+    skeleton = shapely.union_all([
+        _medial_lines(part) for part in _polygons(core)
+        if part.intersection(removed).area > 1e-7
+    ])
+    network = shapely.set_precision(skeleton.intersection(removed), _GRID)
+    merged = _lines(shapely.line_merge(network))
+    if not merged:
+        raise GeometryError(core, "Narrow core has no usable medial axis.")
+    degree = {}
+    for line in _lines(network):
+        for point in (line.coords[0], line.coords[-1]):
+            key = tuple(np.round(point, 9))
+            degree[key] = degree.get(key, 0) + 1
+    reach = np.linalg.norm(np.subtract(removed.bounds[2:], removed.bounds[:2])) * 2
+    extensions = []
+    for line in merged:
+        xy = np.asarray(line.coords)
+        for point, inward in [(xy[0], xy[1]), (xy[-1], xy[-2])]:
+            if degree[tuple(np.round(point, 9))] != 1:
+                continue
+            if removed.boundary.distance(shapely.Point(point)) <= _GRID * 5:
+                continue
+            direction = point - inward
+            direction /= np.linalg.norm(direction)
+            ray = shapely.LineString([point, point + reach * direction])
+            coordinates = shapely.get_coordinates(ray.intersection(removed.boundary))
+            distances = np.linalg.norm(coordinates - point, axis=1)
+            eligible = distances > _GRID * 10
+            if not eligible.any():
+                raise GeometryError(core, "Cannot locate original narrow-region end.")
+            target = coordinates[eligible][np.argmin(distances[eligible])]
+            extensions.append(shapely.LineString([point, target]))
+    network = shapely.set_precision(
+        shapely.union_all([network, *extensions]).intersection(removed), _GRID
     )
-
-    z_column = np.full((4, 1), float(z_value), dtype=float)
-    return np.hstack((xy, z_column))
-
-
-def _intersect_projected_bounds(bounds):
-    return (
-        max(bound[0] for bound in bounds),
-        min(bound[1] for bound in bounds),
-        max(bound[2] for bound in bounds),
-        min(bound[3] for bound in bounds),
-    )
+    cuts = [
+        segment for line in _lines(shapely.line_merge(network))
+        for segment in _lines(line.simplify(
+            _SAMPLE_STEP / 2, preserve_topology=True
+        ).intersection(removed))
+        if segment.length > _GRID * 10
+    ]
+    return wide, cuts
 
 
-def _append_face_hole(face_holes, hole_face):
-    """Return the face holes with one independent ring appended."""
-    if not face_holes:
-        return {0: np.asarray(hole_face, dtype=float)}
-    if isinstance(face_holes, dict):
-        rings = [face_holes[index] for index in sorted(face_holes)]
-    else:
-        rings = list(face_holes)
-    rings.append(np.asarray(hole_face, dtype=float))
-    return {index: ring for index, ring in enumerate(rings)}
+def validate_partition_lines(parts, cuts):
+    """Require each atomic slit interval to border exactly two distinct faces."""
+    if not cuts:
+        return
+    boundaries = [part.boundary for part in parts]
+    union = shapely.union_all(boundaries)
+    points = shapely.points(shapely.get_coordinates(union))
+    for line in cuts:
+        tolerance = max(1e-5, line.length * 1e-6)
+        if line.difference(union.buffer(_LINE_TOLERANCE)).length > tolerance:
+            raise GeometryError(line, "Zero-width hole absent from partition boundaries.")
+        parameters = np.unique([
+            0.0, line.length,
+            *[line.project(shapely.Point(point)) for point in line.coords],
+            *shapely.line_locate_point(
+                line, points[shapely.distance(line, points) < _LINE_TOLERANCE]
+            ),
+        ])
+        for start, end in zip(parameters, parameters[1:]):
+            if end - start <= _GRID * 10:
+                continue
+            midpoint = line.interpolate((start + end) / 2)
+            if sum(boundary.distance(midpoint) < _LINE_TOLERANCE
+                   for boundary in boundaries) != 2:
+                raise GeometryError(line, "Zero-width hole must have two adjacent faces.")
+        if any(line.intersection(part.buffer(-_LINE_TOLERANCE)).length > tolerance
+               for part in parts):
+            raise GeometryError(line, "Partition crosses a zero-width hole.")
 
 
-def _face_polygon_xy(face, holes):
-    """Build a 2-D polygon for strict core containment checks."""
-    shell = np.asarray(face, dtype=float)[:, :2]
-    if not holes:
-        return shapely.polygons(shell)
-    if isinstance(holes, dict):
-        rings = [holes[index] for index in sorted(holes)]
-    else:
-        rings = list(holes)
-    return shapely.polygons(shell, holes=[np.asarray(ring, dtype=float)[:, :2] for ring in rings])
+def _partition_cells(source, wide, cuts):
+    network = shapely.union_all([source.boundary, wide.boundary, *cuts], grid_size=_GRID)
+    constraints = shapely.union_all(cuts)
+    visible_region = source.difference(wide).buffer(_GRID * 10)
 
-
-def _shared_level_footprint(levels, faces, holes):
-    """Return the area shared by one primary horizontal face on every level."""
-    shared = None
-    for level in levels:
-        level_faces = [
-            _face_polygon_xy(faces[index], holes[index]) for index in level["indices"]
+    def measure(network):
+        cells = [
+            cell for cell in _polygons(shapely.polygonize(shapely.get_parts(network)))
+            if source.covers(cell.representative_point())
         ]
-        footprint = max(
-            level_faces,
-            key=shapely.area,
-        )
-        shared = footprint if shared is None else shapely.intersection(shared, footprint)
-    parts = [part for part in shapely.get_parts(shared) if shapely.area(part) > 1e-6]
-    if not parts:
-        raise ValueError("Core insertion found no horizontal area shared by all selected levels.")
-    return max(parts, key=shapely.area)
+        boundary = shapely.union_all([cell.boundary for cell in cells])
+        unused = constraints.difference(boundary.buffer(_LINE_TOLERANCE)).length
+        graph = nx.Graph()
+        for line in _lines(network):
+            graph.add_edge(tuple(np.round(line.coords[0], 9)),
+                           tuple(np.round(line.coords[-1], 9)))
+        return cells, unused, nx.number_connected_components(graph)
 
+    def hole_count(cells):
+        return sum(len(cell.interiors) for cell in cells
+                   if not wide.covers(cell.representative_point()))
 
-def _fit_core_rectangle(footprint, x_axis, y_axis, span_x, span_y):
-    """Place and scale the oriented core rectangle strictly inside a footprint."""
-    radius_line = shapely.maximum_inscribed_circle(footprint, tolerance=1e-4)
-    center_xy = shapely.get_coordinates(radius_line)[0]
-
-    def candidate(scale):
-        return _build_rect_face(center_xy, x_axis, y_axis, span_x * scale, span_y * scale, 0.0)
-
-    if shapely.contains_properly(footprint, shapely.polygons(candidate(1.0)[:, :2])):
-        return center_xy, span_x, span_y
-
-    lower = 0.0
-    upper = 1.0
-    for _ in range(50):
-        scale = 0.5 * (lower + upper)
-        rectangle = shapely.polygons(candidate(scale)[:, :2])
-        if shapely.contains_properly(footprint, rectangle):
-            lower = scale
-        else:
-            upper = scale
-    if lower * lower * span_x * span_y <= 1e-6:
-        raise ValueError("Core insertion could not fit a rectangular core inside the shared footprint.")
-    strict_scale = lower * 0.999
-    return center_xy, span_x * strict_scale, span_y * strict_scale
-
-
-def _build_core_wall_faces(bottom_face, top_face, core_center_xy):
-    wall_faces = []
-    wall_normals = []
-
-    for idx in range(len(bottom_face)):
-        face = np.array(
-            [
-                bottom_face[idx],
-                top_face[idx],
-                top_face[(idx + 1) % len(top_face)],
-                bottom_face[(idx + 1) % len(bottom_face)],
-            ],
-            dtype=float,
-        )
-
-        v1 = face[1] - face[0]
-        v2 = face[3] - face[0]
-        normal = np.cross(v1, v2)
-        norm = np.linalg.norm(normal)
-        if norm <= 1e-8:
-            continue
-        normal = normal / norm
-
-        face_center_xy = np.mean(face[:, :2], axis=0)
-        outward_xy = face_center_xy - core_center_xy
-        if np.dot(normal[:2], outward_xy) < 0:
-            face = face[::-1]
-            v1 = face[1] - face[0]
-            v2 = face[3] - face[0]
-            normal = np.cross(v1, v2)
-            normal = normal / (np.linalg.norm(normal) + 1e-12)
-
-        wall_faces.append(face)
-        wall_normals.append(normal)
-
-    return wall_faces, wall_normals
-
-
-def inject_minimal_core(cat, idd, normal, faces, holes, core_area_ratio=0.2):
-    """Cut a core opening from each slab and insert one closed core per story."""
-    level_groups = _group_horizontal_face_levels(faces, normal)
-    if len(level_groups) < 2:
-        print("--Minimal core skipped: insufficient horizontal levels--")
-        return cat, idd, normal, faces, holes
-
-    x_axis, y_axis = _compute_dominant_xy_axes(faces)
-
-    reference_area = 0.0
-    level_info = []
-    for group in level_groups:
-        group_bounds = [_project_xy_bounds(faces[idx], x_axis, y_axis) for idx in group["indices"]]
-        common_bounds = _intersect_projected_bounds(group_bounds)
-        level_area = max(GeometryBasic.polygon_area_3d(faces[idx]) for idx in group["indices"])
-        reference_area = max(reference_area, level_area)
-        level_info.append(
-            {
-                "z": float(np.mean(group["z_values"])),
-                "indices": list(group["indices"]),
-                "bounds": common_bounds,
-            }
-        )
-
-    if reference_area <= 1e-6:
-        print("--Minimal core skipped: invalid horizontal reference area--")
-        return cat, idd, normal, faces, holes
-
-    target_area = reference_area * float(core_area_ratio)
-    best_range = None
-    best_bounds = None
-    best_available_area = -1.0
-    best_story_count = -1
-
-    for start in range(len(level_info) - 1):
-        for end in range(start + 1, len(level_info)):
-            candidate_bounds = _intersect_projected_bounds(
-                [level["bounds"] for level in level_info[start : end + 1]]
-            )
-            span_x = candidate_bounds[1] - candidate_bounds[0]
-            span_y = candidate_bounds[3] - candidate_bounds[2]
-            if span_x <= 1e-6 or span_y <= 1e-6:
+    cells, unused, components = measure(network)
+    targets = np.unique(shapely.get_coordinates(network), axis=0)
+    candidates = sorted(
+        (np.linalg.norm(target - anchor), i, j)
+        for i, anchor in enumerate(targets)
+        for j, target in enumerate(targets[i + 1:], start=i + 1)
+        if np.linalg.norm(target - anchor) > _GRID * 10
+    )
+    blocked = set()
+    while unused > 1e-6 or hole_count(cells):
+        holes = hole_count(cells)
+        for index, (_, i, j) in enumerate(candidates):
+            if index in blocked:
                 continue
+            anchor, target = targets[i], targets[j]
+            connector = shapely.LineString([anchor, target])
+            if not visible_region.covers(connector):
+                blocked.add(index)
+                continue
+            endpoints = shapely.MultiPoint([anchor, target]).buffer(_GRID * 10)
+            if not network.intersection(connector).difference(endpoints).is_empty:
+                blocked.add(index)
+                continue
+            candidate = shapely.union_all([network, connector], grid_size=_GRID)
+            next_cells, remaining, next_components = measure(candidate)
+            if (remaining < unused - _LINE_TOLERANCE
+                    or next_components < components or hole_count(next_cells) < holes):
+                network = candidate
+                cells, unused, components = next_cells, remaining, next_components
+                break
+        else:
+            raise GeometryError(source, "Cannot open zero-width holes with visible connectors.")
+    _validate_partition(cells, source)
+    return cells
 
-            available_area = span_x * span_y * 0.81
-            story_count = end - start
-            if story_count > best_story_count or (
-                story_count == best_story_count and available_area > best_available_area
-            ):
-                best_range = (start, end)
-                best_bounds = candidate_bounds
-                best_available_area = available_area
-                best_story_count = story_count
 
-    if best_range is None or best_bounds is None or best_available_area <= 1e-6:
-        print("--Minimal core skipped: no shared footprint for any story stack--")
-        return cat, idd, normal, faces, holes
+def offset_partitions(source):
+    """Return convex perimeter/core faces and protected original-length centerlines.
 
-    rect_area = min(target_area, best_available_area)
-    if rect_area <= 1e-6:
-        print("--Minimal core skipped: target core area too small--")
-        return cat, idd, normal, faces, holes
-
-    common_min_x, common_max_x, common_min_y, common_max_y = best_bounds
-    common_span_x = common_max_x - common_min_x
-    common_span_y = common_max_y - common_min_y
-
-    aspect_ratio = max(common_span_x / max(common_span_y, 1e-8), 1e-8)
-    rect_span_x = math.sqrt(rect_area * aspect_ratio)
-    rect_span_y = rect_area / max(rect_span_x, 1e-8)
-
-    scale = min(
-        1.0,
-        (common_span_x * 0.9) / max(rect_span_x, 1e-8),
-        (common_span_y * 0.9) / max(rect_span_y, 1e-8),
-    )
-    rect_span_x *= scale
-    rect_span_y *= scale
-
-    selected_levels = level_info[best_range[0] : best_range[1] + 1]
-    shared_footprint = _shared_level_footprint(selected_levels, faces, holes)
-    center_xy, rect_span_x, rect_span_y = _fit_core_rectangle(
-        shared_footprint,
-        x_axis,
-        y_axis,
-        rect_span_x,
-        rect_span_y,
-    )
-
-    core_cat = list(cat)
-    core_idd = list(idd)
-    core_normal = [np.asarray(n, dtype=float) for n in normal]
-    core_faces = [np.asarray(face, dtype=float) for face in faces]
-    core_holes = list(holes)
-
-    level_z = [level["z"] for level in selected_levels]
-
-    for level_idx, level in enumerate(selected_levels):
-        core_face = _build_rect_face(
-            center_xy,
-            x_axis,
-            y_axis,
-            rect_span_x,
-            rect_span_y,
-            level["z"],
-        )
-        core_polygon = shapely.polygons(core_face[:, :2])
-        parent_indices = [
-            face_idx
-            for face_idx in level["indices"]
-            if shapely.contains(
-                _face_polygon_xy(core_faces[face_idx], core_holes[face_idx]),
-                core_polygon,
+    Depth and width come from internal ``geom`` configuration, not transform options.
+    Coordinates are kept local during construction to limit numerical cancellation.
+    """
+    depth, width = geom.CORE_OFFSET_DEPTH, geom.CORE_MIN_WIDTH
+    if not np.isfinite(depth) or depth <= 0 or not np.isfinite(width) or width <= 2e-4:
+        raise ValueError("Core offset depth must be positive and minimum width must exceed 0.0002m.")
+    source = shapely.force_2d(source)
+    if source.is_empty or not source.is_valid or source.area <= 0:
+        raise GeometryError(source, "Offset zoning requires a valid positive-area footprint.")
+    origin = np.asarray(source.bounds[:2])
+    local = shapely.set_precision(shapely.transform(source, lambda xy: xy - origin), _GRID)
+    core = shapely.set_precision(local.buffer(-depth, join_style="mitre"), _GRID)
+    wide, cuts = _collapse_narrow_core(local, core, width)
+    perimeter, interior = [], []
+    for cell in _partition_cells(local, wide, cuts):
+        parts = [
+            shapely.Polygon(face[:, :2])
+            for face in _convex_parts_with_holes(
+                np.asarray(cell.exterior.coords)[:-1],
+                [np.asarray(ring.coords)[:-1] for ring in cell.interiors],
             )
         ]
-        if not parent_indices:
-            raise ValueError(
-                "Core plane must lie strictly inside a horizontal face at "
-                f"z={level['z']:.6g}."
-            )
-
-        for parent_order, parent_idx in enumerate(parent_indices):
-            core_holes[parent_idx] = _append_face_hole(core_holes[parent_idx], core_face)
-            oriented_core_face = core_face
-            if core_normal[parent_idx][2] < 0:
-                oriented_core_face = core_face[::-1]
-            core_cat.append(core_cat[parent_idx])
-            core_idd.append(
-                f"core_face_{best_range[0] + level_idx + 1}_{parent_order}"
-            )
-            core_normal.append(np.asarray(core_normal[parent_idx], dtype=float))
-            core_faces.append(oriented_core_face)
-            core_holes.append(None)
-
-    for story_idx in range(len(level_z) - 1):
-        bottom_z = level_z[story_idx]
-        top_z = level_z[story_idx + 1]
-        if top_z - bottom_z <= 1e-6:
-            continue
-
-        bottom_face = _build_rect_face(center_xy, x_axis, y_axis, rect_span_x, rect_span_y, bottom_z)
-        top_face = _build_rect_face(center_xy, x_axis, y_axis, rect_span_x, rect_span_y, top_z)
-        wall_faces, wall_normals = _build_core_wall_faces(bottom_face, top_face, center_xy)
-        story_label = best_range[0] + story_idx + 1
-
-        for wall_idx, wall_face in enumerate(wall_faces):
-            core_cat.append("0")
-            core_idd.append(f"core_wall_{story_label}_{wall_idx}")
-            core_normal.append(np.asarray(wall_normals[wall_idx], dtype=float))
-            core_faces.append(wall_face)
-            core_holes.append(None)
-
-    print(
-        f"--Minimal core inserted across {max(len(level_z) - 1, 0)} layers "
-        f"(levels {best_range[0] + 1}-{best_range[1] + 1})--"
-    )
-    return (
-        np.asarray(core_cat),
-        core_idd,
-        np.asarray(core_normal),
-        core_faces,
-        core_holes,
-    )
-
-
-
+        (interior if wide.covers(cell.representative_point()) else perimeter).extend(parts)
+    _validate_partition(perimeter + interior, local, convex=True)
+    validate_partition_lines(perimeter + interior, cuts)
+    return tuple([
+        shapely.transform(part, lambda xy: xy + origin) for part in group
+    ] for group in (perimeter, interior, cuts))

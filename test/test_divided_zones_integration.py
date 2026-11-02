@@ -310,8 +310,8 @@ def test_divided_zone_model_runs_energy_simulation():
     assert len(result.data["months"]) == 12
     totals = {key: float(result.data["total"][key]) for key in ("cooling", "heating", "lighting", "equipment", "total")}
     assert all(math.isfinite(value) and value >= 0 for value in totals.values())
-    assert totals["cooling"] == pytest.approx(15.61, abs=0.01)
-    assert totals["heating"] == pytest.approx(22.64, abs=0.01)
+    assert totals["cooling"] == pytest.approx(12.28, abs=0.01)
+    assert totals["heating"] == pytest.approx(19.30, abs=0.01)
     assert totals["lighting"] == pytest.approx(9.47, abs=0.01)
     assert totals["equipment"] == pytest.approx(14.08, abs=0.01)
     assert totals["total"] == pytest.approx(sum(totals[key] for key in ("cooling", "heating", "lighting", "equipment")), abs=0.01)

@@ -4,6 +4,7 @@ from __future__ import annotations
 from .geos import *
 from .element import MoosasEdge, MoosasWall, MoosasGlazing, MoosasContainer
 from .triangulation import triangulate2dFace
+from .core import offset_partitions, validate_partition_lines
 from ...utils import searchBy, shapely, np, TopologyError, mixItemListToList
 from ...utils.constant import geom
 from .planar_graph import TopoNode, TopoBound, TopoEdge, TopoNetwork
@@ -531,9 +532,10 @@ def _partition_needs_merge(partition):
     )
 
 
-def _merge_tiny_partitions(partitions):
-    """Absorb small or slender zones into edge neighbors, allowing concavities."""
+def _merge_tiny_partitions(partitions, protected_lines=()):
+    """Absorb small/slender zones without deleting protected zero-width holes."""
     partitions = list(partitions)
+    protected = shapely.union_all(protected_lines)
     while True:
         selected = None
         tiny_indices = sorted(
@@ -552,6 +554,9 @@ def _merge_tiny_partitions(partitions):
                 merged = tiny.union(neighbor)
                 if merged.geom_type != "Polygon" or merged.interiors or not merged.is_valid:
                     continue
+                swallowed = protected.intersection(merged).difference(merged.boundary.buffer(1e-7))
+                if swallowed.length > 1e-7:
+                    continue
                 score = (-shared, -neighbor.area, neighbor_index)
                 if best is None or score < best[0]:
                     best = (score, neighbor_index, merged)
@@ -564,7 +569,7 @@ def _merge_tiny_partitions(partitions):
                 print(
                     "******Warning: small or slender zone "
                     f"({partitions[index].area:g} m2) has no eligible edge neighbor; "
-                    "preserving its geometry"
+                    "preserving its geometry (protected edges cannot be removed)"
                 )
             return partitions
         tiny_index, neighbor_index, merged = selected
@@ -572,13 +577,6 @@ def _merge_tiny_partitions(partitions):
             part for index, part in enumerate(partitions)
             if index not in (tiny_index, neighbor_index)
         ] + [merged]
-
-
-def _is_core_boundary(edge):
-    return bool(edge.wall) and all(
-        any(str(face_id).startswith("core_wall_") for face_id in mixItemListToList(wall.faceId))
-        for wall in edge.wall
-    )
 
 
 def _direct_child_holes(edge, edges):
@@ -654,7 +652,7 @@ def _is_internal_partition(segment, source_boundary, walls):
     )
 
 
-def packing_edges(model: MoosasContainer, divided_zones) -> MoosasContainer:
+def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -> MoosasContainer:
     """
     Packs edges into a MoosasContainer by validating and processing boundary lists, and optionally subdividing complex faces into simpler polygons.
     
@@ -664,8 +662,10 @@ def packing_edges(model: MoosasContainer, divided_zones) -> MoosasContainer:
         The container object holding wall, edge, boundary, and level lists to be processed.
         Modified in place by appending valid edges and walls, and removing processed ones.
     divided_zones : bool
-        If True, enables the subdivision of complex 2D faces into simpler polygons using triangulation.
+        If True, enables convex subdivision of complex footprints.
         Air walls are added to represent internal divisions, and original edges are replaced with new constructed edges.
+    insert_core : bool
+        Enable offset thermal zoning instead of plain convex subdivision.
     
     Returns
     -------
@@ -697,10 +697,10 @@ def packing_edges(model: MoosasContainer, divided_zones) -> MoosasContainer:
 
 
     """Divide the boundaries into simple polygons"""
-    if divided_zones:
+    if divided_zones or insert_core:
         model.edgeList = [
             edge for edge in model.edgeList
-            if edge.area >= geom.ROOM_MIN_AREA or _is_core_boundary(edge)
+            if edge.area >= geom.ROOM_MIN_AREA
         ]
         for levelIdx, bldLevel in enumerate(model.levelList):
             edges = np.array(model.edgeList)[searchBy('level', bldLevel, model.edgeList)]
@@ -717,8 +717,16 @@ def packing_edges(model: MoosasContainer, divided_zones) -> MoosasContainer:
                     footprint, overhead, grid_size=geom.POINT_PRECISION
                 )) <= geom.AREA_PRECISION:
                     continue
-                newEdges, _ = triangulate2dFace(edge.force_2d(), holes)
-                newEdges = _merge_tiny_partitions(newEdges)
+                if insert_core:
+                    perimeter, core, cuts = offset_partitions(footprint)
+                    newEdges = (
+                        _merge_tiny_partitions(perimeter, cuts)
+                        + _merge_tiny_partitions(core, cuts)
+                    )
+                    validate_partition_lines(newEdges, cuts)
+                else:
+                    newEdges, _ = triangulate2dFace(edge.force_2d(), holes)
+                    newEdges = _merge_tiny_partitions(newEdges)
                 if len(newEdges) > 1:
                     walls = list(np.array(model.wallList)[searchBy('level', bldLevel, model.wallList)])
                     source_boundary = shapely.boundary(edge.force_2d())

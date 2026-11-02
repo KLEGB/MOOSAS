@@ -35,3 +35,29 @@ and absence of area overlaps. Invalid inputs, missing connector pairs, and faile
 convex splits raise `GeometryError`; there is no triangulation fallback. Public
 signatures are unchanged, but face/zone counts and generated IDs may differ.
 Hole-free splitting and OpenFOAM mesh triangulation are unchanged.
+
+## Offset thermal zoning
+
+`TransformOptions(insert_core=True)` now partitions each occupied footprint into
+offset perimeter/core thermal zones during space assembly, even when
+`divided_zones=False`. It no longer inserts a cube, physical core walls, slab
+openings, or an unconditioned shaft. The old `inject_minimal_core` implementation
+has been removed; direct callers must migrate. Zone counts, IDs, and energy
+results can change. With `insert_core=False`, existing subdivision is unchanged.
+
+Configure `geom.CORE_OFFSET_DEPTH` (default 5m) and `geom.CORE_MIN_WIDTH` (default
+2m) internally in `MoosasPy.utils.constant`; these are not transform arguments.
+Narrow offset branches/necks collapse to original-length centerlines, never
+extended to the exterior. These are zero-width hole constraints, not invalid
+zero-area polygon rings. Visible auxiliary edges open the constraints into real
+regions before the existing convex splitter runs. Every centerline interval must
+border two faces; no face may cross it. New internal walls are AirBoundary walls.
+
+The medial axis uses 0.1m boundary samples, 0.05m line simplification, 5mm offset
+boundary cleanup, and a 0.2mm width-threshold tolerance. Empty eroded cores are
+valid: the whole footprint remains perimeter. Invalid footprints or failed
+constraints raise `GeometryError`, without triangulation fallback.
+
+Small/slender partition merging uses the existing thresholds independently for
+perimeter and core, and cannot delete centerlines. Final spaces may be concave.
+Small regions with no eligible neighbor are preserved with a warning.

@@ -211,7 +211,6 @@ def structured(
     model = prepare_boundary_geometry(
         model,
         simplify_boundary=options.simplify_boundary,
-        insert_core=options.insert_core,
     )
 
     did_convexify = False
@@ -325,6 +324,7 @@ def structured(
     model = assemble_model(
         model,
         divided_zones=options.divided_zones,
+        insert_core=options.insert_core,
         solve_overlap=options.solve_overlap,
     )
     """

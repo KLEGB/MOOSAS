@@ -142,7 +142,7 @@ The current transformation options are:
 | `attach_shading` | `False` | Retain unused faces as shading or thermal mass. |
 | `divided_zones` | `False` | Convexify complex zones. |
 | `simplify_boundary` | `False` | Simplify source boundaries before generation. |
-| `insert_core` | `False` | Insert a minimal core into eligible boundaries. |
+| `insert_core` | `False` | Generate offset perimeter/core thermal zones and AirBoundary partitions; automatically enables spatial division. No physical core is inserted. |
 | `standardize` | `False` | Standardize the finalized model geometry. |
 
 Example with explicit processing choices:

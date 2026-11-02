@@ -39,6 +39,8 @@ class geom:
     ROOM_MIN_DIMENSION = 0.9
     PARTITION_SLIVER_MAX_WIDTH = 0.1
     PARTITION_SLIVER_MIN_ASPECT_RATIO = 20.0
+    CORE_OFFSET_DEPTH = 5.0
+    CORE_MIN_WIDTH = 2.0
 
     # angle threshold for space regulation
     REGULATION_ANGEL_THRESHOLD = 15

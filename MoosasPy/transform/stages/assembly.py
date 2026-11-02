@@ -16,9 +16,10 @@ def assemble_model(
     *,
     divided_zones: bool,
     solve_overlap: bool,
+    insert_core: bool = False,
 ) -> MoosasModel:
     """Assemble edges and spaces from a model with generated boundaries."""
-    model = packing_edges(model, divided_zones)
+    model = packing_edges(model, divided_zones, insert_core=insert_core)
     if solve_overlap:
         model = solveIntersectionHorizontal(model)
     model = pack_model(model, solve_overlap)
@@ -295,20 +296,6 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
     model.face_remain = list(remaining_faces)
     model.shadingList = np.append(model.shadingList, list(remaining_faces))
     spaces = [MoosasSpace(item["floor"], edge, item["ceiling"]) for item, edge in zip(topology, model.edgeList)]
-    for space in spaces:
-        if space.edge.wall and all(
-            any(str(face_id).startswith("core_wall_") for face_id in mixItemListToList(wall.faceId))
-            for wall in space.edge.wall
-        ):
-            space.space_type = "core"
-            space.conditioned = False
-            space.settings.update({
-                "zone_ppsm": 0.0,
-                "zone_lighting": 0.0,
-                "zone_equipment": 0.0,
-                "zone_pfav": 0.0,
-                "zone_infiltration": 0.0,
-            })
     print()
     spaces_by_edge = {space.edge: space for space in spaces}
     for child, parent in parents.items():

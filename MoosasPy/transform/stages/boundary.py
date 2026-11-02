@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from ...model import MoosasModel
 from ..geometry.boundary import geometry_arrays, simplify_to_layered_obb
-from ..geometry.core import inject_minimal_core
 from ..geometry.element import MoosasGeometry
 from ..geometry.geos import Vector
 
@@ -35,24 +34,14 @@ def prepare_boundary_geometry(
     model: MoosasModel,
     *,
     simplify_boundary: bool,
-    insert_core: bool,
 ) -> MoosasModel:
     """Apply requested boundary operations to a draft geometry model."""
-    if not simplify_boundary and not insert_core:
+    if not simplify_boundary:
         return model
 
     categories, face_ids, normals, faces, holes = geometry_arrays(model.geometryList)
-    if simplify_boundary:
-        categories, face_ids, normals, faces, holes = simplify_to_layered_obb(
-            categories, normals, faces
-        )
-
-    if insert_core:
-        original_face_count = len(faces)
-        categories, face_ids, normals, faces, holes = inject_minimal_core(
-            categories, face_ids, normals, faces, holes
-        )
-        if len(faces) == original_face_count:
-            raise ValueError("Core insertion could not find a valid multi-level footprint.")
+    categories, face_ids, normals, faces, holes = simplify_to_layered_obb(
+        categories, normals, faces
+    )
 
     return _replace_geometry(model, categories, face_ids, normals, faces, holes)

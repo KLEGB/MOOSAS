@@ -116,68 +116,24 @@ def test_disabled_boundary_operations_preserve_geometry_objects():
     result = prepare_boundary_geometry(
         model,
         simplify_boundary=False,
-        insert_core=False,
     )
 
     assert result is model
     assert result.geometryList is original_geometry
 
 
-@pytest.mark.parametrize('insert_core, expected_faces', ((False, 18), (True, 36)))
-def test_simplify_boundary_builds_one_obb_per_story(insert_core, expected_faces):
+def test_simplify_boundary_builds_one_obb_per_story():
     model = prepare_boundary_geometry(
         _three_story_box(),
         simplify_boundary=True,
-        insert_core=insert_core,
     )
 
-    assert len(model.geometryList) == expected_faces
+    assert len(model.geometryList) == 18
     assert {
         geometry.faceId.split('_')[0]
         for geometry in model.geometryList
         if geometry.faceId.startswith('layer')
     } == {'layer1', 'layer2', 'layer3'}
-    assert sum(geometry.faceId.startswith('core_wall_') for geometry in model.geometryList) == (
-        12 if insert_core else 0
-    )
-    if insert_core:
-        core_walls = [
-            geometry for geometry in model.geometryList
-            if geometry.faceId.startswith('core_wall_')
-        ]
-        horizontal_faces = [
-            geometry for geometry in model.geometryList
-            if abs(shapely.get_coordinates(geometry.normal, include_z=True)[0][2]) > 0.99
-        ]
-        core_faces = [
-            geometry for geometry in model.geometryList
-            if geometry.faceId.startswith('core_face_')
-        ]
-        perimeter_faces = [
-            geometry for geometry in horizontal_faces
-            if not geometry.faceId.startswith('core_face_')
-        ]
-        assert all(geometry.category == 0 for geometry in core_walls)
-        assert len(core_faces) == 6
-        assert all(not geometry.holes for geometry in core_faces)
-        assert sum(bool(geometry.holes) for geometry in perimeter_faces) == 6
-
-
-def test_insert_core_operates_on_unsimplified_boundary():
-    model = prepare_boundary_geometry(
-        _three_story_box(),
-        simplify_boundary=False,
-        insert_core=True,
-    )
-
-    assert len(model.geometryList) == 24
-    assert sum(geometry.faceId.startswith('core_wall_') for geometry in model.geometryList) == 12
-    assert sum(geometry.faceId.startswith('core_face_') for geometry in model.geometryList) == 4
-    assert all(
-        geometry.category == 0
-        for geometry in model.geometryList
-        if geometry.faceId.startswith('core_wall_')
-    )
 
 
 def test_simplify_boundary_rejects_single_level_geometry():
@@ -188,5 +144,4 @@ def test_simplify_boundary_rejects_single_level_geometry():
         prepare_boundary_geometry(
             model,
             simplify_boundary=True,
-            insert_core=False,
         )
