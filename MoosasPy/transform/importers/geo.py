@@ -167,7 +167,7 @@ def geoLegacyToGeo(file_path, geo_path=None):
     writeGeo(geo_path, model)
 
 
-def _readGeo(file_path) -> list[MoosasGeometry]:
+def _readGeo(file_path, *, snap_coordinates=True) -> list[MoosasGeometry]:
     """
     Read a .geo file and return a list of MoosasGeometry objects representing the geometric data.
     
@@ -267,7 +267,8 @@ def _readGeo(file_path) -> list[MoosasGeometry]:
                 if li[1] not in holeCoordinates:
                     holeCoordinates[li[1]] = []
                 coor = np.array(li[2:]).astype(float)
-                coor = geom.round(coor, geom.POINT_PRECISION)
+                if snap_coordinates:
+                    coor = geom.round(coor, geom.POINT_PRECISION)
                 holeCoordinates[li[1]].append(list(coor))
                 continue
         if len(coordinates) > 2:
@@ -275,7 +276,8 @@ def _readGeo(file_path) -> list[MoosasGeometry]:
             holes.append([shapely.polygons(holeCoordinates[coors] + [holeCoordinates[coors][0]]) for coors in
                           holeCoordinates.keys()])
 
-    faces = _roundPolygons(faces, geom.POINT_PRECISION)
+    if snap_coordinates:
+        faces = _roundPolygons(faces, geom.POINT_PRECISION)
     geos: list[MoosasGeometry] = []
     for f, i, n, c, h in zip(faces, idd, normal, cat, holes):
         if c==-2: continue

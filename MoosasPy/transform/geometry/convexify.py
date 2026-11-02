@@ -11,11 +11,20 @@ def _convex_parts_with_holes(face, holes):
     face = np.asarray(face, dtype=float)
     polygon = shapely.polygons(
         face[:, :2],
-        holes=[np.asarray(hole, dtype=float)[:, :2] for hole in holes],
+        # Rings can have different vertex counts. Build each ring before
+        # passing them to Shapely so NumPy does not coerce ragged coordinates.
+        holes=[shapely.linearrings(np.asarray(hole, dtype=float)[:, :2]) for hole in holes],
     )
+    # Bridged hole contours may repeat a hole already present in the ring.
+    # Repair their topology before triangulation, retaining all area parts
+    # while excluding the zero-area bridge lines from the triangulator.
+    if not shapely.is_valid(polygon):
+        polygon = shapely.make_valid(polygon)
     pieces = [
         part
-        for part in shapely.get_parts(shapely.constrained_delaunay_triangles(polygon))
+        for region in shapely.get_parts(polygon)
+        if shapely.get_dimensions(region) == 2
+        for part in shapely.get_parts(shapely.constrained_delaunay_triangles(region))
         if shapely.area(part) > 1e-6
     ]
 

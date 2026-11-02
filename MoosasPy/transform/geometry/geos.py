@@ -644,6 +644,12 @@ class Ray(Vector):
         return f"Ray( ori {self.origin.__repr__()} dir {self.direction.__repr__()} )"
 
 
+def _projection_axis_parallel(a, b):
+    """Arithmetic axis test; architectural angle tolerance cannot flatten a plane."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    return np.linalg.norm(np.cross(a, b)) <= 1e-12 * np.linalg.norm(a) * np.linalg.norm(b)
+
+
 class Projection(Ray):
     """
     Establish a three-dimensional coordinate system based on the infinite plane input and realize the conversion with
@@ -677,7 +683,7 @@ class Projection(Ray):
         if unitX is not None:
             self.axisX = Vector(unitX).unit().array
         else:
-            if not Vector.parallel(self.axisZ, np.array([0, 0, 1])):
+            if not _projection_axis_parallel(self.axisZ, np.array([0, 0, 1])):
                 self.axisX = Vector(np.cross(np.array([0, 0, 1]), self.axisZ)).unit().array
             else:
                 self.axisX = np.array([1, 0, 0])
@@ -716,7 +722,7 @@ class Projection(Ray):
             normal vector, center point, and an orthogonal basis vector derived from a cross-section.
         """
         unitz = faceNormal(polygon)
-        if Vector.parallel(unitz, np.array([0, 0, 1])):
+        if _projection_axis_parallel(unitz.array, np.array([0, 0, 1])):
             return cls.findOrthogonalBasis([polygon])
         center = np.mean(shapely.get_coordinates(polygon, include_z=True), axis=0)
         return cls(center, unitz)
@@ -847,20 +853,13 @@ class Projection(Ray):
             rings = [[self.toUV(ring) for ring in shapely.get_rings(part)] for part in shapely.get_parts(worldGeometry)]
             parts = []
             for ring in rings:
-                if len(ring) > 1:
-                    try:
-                        parts.append(shapely.polygons(rings[0], rings[1:]))
-                    except Exception as e:
-                        # failed to create hole
-                        parts.append(shapely.polygons(rings[0]))
-                else:
-                    parts.append(shapely.polygons(rings[0]))
+                parts.append(shapely.polygons(ring[0], holes=ring[1:] or None))
             return shapely.union_all(parts)
         worldGeometry = shapely.force_3d(worldGeometry, z=0)
         coors = shapely.get_coordinates(worldGeometry, include_z=True)
         coors = np.nan_to_num(coors, nan=0)
         coor_new = [coor - self.origin.array for coor in coors]
-        if not (Vector.parallel(self.axisZ, np.array([0, 0, 1])) and Vector.parallel(self.axisX, np.array([1, 0, 0]))):
+        if not (_projection_axis_parallel(self.axisZ, np.array([0, 0, 1])) and _projection_axis_parallel(self.axisX, np.array([1, 0, 0]))):
             coor_new = [coor @ self.rotateMatrix for coor in coor_new]
         coor_new = np.array([coor.flatten() for coor in coor_new])
         if dims == 0:
@@ -899,14 +898,14 @@ class Projection(Ray):
                 return shapely.GeometryCollection()
             if len(rings) > 1:
                 return shapely.polygons(
-                    shapely.get_coordinates(rings[0], include_z=True),
-                    [shapely.get_coordinates(ring, include_z=True) for ring in rings[1:]]
+                    shapely.linearrings(shapely.get_coordinates(rings[0], include_z=True)),
+                    holes=[shapely.linearrings(shapely.get_coordinates(ring, include_z=True)) for ring in rings[1:]]
                 )
             else:
                 return shapely.polygons(shapely.get_coordinates(rings[0], include_z=True))
         UVGeometry = shapely.force_3d(UVGeometry, z=0)
         coors = shapely.get_coordinates(UVGeometry, include_z=True)
-        if not (Vector.parallel(self.axisZ, np.array([0, 0, 1])) and Vector.parallel(self.axisX, np.array([1, 0, 0]))):
+        if not (_projection_axis_parallel(self.axisZ, np.array([0, 0, 1])) and _projection_axis_parallel(self.axisX, np.array([1, 0, 0]))):
             coor_new = [coor @ np.linalg.inv(self.rotateMatrix) for coor in coors]
         else:
             coor_new = coors
@@ -1402,7 +1401,7 @@ def offset(polygon: shapely.Geometry, offset: float) -> shapely.Geometry:
     return proj.toWorld(polygonProjOffset)
 
 
-def faceNormal(poly: shapely.Geometry, EPS: float = geom.POINT_PRECISION) -> Vector:
+def faceNormal(poly: shapely.Geometry, EPS: float = 1e-9) -> Vector:
     """
     Compute stable normal vector for 3D polygon (handles non-convex/non-coplanar vertices)
 
@@ -1460,11 +1459,11 @@ def faceNormal(poly: shapely.Geometry, EPS: float = geom.POINT_PRECISION) -> Vec
     centroid = np.mean(vertices, axis=0)
     centered = vertices - centroid
 
-    # Compute covariance matrix (3x3, symmetric)
-    cov_matrix = np.dot(centered.T, centered) / (n_vertices - 1)
-
-    # SVD decomposition (stable for small matrices)
-    _, _, vh = np.linalg.svd(cov_matrix)
+    # Factor the vertex matrix directly. Forming its covariance squares the
+    # condition number: a long, sub-micrometre-wide planar face can then lose
+    # its second in-plane direction and acquire an incorrect normal. Keep
+    # the small singular direction without changing any geometry tolerance.
+    _, _, vh = np.linalg.svd(centered, full_matrices=False)
     normal = vh[-1]  # Normal = eigenvector with smallest eigenvalue (best fit plane)
 
     # ------------------- Step 4: Ensure consistent orientation -------------------
@@ -2018,11 +2017,8 @@ def splitOnZ(geoBase: shapely.Geometry, level: float, EPS: float = 1e-9) -> list
     if len(world_rings) == 0:
         return [[geoBase], []]
     uv_rings = [shapely.force_2d(proj.toUV(ring)) for ring in world_rings]
-    hole_coordinates = [shapely.get_coordinates(ring) for ring in uv_rings[1:]]
-    if len(hole_coordinates) > 0:
-        geo_proj = shapely.polygons(shapely.get_coordinates(uv_rings[0]), hole_coordinates)
-    else:
-        geo_proj = shapely.polygons(shapely.get_coordinates(uv_rings[0]))
+    # Preserve ring objects: holes may have different vertex counts.
+    geo_proj = shapely.polygons(uv_rings[0], holes=uv_rings[1:] or None)
     geo_proj = shapely.set_precision(geo_proj, geom.POINT_PRECISION)
 
     uv_coordinates = shapely.get_coordinates(geo_proj)

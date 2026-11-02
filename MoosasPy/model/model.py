@@ -49,6 +49,8 @@ class MoosasModel(MoosasContainer):
         self.schedulePath = None
         self.schedule = {}
         self.scheduleByType = {}
+        # Persistent energy boundary/parameter overrides, independent of templates.
+        self.energy_settings = {}
 
     @classmethod
     def load(cls, file_path: str | Path) -> MoosasModel:
@@ -69,7 +71,7 @@ class MoosasModel(MoosasContainer):
         """
         for spc in self.spaceList:
             if spc.description == "":
-                walls = self.getAllFaces(dumpUseless=True)['MoosasWall']
+                walls = spc.getAllFaces(to_dict=True)['MoosasWall']
                 description = f"This is a space named{spc.id} located in the level {spc.level},"
                 description += f" with an area of {spc.area} m2 and a height of {spc.height} m. "
                 description += f" average Window to wall ratio of this space is {np.round(np.mean([w.wwr for w in walls]), 2)}. "

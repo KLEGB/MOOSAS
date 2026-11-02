@@ -1,483 +1,185 @@
-"""
-Quick energy analysis module.
-
-This energy analysis is based on a simplified physical model,
-which only takes 0.01s for a space and gets acceptable accuracy.
-The analysis result has been validated by ASHRAE 140.
-More information can be found in this article:
-https://doi.org/10.1016/j.buildenv.2021.107929.
-
-The residential and public energy models run directly in Python.
-"""
+"""Run independent surface-resolved zones through the persistent CES3 v2 engine."""
 from __future__ import annotations
 
-from copy import copy
-import math
-from ...utils.support import os
 from dataclasses import dataclass
-import re
-from ...utils.constant import buildingType, dateSetting
+from pathlib import Path
+import os
+import platform
+
+import numpy as np
+
 from ..contracts import SimulationResult
-from .engine import EnergyOutput, simulate_energy
+from ..engine import SubprocessEngine
+from ..runner import CommandResult
+from .input import build_energy_input
+from .protocol import BinarySurfaceEngineV2
+from .requests import EnergyRequest, EnergyState
 
-from ...model.io.idf.model import ThermalSettings
-
-from ...model.resources import get_schedule_name, load_schedule
-from ...model import MoosasModel
-from ...utils import np, shapely
-
-# A quick radiation estimation based on measured data (Beijing cumSky)
-SUMMER_RADIATION = [280100, 175200, 213200, 116300, 280100]
-WINTER_RADIATION = [150800, 355200, 123600, 51500, 150800]
-
-# Legacy season boundaries copied from the historic MoosasModel defaults.
-SUMMER_SOLAR_SEASON_DAYS = 123
-WINTER_SOLAR_SEASON_DAYS = 120
-SOLAR_ACTIVE_HOURS = tuple(range(8, 18))
-
-# Month names for output parsing (12 months)
-MONTH_NAMES = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-]
+PARTS = ('cooling','heating','lighting','equipment')
+MONTH_NAMES = ('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')
+MONTH_START = np.array((0,31,59,90,120,151,181,212,243,273,304,334,365))*24
 
 
-TEMPORAL_SCALES = frozenset({"monthly", "daily", "hourly"})
-SPATIAL_SCALES = frozenset({"building", "zone"})
-
-BUILDING_TYPE_CODES = {
-    buildingType.RESIDENTIAL: 0,
-    buildingType.OFFICE: 1,
-    buildingType.HOTEL: 2,
-    buildingType.SCHOOL: 3,
-    buildingType.COMMERCIAL: 4,
-}
+def _row(values):
+    result = dict(zip(PARTS, map(float, values)))
+    result['total'] = sum(result.values())
+    return result
 
 
-def _validate_scales(temporal_scale: str, spatial_scale: str) -> tuple[str, str]:
-    temporal_scale = str(temporal_scale).strip().lower()
-    spatial_scale = str(spatial_scale).strip().lower()
-    if temporal_scale not in TEMPORAL_SCALES:
-        raise ValueError(f"temporal_scale must be one of {sorted(TEMPORAL_SCALES)}")
-    if spatial_scale not in SPATIAL_SCALES:
-        raise ValueError(f"spatial_scale must be one of {sorted(SPATIAL_SCALES)}")
-    return temporal_scale, spatial_scale
+@dataclass(frozen=True)
+class EnergyZoneResult:
+    zone_id: str
+    name: str
+    area_m2: float
+    energy_kwh: tuple[float, ...]
 
+    @property
+    def load(self):
+        return _row(np.asarray(self.energy_kwh)/self.area_m2)
 
-def _scale_arguments(temporal_scale: str, spatial_scale: str) -> list[str]:
-    arguments = []
-    if temporal_scale == "daily":
-        arguments += ["-d", "1"]
-    elif temporal_scale == "hourly":
-        arguments += ["-r", "1"]
-    if spatial_scale == "zone":
-        arguments += ["-z", "1"]
-    return arguments
-
-
-def _space_template_type(space):
-    template = str(space.settings.get("zone_template", "")).strip()
-    if not template:
-        return ""
-    return template.split("_")[-1].upper()
-
-
-def _resolve_schedule_ref(model: MoosasModel, template_type: str, field_name: str, current_value):
-    if isinstance(current_value, str):
-        text = current_value.strip()
-        try:
-            return float(text)
-        except Exception:
-            return text
-    if template_type:
-        schedule_name = get_schedule_name(model, template_type, field_name)
-        if schedule_name:
-            return schedule_name
-    return current_value
-
-
-def _normalize_radiation_mode(require_radiation) -> int:
-    if isinstance(require_radiation, bool):
-        return 1 if require_radiation else 0
-    if require_radiation is None:
-        return 0
-    if isinstance(require_radiation, str):
-        text = require_radiation.strip().lower()
-        if text in {"true", "yes", "on"}:
-            return 1
-        if text in {"false", "no", "off", ""}:
-            return 0
-        try:
-            require_radiation = int(text)
-        except Exception as exc:
-            raise ValueError(f"Invalid requireRadiation value: {require_radiation!r}") from exc
-    try:
-        mode = int(require_radiation)
-    except Exception as exc:
-        raise ValueError(f"Invalid requireRadiation value: {require_radiation!r}") from exc
-    if mode not in (0, 1, 2):
-        raise ValueError(f"requireRadiation must be 0, 1, or 2; got {require_radiation!r}")
-    return mode
-
-
-def _num_or_zero(value):
-    if value is None:
-        return 0.0
-    text = str(value).strip()
-    if not text or text.lower() == "none":
-        return 0.0
-    try:
-        return float(text)
-    except Exception:
-        return 0.0
-
-
-def _solar_season_day_count(season: str) -> int:
-    season = str(season).strip().lower()
-    if season == "summer":
-        return SUMMER_SOLAR_SEASON_DAYS
-    if season == "winter":
-        return WINTER_SOLAR_SEASON_DAYS
-    raise ValueError(f"Unsupported solar season: {season!r}")
-
-
-def _solar_typical_daily_profile(season_total: float, season: str) -> list[float]:
-    season_total = float(season_total)
-    season_days = _solar_season_day_count(season)
-    daily_total = season_total / season_days if season_days > 0 else 0.0
-    values = [0.0] * 24
-    if daily_total == 0.0:
-        return values
-    weights = np.sin(np.linspace(0.0, np.pi, len(SOLAR_ACTIVE_HOURS)))
-    weight_sum = float(np.sum(weights))
-    if weight_sum <= 0:
-        return values
-    scaled = daily_total * weights / weight_sum
-    for hour, value in zip(SOLAR_ACTIVE_HOURS, scaled.tolist()):
-        values[hour] = float(value)
-    active_sum = sum(values[hour] for hour in SOLAR_ACTIVE_HOURS)
-    values[SOLAR_ACTIVE_HOURS[-1]] += daily_total - active_sum
-    return values
-
-
-def _solar_schedule_name(space_id, space_index: int, season: str, suffix: str) -> str:
-    safe_space_id = re.sub(r"[^0-9A-Za-z_]+", "_", str(space_id))
-    safe_season = str(season).strip().upper()
-    safe_suffix = str(suffix).strip().upper()
-    return f"RAD_{safe_space_id}_{space_index:03d}_{safe_season}_{safe_suffix}"
-
-
-def _write_typical_solar_schedule(model: MoosasModel, space, space_index: int, season: str, season_total: float):
-    daily_name = _solar_schedule_name(space.id, space_index, season, "DAILY")
-    weekly_name = _solar_schedule_name(space.id, space_index, season, "WEEKLY")
-    daily_values = _solar_typical_daily_profile(season_total, season)
-    model.schedule[daily_name] = {"type": "Daily", "value": daily_values}
-    model.schedule[weekly_name] = {"type": "Weekly", "value": [daily_name] * 7}
-    return weekly_name
+    @property
+    def params(self):
+        return dict(zone_name=self.name, zone_area=self.area_m2)
 
 
 @dataclass(frozen=True)
 class EnergyResult(SimulationResult):
-    """Structured output from an energy simulation."""
+    request: EnergyRequest | None = None
+    zone_results: tuple[EnergyZoneResult, ...] = ()
+    hour_of_year: tuple[int, ...] = ()
+    zone_hourly_energy_kwh: np.ndarray | None = None
+    zone_temperature_c: np.ndarray | None = None
+    final_state: EnergyState | None = None
+    max_balance_residual_w: float = 0.
+    warmup: tuple[float, ...] = ()
+    surface_hours: tuple = ()
+    temporal_scale: str = 'monthly'
+    spatial_scale: str = 'building'
 
-    data: dict | None = None
+    @property
+    def data(self):
+        """Derived unrounded kWh/m² view for existing analysis consumers."""
+        areas = np.array([z.area_m2 for z in self.zone_results])
+        absolute = self.zone_hourly_energy_kwh
+        intensity = absolute / areas[:,None,None]
+        building = absolute.sum(axis=0) / areas.sum()
+        data = dict(total=_row(building.sum(axis=0)),spaces=self.zone_results)
+        hoy = np.asarray(self.hour_of_year)
+        if self.temporal_scale == 'monthly':
+            months = [building[(hoy>=a)&(hoy<b)].sum(axis=0) for a,b in zip(MONTH_START[:-1],MONTH_START[1:])]
+            data['months'] = dict(zip(MONTH_NAMES,map(_row,months)))
+            if self.spatial_scale=='zone':
+                data['zone_months'] = tuple(tuple(_row(z[(hoy>=a)&(hoy<b)].sum(axis=0)) for a,b in zip(MONTH_START[:-1],MONTH_START[1:])) for z in intensity)
+        elif self.temporal_scale=='daily':
+            days = tuple(np.unique(hoy//24))
+            data['days'] = tuple(_row(building[hoy//24==d].sum(axis=0)) for d in days)
+            if self.spatial_scale=='zone':
+                data['zone_days'] = tuple(tuple(_row(z[hoy//24==d].sum(axis=0)) for d in days) for z in intensity)
+        else:
+            data['hours'] = tuple(map(_row,building))
+            if self.spatial_scale=='zone':
+                data['zone_hours'] = tuple(tuple(map(_row,z)) for z in intensity)
+        return data
 
 
 class EnergyRunner:
-    """Prepare inputs, run the Python energy model, and return its results."""
+    def __init__(self, model=None, weather=None, *, energy_input=None,
+                 executable_path=None, engine=None, timeout_seconds=120.,
+                 temporal_scale='monthly', spatial_scale='building',
+                 preheat=None, max_preheat=120, warmup_tolerance_k=.1,
+                 initial_state=None, surface_results=False, on_progress=None, on_hour=None, **input_options):
+        if temporal_scale not in {'monthly','daily','hourly'}:
+            raise ValueError('temporal_scale must be monthly, daily, or hourly')
+        if spatial_scale not in {'building','zone'}:
+            raise ValueError('spatial_scale must be building or zone')
+        if energy_input is not None and not isinstance(energy_input,EnergyRequest):
+            raise TypeError('energy_input must be EnergyRequest; CSV/CLI zone dictionaries are no longer supported')
+        self.request = energy_input if energy_input is not None else build_energy_input(model,weather,**input_options)
+        suffix = '.exe' if platform.system()=='Windows' else ''
+        packaged = Path(__file__).resolve().parents[2]/'libs'/'energy'/f'CetusSurfaceEnergy{suffix}'
+        self.executable = Path(executable_path or os.environ.get('MOOSAS_ENERGY_EXECUTABLE',packaged)).resolve()
+        if not self.executable.is_file():
+            raise FileNotFoundError(f'CETUS CES3 v2 executable missing: {self.executable}')
+        if os.name!='nt' and not os.access(self.executable,os.X_OK):
+            self.executable.chmod(self.executable.stat().st_mode | 0o111)
+        self.engine = engine or SubprocessEngine()
+        if not np.isfinite(timeout_seconds) or timeout_seconds<=0:
+            raise ValueError('timeout_seconds must be positive')
+        self.timeout_seconds = timeout_seconds
+        self.temporal_scale = temporal_scale
+        self.spatial_scale = spatial_scale
+        self.preheat = (0 if initial_state is not None else 4) if preheat is None else preheat
+        if int(self.preheat)!=self.preheat or self.preheat<0 or int(max_preheat)!=max_preheat or max_preheat<self.preheat or warmup_tolerance_k<=0:
+            raise ValueError('Invalid warmup controls')
+        if self.preheat and (initial_state is not None or self.request.start_hour+24>8760):
+            raise ValueError('Restart/end-of-year windows require preheat=0')
+        self.max_preheat = max_preheat
+        self.tolerance = warmup_tolerance_k
+        self.initial_state = initial_state
+        self.surface_results = surface_results
+        self.on_progress = on_progress
+        self.on_hour = on_hour
 
-    def __init__(
-        self,
-        model: MoosasModel | None = None,
-        weather: object | None = None,
-        core=buildingType.RESIDENTIAL,
-        require_radiation=False,
-        temporal_scale="monthly",
-        spatial_scale="building",
-        schedule_path=None,
-        energy_input=None,
-    ):
-        self.model = model
-        self.weather = weather
-        self.core = core
-        self.require_radiation = require_radiation
-        self.temporal_scale, self.spatial_scale = _validate_scales(
-            temporal_scale,
-            spatial_scale,
-        )
-        self.schedule_path = schedule_path
-        self.energy_input = energy_input
-
-    def run(self) -> EnergyResult:
-        """Execute the energy model and return structured results."""
-        energy_input = self.energy_input
-        if not energy_input:
-            energy_input = build_energy_input(
-                self.model,
-                weather=self.weather,
-                core=self.core,
-                require_radiation=self.require_radiation,
-                temporal_scale=self.temporal_scale,
-                spatial_scale=self.spatial_scale,
-                schedule_path=self.schedule_path,
-            )
+    def run(self):
+        request = self.request
+        signature = request.signature
+        zone_ids = tuple(z.zone_id for z in request.zones)
+        if self.initial_state is not None:
+            state = self.initial_state
+            if state.model_signature!=signature or state.zone_ids!=zone_ids or state.next_hour!=request.start_hour:
+                raise ValueError('Restart signature, zone ordering, or next hour differs from request')
+            states = state.states
         else:
-            energy_input = copy(energy_input)
-            energy_input["args"] = list(energy_input.get("args", []))
-            energy_input["args"] += _scale_arguments(self.temporal_scale, self.spatial_scale)
-            if energy_input.get("schedule_path") and "-sch" not in energy_input["args"]:
-                energy_input["args"] += ["-sch", os.path.abspath(energy_input["schedule_path"])]
-
-        rows = [zone.paramToString() for zone in energy_input["zones"]]
-        output = simulate_energy(rows, energy_input["args"])
-        data = _energy_output_to_data(
-            output,
-            energy_input["zones"],
-            temporal_scale=self.temporal_scale,
-            spatial_scale=self.spatial_scale,
-        )
-        return EnergyResult(data=data)
-
-
-def _energy_row(values, precision):
-    formatted = [f"{value:.{precision}f}" for value in values]
-    return {
-        "cooling": formatted[0],
-        "heating": formatted[1],
-        "lighting": formatted[2],
-        "equipment": formatted[3],
-        "total": sum(float(value) for value in formatted),
-    }
-
-
-def _energy_output_to_data(output: EnergyOutput, zone_list, temporal_scale, spatial_scale):
-    total = _energy_row(output.total, 2)
-    for zone, values in zip(zone_list, output.spaces):
-        zone.load = _energy_row(values, 2)
-    months = {
-        month: _energy_row(values, 2)
-        for month, values in zip(dateSetting.MONTH_NAME, output.months)
-    }
-    data = {"total": total, "spaces": zone_list}
-    if temporal_scale == "monthly":
-        data["months"] = months
-    elif temporal_scale == "daily":
-        data["days"] = [_energy_row(values, 4) for values in output.days]
-    else:
-        data["hours"] = [_energy_row(values, 5) for values in output.hours]
-
-    if spatial_scale == "zone":
-        if temporal_scale == "monthly":
-            data["zone_months"] = [
-                [_energy_row(values, 2) for values in zone]
-                for zone in output.zone_months
-            ]
-        elif temporal_scale == "daily":
-            data["zone_days"] = [
-                [_energy_row(values, 4) for values in zone]
-                for zone in output.zone_days
-            ]
-        else:
-            data["zone_hours"] = [
-                [_energy_row(values, 5) for values in zone]
-                for zone in output.zone_hours
-            ]
-    return data
-
-
-def build_energy_input(model: MoosasModel,
-                   weather: object,
-                   core=buildingType.RESIDENTIAL,
-                   require_radiation=False,
-                   temporal_scale="monthly",
-                   spatial_scale="building",
-                   schedule_path=None):
-    """Get the energy input configuration for a given MoosasModel.
-
-    This function computes geometry-derived parameters for each space,
-    populates ThermalSettings objects, and builds the engine configuration.
-
-    Args:
-        model (MoosasModel): The model for which to generate the energy input.
-        core: Building type selector. Supported values are RESIDENTIAL,
-            OFFICE, HOTEL, SCHOOL, and COMMERCIAL. (default: RESIDENTIAL)
-        require_radiation (bool | int): 0/False keeps the fast geometric
-            estimate, 1/True consumes precomputed seasonal radiation totals,
-            and 2 consumes those totals to write schedule-driven solar gains.
-        temporal_scale (str): One of ``monthly``, ``daily``, or ``hourly``.
-        spatial_scale (str): Either ``building`` or ``zone``.
-        schedule_path (str or None): Path to the schedule CSV file. If
-            provided, adds '-sch <path>' to command-line args. (default: None)
-
-    Returns:
-        dict: A dictionary containing the energy input configuration:
-            - 'zones': list of ThermalSettings objects
-            - 'args': list of command-line argument strings
-
-    Examples:
-        >>> energy_input = build_energy_input(model, core=buildingType.OFFICE)
-        >>> for z in energy_input['zones']:
-        ...     print(z)
-
-        >>> # Hourly output by zone
-        >>> energy_input = build_energy_input(
-        ...     model,
-        ...     temporal_scale='hourly',
-        ...     spatial_scale='zone',
-        ...     schedule_path='office_schedule.csv',
-        ... )
-    """
-    temporal_scale, spatial_scale = _validate_scales(temporal_scale, spatial_scale)
-    def calculate_orientation(n):
-        """Calculate the orientation angle in degrees from a 2D normal vector.
-
-        Args:
-            n: A 2-element array representing a 2D vector [n[0], n[1]].
-
-        Returns:
-            int: Orientation angle in degrees (0~360), measured clockwise
-                from the positive y-axis. W:0, S:90, E:180, N:270.
-        """
-        o = int((np.arccos((-1) * n[0] / np.sqrt(n[0] ** 2 + n[1] ** 2))
-                 * 180 / np.pi).round())
-        if n[1] > 0:
-            o = 360 - o
-        if o == 360:
-            o = 0
-        return o
-
-    def non(x):
-        """Return x if positive, otherwise 0."""
-        return x if x > 0 else 0
-
-    if schedule_path is not None:
-        load_schedule(model, schedule_path)
-
-    radiation_mode = _normalize_radiation_mode(require_radiation)
-
-    if radiation_mode in (1, 2):
-        missing_space_ids = [
-            s.id
-            for s in model.spaceList
-            if s.settings.get('zone_summerrad') is None
-            or s.settings.get('zone_winterrad') is None
-        ]
-        if missing_space_ids:
-            raise ValueError(
-                "Precomputed zone_summerrad and zone_winterrad are required "
-                f"for spaces: {', '.join(map(str, missing_space_ids))}"
-            )
-
-    total_outside_area, total_volume = 0, 0
-    zones = []
-
-    for i, s in enumerate(model.spaceList):
-        outside_area, facade_area, window_area = 0, 0, 0
-        roof_area, skylight_area, floor_area = 0, 0, 0
-        summer_solar, winter_solar = 0.0, 0.0
-        theZone = ThermalSettings(**(s.settings))
-        theZone.id = s.id
-
-        template_type = _space_template_type(s)
-        for field_name in ("zone_ppsm", "zone_equipment", "zone_lighting"):
-            if field_name in getattr(s, 'explicit_settings', []):
-                resolved = float(s.settings[field_name])
-            else:
-                resolved = _resolve_schedule_ref(model, template_type, field_name, theZone.params.get(field_name))
-            if resolved is not None:
-                theZone.updateParams(**{field_name: resolved})
-
-        total_volume += s.area * s.height
-
-        for b in s.edge.wall:
-            if b.isOuter:
-                total_outside_area += b.area
-                outside_area += non(shapely.length(b.force_2d()) - 5.0) * 5.0
-                facade_area += b.area * (1 - b.wwr)
-                window_area += b.area * b.wwr
-                o = calculate_orientation(b.normal)
-                summer_solar += (
-                    SUMMER_RADIATION[o // 90]
-                    + ((o % 90) / 90.0)
-                    * (SUMMER_RADIATION[o // 90 + 1]
-                       - SUMMER_RADIATION[o // 90])
-                ) * b.area * b.wwr
-                winter_solar += (
-                    WINTER_RADIATION[o // 90]
-                    + ((o % 90) / 90.0)
-                    * (WINTER_RADIATION[o // 90 + 1]
-                       - WINTER_RADIATION[o // 90])
-                ) * b.area * b.wwr
-
-        if radiation_mode == 1:
-            summer_solar = _num_or_zero(s.settings.get('zone_summerrad')) * 60
-            winter_solar = _num_or_zero(s.settings.get('zone_winterrad')) * 60
-        elif radiation_mode == 2:
-            summer_total = _num_or_zero(s.settings.get('zone_summerrad'))
-            winter_total = _num_or_zero(s.settings.get('zone_winterrad'))
-            summer_schedule = _write_typical_solar_schedule(model, s, i, "summer", summer_total * 60)
-            winter_schedule = _write_typical_solar_schedule(model, s, i, "winter", winter_total * 60)
-            s.settings['summer_solar'] = summer_schedule
-            s.settings['winter_solar'] = winter_schedule
-            theZone.updateParams(**{
-                'summer_solar': summer_schedule,
-                'winter_solar': winter_schedule,
-            })
-
-        for c in s.ceiling.face:
-            if c.isOuter:
-                total_outside_area += c.area
-                roof_area += c.area
-            elif len(c.glazingId) > 0:
-                skylight_area += c.area * c.wwr
-
-        for fl in s.floor.face:
-            if fl.isOuter:
-                floor_area += fl.area
-
-        addSettings = {
-            'space_height': round(s.height, 2),
-            'zone_area': round(s.area, 2),
-            'outside_area': round(outside_area, 2),
-            'facade_area': round(facade_area, 2),
-            'window_area': round(window_area, 2),
-            'roof_area': round(roof_area, 2),
-            'skylight_area': round(skylight_area, 2),
-            'floor_area': round(floor_area, 2),
-        }
-
-        if radiation_mode == 2:
-            addSettings['summer_solar'] = s.settings['summer_solar']
-            addSettings['winter_solar'] = s.settings['winter_solar']
-        else:
-            addSettings['summer_solar'] = round(summer_solar, 2)
-            addSettings['winter_solar'] = round(winter_solar, 2)
-
-        theZone.updateParams(**addSettings)
-        zones.append(theZone)
-
-    try:
-        building_type_int = BUILDING_TYPE_CODES[core]
-    except KeyError as error:
-        raise ValueError(
-            "core must be one of RESIDENTIAL, OFFICE, HOTEL, SCHOOL, or COMMERCIAL"
-        ) from error
-
-    args = [
-        '-w', weather.weather_file,
-        '-t', str(building_type_int),
-        '-l', str(math.radians(float(weather.location.latitude))),
-        '-a', str(round(float(weather.location.altitude), 2)),
-        '-s', str(round(total_outside_area / total_volume, 2)),
-    ]
-
-    args += _scale_arguments(temporal_scale, spatial_scale)
-
-    schedule_out_path = None
-    if getattr(model, "schedule", None):
-        from ...model.resources import write_schedule
-
-        schedule_out_path = write_schedule(model)
-        args += ['-sch', schedule_out_path]
-
-    return {'zones': zones, 'args': args, 'schedule_path': schedule_out_path}
+            states = tuple(() for _ in request.zones)
+        models = tuple(z.native_model() for z in request.zones)
+        energy = np.zeros((len(models),request.hours,4))
+        temperatures = np.zeros((len(models),request.hours))
+        maximum_residual = 0.
+        history, surfaces = [], []
+        warnings = list(request.warnings)
+        session = BinarySurfaceEngineV2(self.executable,self.timeout_seconds,self.engine.open_binary_session)
+        with session:
+            session.configure(models)
+            def step(hour, full=False):
+                nonlocal states,maximum_residual
+                session.begin_step(request.hour(hour),states)
+                response = session.evaluate(full=full)
+                states = response['states']
+                maximum_residual = max(maximum_residual,response['max_abs_residual_w'])
+                session.end_step()
+                return response['zones']
+            if self.preheat:
+                for cycle in range(self.max_preheat):
+                    before = states
+                    for hour in range(24):
+                        step(hour)
+                    change = max((max(abs(a-b) for a,b in zip(old,new)) if old else float('inf')) for old,new in zip(before,states))
+                    history.append(change)
+                    if cycle+1>=self.preheat and change<=self.tolerance:
+                        break
+                else:
+                    warnings.append(f'Warmup did not converge to {self.tolerance} K in {self.max_preheat} daily cycles')
+            for hour in range(request.hours):
+                rows = step(hour,self.surface_results or self.on_hour is not None)
+                for i,(zone,row) in enumerate(zip(request.zones,rows)):
+                    q = row['hvac_w']
+                    h = request.start_hour+hour
+                    energy[i,hour] = (max(-q,0)/zone.cooling_cop/1000,
+                                      max(q,0)/zone.heating_cop/1000,
+                                      zone.lighting_w[h]/1000,zone.equipment_w[h]/1000)
+                    temperatures[i,hour] = row['zone_c']
+                if self.surface_results:
+                    surfaces.append(tuple(row['surfaces'] for row in rows))
+                if self.on_hour is not None:
+                    self.on_hour(request.start_hour+hour,rows)
+                if self.on_progress and ((hour+1)%24==0 or hour+1==request.hours):
+                    self.on_progress(hour+1,request.hours)
+        energy.setflags(write=False)
+        temperatures.setflags(write=False)
+        results = tuple(EnergyZoneResult(z.zone_id,z.name,z.area_m2,tuple(energy[i].sum(axis=0))) for i,z in enumerate(request.zones))
+        checkpoint = EnergyState(signature,request.start_hour+request.hours,zone_ids,states)
+        command = CommandResult(session.command,session.process.returncode,'CES3 v2 numeric session',session.stderr)
+        return EnergyResult(commands=(command,),warnings=tuple(warnings),request=request,zone_results=results,
+            hour_of_year=tuple(range(request.start_hour,request.start_hour+request.hours)),zone_hourly_energy_kwh=energy,
+            zone_temperature_c=temperatures,final_state=checkpoint,max_balance_residual_w=maximum_residual,
+            warmup=tuple(history),surface_hours=tuple(surfaces),temporal_scale=self.temporal_scale,spatial_scale=self.spatial_scale)
