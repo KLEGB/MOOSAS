@@ -65,7 +65,9 @@ def _convex_parts_with_holes(face, holes):
     face = np.asarray(face, dtype=float)
     polygon = shapely.Polygon(
         face[:, :2],
-        holes=[np.asarray(hole, dtype=float)[:, :2] for hole in holes],
+        # Rings can have different vertex counts. Build each ring before
+        # passing them to Shapely so NumPy does not coerce ragged coordinates.
+        holes=[shapely.linearrings(np.asarray(hole, dtype=float)[:, :2]) for hole in holes],
     )
     if not polygon.is_valid or polygon.is_empty or polygon.area <= 0:
         raise GeometryError(polygon, "Double-cut decomposition requires a valid polygon with holes.")

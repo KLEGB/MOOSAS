@@ -372,10 +372,10 @@ def _writeIDF_default(model: MoosasModel, outputPath: str, idfTemplatePath=None,
                 print(f"\rIDF: encoding walls: {wi+1}/{len(moElements['MoosasWall'])}", end='')
                 space = idfSpaceById[spaceId]
                 # Element settings take precedence over the derived zone averages.
-                wallU = wall.settings.get('u_value', space.settings['zone_wallU'])
+                wallU = wall.settings.get('u_value', space.settings.get('zone_wallU', 0.5))
                 glazing = wall.glazingElement[0] if wall.glazingElement else None
-                winU = glazing.settings.get('u_value', space.settings['zone_winU']) if glazing else space.settings['zone_winU']
-                SHGC = glazing.settings.get('shgc', space.settings['zone_win_SHGC']) if glazing else space.settings['zone_win_SHGC']
+                winU = glazing.settings.get('u_value', space.settings.get('zone_winU', 2.4)) if glazing else space.settings.get('zone_winU', 2.4)
+                SHGC = glazing.settings.get('shgc', space.settings.get('zone_win_SHGC', 0.6)) if glazing else space.settings.get('zone_win_SHGC', 0.6)
                 wallConstruction = zTemplate.getConstruction('opaque', wallU)
                 windowConstruction = zTemplate.getConstruction('window', winU, SHGC)
                 if wall.category == 2:
@@ -403,8 +403,8 @@ def _writeIDF_default(model: MoosasModel, outputPath: str, idfTemplatePath=None,
                     faceType = 'Roof' if len(face.space) == 1 else 'Ceiling'
                 wallU = face.settings.get('u_value', space.settings['zone_wallU'])
                 glazing = face.glazingElement[0] if face.glazingElement else None
-                winU = glazing.settings.get('u_value', space.settings['zone_winU']) if glazing else space.settings['zone_winU']
-                SHGC = glazing.settings.get('shgc', space.settings['zone_win_SHGC']) if glazing else space.settings['zone_win_SHGC']
+                winU = glazing.settings.get('u_value', space.settings.get('zone_winU', 2.4)) if glazing else space.settings.get('zone_winU', 2.4)
+                SHGC = glazing.settings.get('shgc', space.settings.get('zone_win_SHGC', 0.6)) if glazing else space.settings.get('zone_win_SHGC', 0.6)
                 wallConstruction = zTemplate.getConstruction('opaque', wallU)
                 windowConstruction = zTemplate.getConstruction('window', winU, SHGC)
                 if face.category == 2:

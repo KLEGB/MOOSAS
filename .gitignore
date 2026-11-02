@@ -143,6 +143,7 @@ dmypy.json
 .pytype/
 
 # Generated native simulation artifacts
+/test/output/
 MoosasPy/libs/rad/*.oct
 MoosasPy/libs/rad/ill_*.output
 MoosasPy/libs/vent/.xlog

@@ -106,6 +106,22 @@ result = EnergyRunner(model=model, weather=weather).run()
 print(result.data["total"])
 ```
 
+Energy simulation uses the bundled CETUS CES3 v2 binary engine with explicit
+surface boundaries (`outdoors`, `ground`, `adiabatic`). Each space is an
+independent single thermal zone; shared walls/slabs retain their allocated
+thermal storage with an adiabatic back face. See
+[the energy contract](MoosasPy/simulation/energy/CONTRACT.md) for parameter
+overrides, hourly radiation input, restart state, and native build instructions.
+Run `python test/accept_cetus_energy.py` for the full-year `NBuilding.rdf`
+acceptance and inspect `test/output/cetus_energy/summary.json`.
+
+Thermal templates are managed in `MoosasPy/db/building_template.json`, with
+GB 55015—2021 limits separated from equivalent-material assumptions. Select a
+profile using `EnergyRunner(..., template_id="public_A_cold_GB55015-2021_OFFICE")`;
+an optional `template_path` loads a project library. See
+[the thermal template guide](MoosasPy/db/THERMAL_TEMPLATES.md) for climate/class
+selection, explicit parameter precedence, and binary-engine acceptance.
+
 ## OpenFOAM Volume Mesh Export
 
 Export a selected constant-section room with the dedicated OpenFOAM function:

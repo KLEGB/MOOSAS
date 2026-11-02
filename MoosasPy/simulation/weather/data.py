@@ -20,7 +20,7 @@ class WeatherData:
     global_radiation: np.ndarray
     diffuse_radiation: np.ndarray
     ground_temperature: np.ndarray
-    sky_temperature: np.ndarray
+    sky_temperature: np.ndarray  # Kelvin, as stored in MOOSAS/DeST CSV column 8.
     wind_speed: np.ndarray
     wind_direction: np.ndarray
     pressure: np.ndarray

@@ -1,6 +1,4 @@
-﻿from __future__ import annotations
-
-"""RDF <-> gbXML conversion utilities for MOOSAS.
+﻿"""RDF <-> gbXML conversion utilities for MOOSAS.
 
 This module implements an end-to-end conversion workflow between the BOT /
 MOOSAS RDF representation used by :mod:`MoosasPy.model.io.rdf` and a compact gbXML
@@ -10,10 +8,15 @@ The converter is intentionally graph based.  It does not require constructing a
 ``MoosasModel`` instance, so it can be used as an independent workflow boundary
 for RDF-centric pipelines.
 """
+from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
+import math
+import tempfile
+from copy import deepcopy
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import xml.etree.ElementTree as etree
 
@@ -40,6 +43,7 @@ class GbxmlOpening:
     name: str
     opening_type: str
     coords: List[Tuple[float, float, float]]
+    properties: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -54,6 +58,7 @@ class GbxmlSurface:
     coords: List[Tuple[float, float, float]]
     adjacent_space_ids: List[str] = field(default_factory=list)
     openings: List[GbxmlOpening] = field(default_factory=list)
+    properties: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -239,6 +244,9 @@ def _is_opening_type(surface_type: Optional[str]) -> bool:
         "Glazing",
         "Skylight",
         "AirSkylight",
+        "OpeningAir",
+        "SlidingDoor",
+        "NonSlidingDoor",
     } or "Window" in surface_type or "Skylight" in surface_type
 
 
@@ -329,6 +337,7 @@ def _opening_from_element(
         name=str(uid) if uid is not None else _local_name(opening_element),
         opening_type=opening_type,
         coords=coords,
+        properties=_thermal_properties(graph, opening_element),
     )
 
 
@@ -359,6 +368,8 @@ def _collect_surfaces(graph: Graph, space_id_map: Dict[URIRef, str]) -> List[Gbx
     surfaces: List[GbxmlSurface] = []
 
     for element in sorted(graph.subjects(RDF.type, BOT.Element), key=str):
+        if any(graph.subjects(BOT.hasSubElement, element)):
+            continue
         iface_list = element_to_interfaces.get(element, [])
         raw_surface_type = _surface_type_from(graph, element, iface_list)
         if _is_opening_type(raw_surface_type):
@@ -378,29 +389,120 @@ def _collect_surfaces(graph: Graph, space_id_map: Dict[URIRef, str]) -> List[Gbx
             outside_boundary_condition=_outside_boundary_condition(graph, element, surface_type, len(adjacent_spaces)),
             coords=coords,
             adjacent_space_ids=adjacent_spaces,
+            properties=_thermal_properties(graph, element),
         )
 
         # Explicit parent-child window/skylight relations from the MOOSAS RDF encoder.
         seen_opening_uris: set[URIRef] = set()
+        seen_opening_coords = set()
         for opening_element in graph.objects(element, BOT.hasSubElement):
             opening = _opening_from_element(graph, opening_element, used_opening_ids)
             if opening is not None:
                 surface.openings.append(opening)
                 seen_opening_uris.add(opening_element)
+                seen_opening_coords.add(tuple(opening.coords))
 
         # Geometry-level holes are preserved even when no separate opening element exists.
         for face_node in graph.objects(element, MOOSAS.hasFace):
             for hole_node in graph.objects(face_node, MOOSAS.hasHole):
                 opening = _opening_from_hole(graph, element, hole_node, used_opening_ids)
-                if opening is not None and opening.uri not in seen_opening_uris:
+                if opening is not None and opening.uri not in seen_opening_uris and tuple(opening.coords) not in seen_opening_coords:
                     surface.openings.append(opening)
+                    seen_opening_coords.add(tuple(opening.coords))
         for hole_node in graph.objects(element, MOOSAS.hasHole):
             opening = _opening_from_hole(graph, element, hole_node, used_opening_ids)
-            if opening is not None and opening.uri not in seen_opening_uris:
+            if opening is not None and opening.uri not in seen_opening_uris and tuple(opening.coords) not in seen_opening_coords:
                 surface.openings.append(opening)
+                seen_opening_coords.add(tuple(opening.coords))
 
         surfaces.append(surface)
-    return surfaces
+    # A Moosas element can own multiple geometries. Export each part rather
+    # than silently taking its first face, and attach openings to their plane.
+    expanded = []
+    for surface in surfaces:
+        parts = []
+        for text in _get_wkt_literals(graph, surface.uri):
+            geom = shapely_wkt.loads(text)
+            for polygon in (geom.geoms if geom.geom_type == 'MultiPolygon' else [geom]):
+                coords = _polygon_coords_from_wkt(polygon.wkt)
+                if coords not in parts:
+                    parts.append(coords)
+        if len(parts) <= 1:
+            expanded.append(surface)
+            continue
+        for i, coords in enumerate(parts):
+            part = deepcopy(surface)
+            part.coords = coords
+            if i:
+                part.gbxml_id = _dedupe_id(surface.gbxml_id+f'_part{i+1}', used_surface_ids)
+            origin, u, v, normal, _, _ = _rectangle_frame(coords)
+            from shapely.geometry import Polygon, Point
+            project = lambda p: (sum((p[j]-origin[j])*u[j] for j in range(3)), sum((p[j]-origin[j])*v[j] for j in range(3)))
+            polygon = Polygon([project(p) for p in coords]).buffer(1e-5)
+            part.openings = []
+            for opening in surface.openings:
+                if not all(abs(sum((p[j]-origin[j])*normal[j] for j in range(3))) < 1e-4 for p in opening.coords):
+                    continue
+                center = [sum(p[j] for p in opening.coords)/len(opening.coords) for j in range(3)]
+                if polygon.covers(Point(project(center))):
+                    part.openings.append(deepcopy(opening))
+            expanded.append(part)
+    return expanded
+
+
+def _thermal_properties(graph, subject):
+    result = {}
+    for key, predicates in {'u_value': (MOOSAS.u_value, MOOSAS.U_Value),
+                            'thickness': (MOOSAS.thickness,), 'volumetric_heat_capacity': (MOOSAS.volumetric_heat_capacity,),
+                            'transparency': (MOOSAS.transparency,), 'reflection': (MOOSAS.reflection,),
+                            'shgc': (MOOSAS.shgc, MOOSAS.SHGC)}.items():
+        for pred in predicates:
+            value = _literal_float(_first(graph, subject, pred))
+            if value is not None:
+                result[key] = value
+                break
+    return result
+
+
+def _rectangle_frame(coords):
+    normal = [0., 0., 0.]
+    for a, b in zip(coords, list(coords[1:])+[coords[0]]):
+        normal[0] += (a[1]-b[1])*(a[2]+b[2])
+        normal[1] += (a[2]-b[2])*(a[0]+b[0])
+        normal[2] += (a[0]-b[0])*(a[1]+b[1])
+    length = math.sqrt(sum(n*n for n in normal))
+    if length < 1e-10:
+        raise ValueError('Cannot export a degenerate gbXML polygon')
+    normal = [n/length for n in normal]
+    u = [-normal[1], normal[0], 0] if abs(normal[2]) < .999 else [1., 0., 0.]
+    length = math.sqrt(sum(n*n for n in u)); u = [n/length for n in u]
+    v = [normal[1]*u[2]-normal[2]*u[1], normal[2]*u[0]-normal[0]*u[2], normal[0]*u[1]-normal[1]*u[0]]
+    if v[2] < 0:
+        u = [-x for x in u]; v = [-x for x in v]
+    xs = [sum(p[j]*u[j] for j in range(3)) for p in coords]
+    ys = [sum(p[j]*v[j] for j in range(3)) for p in coords]
+    anchor = coords[0]
+    dx, dy = min(xs)-xs[0], min(ys)-ys[0]
+    origin = [anchor[j]+dx*u[j]+dy*v[j] for j in range(3)]
+    return origin, u, v, normal, max(xs)-min(xs), max(ys)-min(ys)
+
+
+def _add_rectangular(parent, coords, parent_frame=None):
+    origin, u, v, normal, width, height = _rectangle_frame(coords)
+    rectangular = etree.SubElement(parent, _q('RectangularGeometry'))
+    if parent_frame is None:
+        _add_text(rectangular, 'Azimuth', _format_float(math.degrees(math.atan2(normal[0],normal[1])) % 360))
+        point = etree.SubElement(rectangular, _q('CartesianPoint'))
+        for value in origin:
+            _add_text(point, 'Coordinate', _format_float(value))
+        _add_text(rectangular, 'Tilt', _format_float(math.degrees(math.acos(min(1.,abs(normal[2]))))))
+    else:
+        base, pu, pv, *_ = parent_frame
+        point = etree.SubElement(rectangular, _q('CartesianPoint'))
+        for axis in (pu, pv):
+            _add_text(point, 'Coordinate', _format_float(min(sum((p[j]-base[j])*axis[j] for j in range(3)) for p in coords)))
+    _add_text(rectangular, 'Width', _format_float(width))
+    _add_text(rectangular, 'Height', _format_float(height))
 
 
 def _add_text(parent, tag: str, text) -> Optional[etree.Element]:
@@ -438,7 +540,7 @@ def build_gbxml_tree(
     building_id: str = "building-1",
     campus_id: str = "campus-1",
     building_type: str = "Unknown",
-    gbxml_version: str = "6.01",
+    gbxml_version: str = "0.37",
 ) -> etree.ElementTree:
     """Build an ElementTree in the gbXML namespace from parsed DTOs."""
 
@@ -453,18 +555,77 @@ def build_gbxml_tree(
             "areaUnit": "SquareMeters",
             "volumeUnit": "CubicMeters",
             "temperatureUnit": "C",
-            f"{{{XSI_NS}}}schemaLocation": f"{GBXML_NS} https://www.gbxml.org/schema/8-01/GreenBuildingXML_Ver8.01.xsd",
         },
     )
-    etree.SubElement(root, _q("Construction"), id="construction-default")
+    # A construction without layers/material references cannot be resolved by
+    # legacy importers. Use a complete, explicitly generic fallback construction.
+    material = etree.SubElement(root, _q('Material'), id='material-default')
+    _add_text(material, 'Name', 'Generic opaque material')
+    for tag, value, unit in [('Thickness', '0.1', 'Meters'), ('Conductivity', '0.5', 'WPerMeterK'),
+                             ('Density', '1000', 'KgPerCubicM'), ('SpecificHeat', '1000', 'JPerKgK')]:
+        etree.SubElement(material, _q(tag), unit=unit).text = value
+    layer = etree.SubElement(root, _q('Layer'), id='layer-default')
+    etree.SubElement(layer, _q('MaterialId'), materialIdRef='material-default')
+    construction = etree.SubElement(root, _q('Construction'), id='construction-default')
+    _add_text(construction, 'Name', 'Generic opaque construction')
+    etree.SubElement(construction, _q('LayerId'), layerIdRef='layer-default')
+    window_type = etree.SubElement(root, _q('WindowType'), id='window-default')
+    _add_text(window_type, 'Name', 'Generic window')
+    etree.SubElement(window_type, _q('U-value'), unit='WPerSquareMeterK').text = '2.4'
+    construction_refs, window_refs = {}, {}
+    opaque_cache, window_cache = {}, {}
+    for surface in surfaces:
+        properties = surface.properties
+        u_value = properties.get('u_value')
+        if u_value and u_value > 0:
+            film = .14 if surface.surface_type == 'Roof' else .21 if surface.surface_type in {'SlabOnGrade', 'UndergroundSlab','RaisedFloor'} else .17
+            thickness = properties.get('thickness', .2)
+            capacity = properties.get('volumetric_heat_capacity', 1e6)
+            resistance = max(1/u_value-film, .001)
+            signature = (u_value, thickness, capacity, resistance)
+            if signature not in opaque_cache:
+                index = len(opaque_cache)+1
+                mid, lid, cid = f'material-rdf-{index}', f'layer-rdf-{index}', f'construction-rdf-{index}'
+                material = etree.SubElement(root, _q('Material'), id=mid)
+                _add_text(material, 'Name', f'RDF equivalent material {index}')
+                for tag, value, unit in [('Thickness', thickness, 'Meters'), ('Conductivity', thickness/resistance, 'WPerMeterK'),
+                                         ('Density', 1000, 'KgPerCubicM'), ('SpecificHeat', capacity/1000, 'JPerKgK')]:
+                    etree.SubElement(material, _q(tag), unit=unit).text = _format_float(value)
+                layer = etree.SubElement(root, _q('Layer'), id=lid)
+                etree.SubElement(layer, _q('MaterialId'), materialIdRef=mid)
+                construction = etree.SubElement(root, _q('Construction'), id=cid)
+                _add_text(construction, 'Name', f'RDF equivalent construction {index}')
+                etree.SubElement(construction, _q('U-value'), unit='WPerSquareMeterK').text = _format_float(u_value)
+                etree.SubElement(construction, _q('LayerId'), layerIdRef=lid)
+                opaque_cache[signature] = cid
+            construction_refs[surface.gbxml_id] = opaque_cache[signature]
+        for opening in surface.openings:
+            properties = opening.properties
+            signature = (properties.get('u_value', 2.4), properties.get('transparency'))
+            if signature not in window_cache:
+                ident = f'window-rdf-{len(window_cache)+1}'
+                window_type = etree.SubElement(root, _q('WindowType'), id=ident)
+                _add_text(window_type, 'Name', f'RDF equivalent glazing {len(window_cache)+1}')
+                etree.SubElement(window_type, _q('U-value'), unit='WPerSquareMeterK').text = _format_float(signature[0])
+                if signature[1] is not None:
+                    etree.SubElement(window_type, _q('Transmittance'), unit='Fraction', type='Solar').text = _format_float(signature[1])
+                pane = etree.SubElement(window_type, _q('Glaze'), id=ident+'-pane')
+                _add_text(pane, 'Name', 'Equivalent glazing pane')
+                etree.SubElement(pane, _q('Thickness'), unit='Meters').text = '0.006'
+                window_cache[signature] = ident
+            window_refs[opening.gbxml_id] = window_cache[signature]
+    ranks = {_q('Material'):0, _q('Layer'):1, _q('Construction'):2, _q('WindowType'):3}
+    root[:] = sorted(root, key=lambda node: ranks.get(node.tag, 4))
     campus = etree.SubElement(root, _q("Campus"), id=campus_id)
     building = etree.SubElement(campus, _q("Building"), id=building_id, buildingType=building_type)
     total_area = sum(space.area for space in spaces if space.area is not None)
     if total_area:
         _add_text(building, "Area", _format_float(total_area))
 
+    space_nodes = {}
     for space in spaces:
         space_el = etree.SubElement(building, _q("Space"), id=space.gbxml_id)
+        space_nodes[space.gbxml_id] = space_el
         _add_text(space_el, "Name", space.name)
         if space.area is not None:
             _add_text(space_el, "Area", _format_float(space.area))
@@ -477,12 +638,13 @@ def build_gbxml_tree(
             _q("Surface"),
             id=surface.gbxml_id,
             surfaceType=surface.surface_type,
-            constructionIdRef="construction-default",
+            constructionIdRef=construction_refs.get(surface.gbxml_id, 'construction-default'),
         )
         _add_text(surface_el, "Name", surface.name)
         _add_text(surface_el, "Description", f"OutsideBoundaryCondition={surface.outside_boundary_condition}")
         for space_id in surface.adjacent_space_ids:
             etree.SubElement(surface_el, _q("AdjacentSpaceId"), spaceIdRef=space_id)
+        _add_rectangular(surface_el, surface.coords)
         _add_polyloop(surface_el, surface.coords)
         for opening in surface.openings:
             opening_el = etree.SubElement(
@@ -490,9 +652,20 @@ def build_gbxml_tree(
                 _q("Opening"),
                 id=opening.gbxml_id,
                 openingType=opening.opening_type,
+                windowTypeIdRef=window_refs.get(opening.gbxml_id, 'window-default'),
             )
             _add_text(opening_el, "Name", opening.name)
+            _add_rectangular(opening_el, opening.coords, _rectangle_frame(surface.coords))
             _add_polyloop(opening_el, opening.coords)
+    for sid, space_el in space_nodes.items():
+        shell = etree.SubElement(space_el, _q('ShellGeometry'), id='shell-'+sid, unit='Meters')
+        closed = etree.SubElement(shell, _q('ClosedShell'))
+        for surface in surfaces:
+            if sid not in surface.adjacent_space_ids:
+                continue
+            dummy = etree.Element('dummy')
+            polyloop = _add_polyloop(dummy, surface.coords)
+            closed.append(polyloop)
     return etree.ElementTree(root)
 
 
@@ -503,7 +676,7 @@ def convert_rdf_to_gbxml(
     building_id: str = "building-1",
     campus_id: str = "campus-1",
     building_type: str = "Unknown",
-    gbxml_version: str = "6.01",
+    gbxml_version: str = "0.37",
 ) -> etree.ElementTree:
     """Convert a BOT/MOOSAS RDF Turtle file to gbXML.
 
@@ -518,15 +691,28 @@ def convert_rdf_to_gbxml(
         rdflib parser format.  Defaults to ``turtle``.
     """
 
-    spaces, surfaces = parse_rdf_for_gbxml(input_path, rdf_format=rdf_format)
-    tree = build_gbxml_tree(
-        spaces,
-        surfaces,
-        building_id=building_id,
-        campus_id=campus_id,
-        building_type=building_type,
-        gbxml_version=gbxml_version,
-    )
+    from .exchange import restore_exchange, validate_references
+    graph = Graph().parse(str(input_path), format=rdf_format)
+    from .energy import DOC as THERMAL_DOC,GBE
+    evidence = graph.value(THERMAL_DOC,GBE.projection)
+    if evidence is not None:
+        from .exchange import DOC as EXCHANGE_DOC,EX,capture_exchange
+        if graph.value(EXCHANGE_DOC,EX.xmlSkeleton) is None:
+            import json
+            capture_exchange(etree.fromstring(json.loads(str(evidence))['source_xml']),graph)
+    tree = restore_exchange(graph)
+    if tree is None:
+        spaces, space_id_map = _collect_spaces(graph)
+        surfaces = _collect_surfaces(graph, space_id_map)
+        tree = build_gbxml_tree(
+            spaces,
+            surfaces,
+            building_id=building_id,
+            campus_id=campus_id,
+            building_type=building_type,
+            gbxml_version=gbxml_version,
+        )
+    validate_references(tree.getroot())
     etree.indent(tree, space="  ")
     tree.write(str(output_path), xml_declaration=True, encoding="utf-8")
     return tree
@@ -589,6 +775,8 @@ def convert_gbxml_to_rdf(
 
     tree = etree.parse(str(input_path))
     root = tree.getroot()
+    from .energy import units
+    length_scale, area_scale, volume_scale = units(root)
 
     graph = Graph()
     graph.bind("bes", BES)
@@ -599,6 +787,26 @@ def convert_gbxml_to_rdf(
     graph.bind("rdfs", RDFS)
     graph.bind("xsd", XSD)
     graph.bind("wgs", WGS)
+
+    # The native RDF loader expects at least one BOT storey and every model
+    # element to point to it.  gbXML carries elevations in the geometry rather
+    # than as a separate storey object, so use the building datum as level 0;
+    # surface coordinates remain unchanged in the geometry triples.
+    building_uri = uri("Building_1")
+    level_uri = uri("Level_0.0")
+    graph.add((building_uri, RDF.type, BOT.Building))
+    graph.add((level_uri, RDF.type, BOT.Storey))
+    graph.add((level_uri, MOOSAS.altitute, Literal(0.0, datatype=XSD.double)))
+    graph.add((building_uri, BOT.hasStorey, level_uri))
+
+    def ensure_level(level: float):
+        level = round(float(level), 6)
+        level_node = uri(f"Level_{level}")
+        if (level_node, RDF.type, BOT.Storey) not in graph:
+            graph.add((level_node, RDF.type, BOT.Storey))
+            graph.add((level_node, MOOSAS.altitute, Literal(level, datatype=XSD.double)))
+            graph.add((building_uri, BOT.hasStorey, level_node))
+        return level_node
 
     for space_el in root.findall(f".//{{{GBXML_NS}}}Space"):
         sid = space_el.get("id")
@@ -612,12 +820,13 @@ def convert_gbxml_to_rdf(
             graph.add((space_uri, RDFS.label, Literal(name)))
         area = _child_text(space_el, "Area")
         if area is not None:
-            graph.add((space_uri, BES.hasFloorArea_m2, Literal(float(area), datatype=XSD.double)))
+            graph.add((space_uri, BES.hasFloorArea_m2, Literal(float(area)*area_scale, datatype=XSD.double)))
         volume = _child_text(space_el, "Volume")
         if volume is not None:
-            graph.add((space_uri, BES.hasVolume_m3, Literal(float(volume), datatype=XSD.double)))
+            graph.add((space_uri, BES.hasVolume_m3, Literal(float(volume)*volume_scale, datatype=XSD.double)))
         graph.add((space_uri, BES.hasNorthDirection_deg, Literal(0.0, datatype=XSD.double)))
 
+    edge_orders: Dict[URIRef, int] = {}
     for surface_el in root.findall(f".//{{{GBXML_NS}}}Surface"):
         surface_id = surface_el.get("id")
         if not surface_id:
@@ -626,6 +835,7 @@ def convert_gbxml_to_rdf(
         surface_type = surface_el.get("surfaceType") or "ExteriorWall"
         graph.add((surface_uri, RDF.type, BOT.Element))
         graph.add((surface_uri, MOOSAS.Uid, Literal(surface_id)))
+        graph.add((surface_uri, MOOSAS.Offset, Literal(0.0, datatype=XSD.double)))
         graph.add((surface_uri, BES.surfaceType, BES.term(surface_type)))
         graph.add((surface_uri, BES.hasSurfaceType, MOOSAS.term("Wall" if "Wall" in surface_type else "Face")))
         obc = _child_text(surface_el, "OutsideBoundaryCondition")
@@ -635,9 +845,11 @@ def convert_gbxml_to_rdf(
                 obc = desc.split("OutsideBoundaryCondition=", 1)[1].split(";", 1)[0].strip()
         if obc:
             graph.add((surface_uri, BES.hasOutsideBoundaryCondition, Literal(obc)))
-        coords = _polyloop_coords(surface_el)
+        coords = [tuple(v*length_scale for v in p) for p in _polyloop_coords(surface_el)]
         if coords:
             face_uri = _add_geometry_triples(graph, surface_uri, surface_id, coords)
+            surface_level = ensure_level(min(point[2] for point in coords))
+            graph.add((surface_uri, MOOSAS.hasLevel, surface_level))
         else:
             face_uri = None
 
@@ -650,7 +862,20 @@ def convert_gbxml_to_rdf(
             graph.add((iface_uri, RDF.type, BOT.Interface))
             graph.add((iface_uri, BOT.interfaceOf, space_uri))
             graph.add((iface_uri, BOT.interfaceOf, surface_uri))
+            # The RDF loader uses MOOSAS topology classes to assemble spaces;
+            # retain the original gbXML type on the interface as well.
+            if surface_type in {"Floor", "SlabOnGrade", "UndergroundSlab", "InteriorFloor", "RaisedFloor"}:
+                topology_type = MOOSAS.Floor
+            elif surface_type in {"Roof", "Ceiling"}:
+                topology_type = MOOSAS.Ceiling
+            else:
+                topology_type = MOOSAS.Edge
+            graph.add((iface_uri, BES.hasSurfaceType, topology_type))
             graph.add((iface_uri, BES.surfaceType, BES.term(surface_type)))
+            if topology_type == MOOSAS.Edge:
+                order = edge_orders.get(space_uri, 0)
+                graph.add((iface_uri, MOOSAS.subElementOrder, Literal(order, datatype=XSD.integer)))
+                edge_orders[space_uri] = order + 1
             graph.add((space_uri, BOT.adjacentElement, surface_uri))
 
         for opening_el in surface_el.findall(f"{{{GBXML_NS}}}Opening"):
@@ -661,15 +886,22 @@ def convert_gbxml_to_rdf(
             opening_type = opening_el.get("openingType") or "FixedWindow"
             graph.add((opening_uri, RDF.type, BOT.Element))
             graph.add((opening_uri, MOOSAS.Uid, Literal(opening_id)))
+            graph.add((opening_uri, MOOSAS.Offset, Literal(0.0, datatype=XSD.double)))
             graph.add((opening_uri, BES.surfaceType, BES.term(opening_type)))
-            graph.add((opening_uri, BES.hasSurfaceType, MOOSAS.term("Glazing" if "Window" in opening_type else "Skylight")))
+            graph.add((opening_uri, BES.hasSurfaceType, MOOSAS.term("Skylight" if "Skylight" in opening_type else "Glazing")))
             graph.add((surface_uri, BOT.hasSubElement, opening_uri))
-            opening_coords = _polyloop_coords(opening_el)
+            opening_coords = [tuple(v*length_scale for v in p) for p in _polyloop_coords(opening_el)]
             if opening_coords:
                 opening_face_uri = _add_geometry_triples(graph, opening_uri, opening_id, opening_coords)
+                opening_level = ensure_level(min(point[2] for point in opening_coords))
+                graph.add((opening_uri, MOOSAS.hasLevel, opening_level))
                 if face_uri is not None:
                     graph.add((face_uri, MOOSAS.hasHole, opening_face_uri))
 
+    from .exchange import capture_exchange
+    capture_exchange(root, graph)
+    from .energy import capture
+    capture(root, graph, input_path)
     graph.serialize(destination=str(output_path), format=rdf_format)
     return graph
 
@@ -679,25 +911,32 @@ rdf_to_gbxml = convert_rdf_to_gbxml
 gbxml_to_rdf = convert_gbxml_to_rdf
 
 
-if __name__ == "__main__":
-    import argparse
+def is_gbxml(file_path: str | Path) -> bool:
+    """Recognize gbXML documents using a generic .xml extension."""
+    try:
+        root = etree.parse(file_path).getroot()
+    except (OSError, etree.ParseError):
+        return False
+    return root.tag.rsplit("}", 1)[-1].lower() == "gbxml"
 
-    parser = argparse.ArgumentParser(description="Convert BOT/MOOSAS RDF and gbXML files.")
-    sub = parser.add_subparsers(dest="command", required=True)
 
-    p1 = sub.add_parser("rdf-to-gbxml", help="Convert RDF Turtle to gbXML")
-    p1.add_argument("input")
-    p1.add_argument("output")
-    p1.add_argument("--rdf-format", default="turtle")
+def load_gbxml(file_path: str | Path):
+    """Load a complete model through the BOT/MOOSAS RDF representation."""
+    from ..rdf import loadRDF
 
-    p2 = sub.add_parser("gbxml-to-rdf", help="Convert gbXML to RDF Turtle")
-    p2.add_argument("input")
-    p2.add_argument("output")
-    p2.add_argument("--rdf-format", default="turtle")
-    p2.add_argument("--base-uri", default="")
+    with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_load_") as directory:
+        rdf_path = Path(directory) / "model.ttl"
+        convert_gbxml_to_rdf(file_path, rdf_path, rdf_format="turtle")
+        return loadRDF(str(rdf_path), fileFormat="turtle")
 
-    args = parser.parse_args()
-    if args.command == "rdf-to-gbxml":
-        convert_rdf_to_gbxml(args.input, args.output, rdf_format=args.rdf_format)
-    elif args.command == "gbxml-to-rdf":
-        convert_gbxml_to_rdf(args.input, args.output, rdf_format=args.rdf_format, base_uri=args.base_uri)
+
+def save_gbxml(model, file_path: str | Path):
+    """Export model geometry, thermal evidence and exchange metadata."""
+    from ..rdf import writeRDF
+
+    with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_") as directory:
+        rdf_path = Path(directory) / "model.ttl"
+        writeRDF(model, str(rdf_path), fileFormat="turtle")
+        convert_rdf_to_gbxml(rdf_path, file_path, rdf_format="turtle")
+
+

@@ -16,7 +16,6 @@ from MoosasPy.simulation.airflow.runner import (
     VentPaths,
     _contam_platform,
 )
-from MoosasPy.simulation.energy.runner import EnergyRunner
 from MoosasPy.simulation.engine import NativeExecution
 from MoosasPy.simulation.radiation.calculation import (
     calculate_model_radiation,
@@ -151,19 +150,6 @@ class SimulationWorkspaceTests(unittest.TestCase):
             _contam_platform("linux", "aarch64")
         with self.assertRaisesRegex(OSError, "platform"):
             _contam_platform("darwin", "x86_64")
-
-    def test_energy_runner_has_no_native_workspace(self):
-        zone = SimpleNamespace(paramToString=lambda: "zone", paramTags=lambda: "header")
-        energy_input = {"zones": [zone], "args": ["-w", "weather.csv"]}
-        output = SimpleNamespace(
-            total=np.zeros(4), spaces=np.zeros((1, 4)), months=np.zeros((12, 4))
-        )
-
-        with patch("MoosasPy.simulation.energy.runner.simulate_energy", return_value=output):
-            result = EnergyRunner(energy_input=energy_input).run()
-
-        self.assertEqual(result.commands, ())
-        self.assertEqual(result.data["total"]["total"], 0.0)
 
     def test_weather_conversion_uses_explicit_output_path(self):
         def run_command(command, **_kwargs):

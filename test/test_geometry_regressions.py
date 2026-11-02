@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from MoosasPy.simulation.energy.runner import _resolve_schedule_ref
 from MoosasPy.simulation.radiation import calculation as radiation_calculation
 from MoosasPy.model.io.graph import buildGraph
 from MoosasPy.transform.geometry.convexify import GeometryConvexifier
@@ -748,7 +747,6 @@ def test_template_application_keeps_load_intensities_numeric():
     assert space.settings["zone_ppsm"] == 0.031
     assert space.settings["zone_equipment"] == 4.2
     assert space.settings["zone_lighting"] == 6.5
-    assert _resolve_schedule_ref(model, "RESIDENTIAL", "zone_ppsm", space.settings["zone_ppsm"]) == "RES_OccDens_Weekly"
 
     invalid_template = {"type": "RESIDENTIAL", "zone_ppsm": "RES_OccDens_Weekly"}
     model.buildingTemplate = {"invalid-residential": invalid_template}

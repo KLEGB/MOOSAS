@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 
 from .geos import Projection, Vector, faceNormal, is_ccw, simplify, overlapArea, equals, selfIntersect, makeValid, bBox
 from .triangulation import triangulate2dFace
@@ -1224,7 +1225,16 @@ class MoosasFace(MoosasElement):
         """
         # region is an useless arg to ensure consistency
 
-        return shapely.force_2d(self.face)
+        footprint = shapely.force_2d(self.face)
+        if not shapely.is_valid(footprint):
+            # Coordinate snapping can leave a backtracking edge or split a
+            # ring at a touching vertex. Keep every repaired polygonal part;
+            # zero-area lines must not enter floor-area overlay operations.
+            repaired = shapely.make_valid(footprint)
+            parts = [part for part in shapely.get_parts(repaired)
+                     if shapely.get_dimensions(part) == 2]
+            footprint = shapely.union_all(parts)
+        return footprint
 
     def to_xml(self, model: MoosasContainer, Element_tag='face', writeGeometry=False):
         """
@@ -2114,7 +2124,7 @@ class MoosasFloor:
     @property
     def level(self) -> float:
         """
-        Level of the face.
+        Level of the first face.
         
         Parameters
         ----------
@@ -2144,7 +2154,9 @@ class MoosasFloor:
         float
             The mean value of the `offset` attribute from all faces, converted to a Python float.
         """
-        return np.mean([f.offset for f in self.face]).item()
+        # Faces can use different Storey datums. Average their actual reference
+        # elevations, then express the result against this Floor's datum.
+        return np.mean([f.level + f.offset for f in self.face]).item() - self.level
 
     @property
     def glazingId(self) -> list[str]:
@@ -2268,9 +2280,9 @@ class MoosasEdge:
     'level': The lower elevation of the envelope, which is used to reduce the scope of floor identification
     'toplevel': The upper elevation of the envelope, which is used to reduce the ceiling identification area
     """
-    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', 'internalMass')
+    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', '__legacySharedWalls', 'internalMass')
 
-    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None):
+    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None, *, legacy_shared_walls=()):
         """
         Initialize a boundary object composed of walls.
         
@@ -2286,17 +2298,24 @@ class MoosasEdge:
         self.wall: list[MoosasWall] = walls
         self.__botBound = []
         self.__topBound = []
+        self.__explicitBoundary = boundary is not None
+        self.__legacySharedWalls = frozenset(legacy_shared_walls)
         self.Uid = generate_code(4)
         # 创建底面和顶面投影多边形。
         if len(self.wall) < 3:
             raise GeometryError(walls, "A boundary requires at least 3 walls.")
-        self.prepareBoundary()
         if boundary is not None:
+            # RDF supplies the authoritative ring. Reconstructing a provisional
+            # polygon on the reader's centimetre grid can collapse legitimate
+            # sub-grid wall segments before this boundary is installed.
             self.__botBound = shapely.force_2d(boundary)
+            self.__topBound = self.__botBound
             for wall, factor in zip(self.wall, self.FactorOfWall):
                 wall.orientation = factor
                 for glazing in wall.glazingElement:
                     glazing.orientation = factor
+        else:
+            self.prepareBoundary()
         self.internalMass: list[MoosasElement] = []
         for w in walls:
             self.internalMass += w.shading
@@ -2534,6 +2553,128 @@ class MoosasEdge:
             factor (determined by clockwise or counter-clockwise polygon winding) and 
             each edge vector of the polygon boundary.
         """
+        if self.__explicitBoundary or (
+                shapely.get_type_id(self.__botBound) == 3
+                and len(self.__botBound.interiors)):
+            # Flattening Polygon coordinates inserts fictitious exterior/hole
+            # connectors and misaligns every following normal with its wall.
+            factors = []
+            for wall in self.wall:
+                # Actual wall Faces retain sub-grid endpoints even when a
+                # legacy recognition projection has collapsed to one Point.
+                points = np.unique(
+                    shapely.get_coordinates(wall.face, include_z=True)[:, :2],
+                    axis=0,
+                )
+                if len(points) < 2:
+                    raise GeometryError(wall.face, "degenerate explicit wall")
+                distances = np.linalg.norm(
+                    points[:, None, :] - points[None, :, :], axis=2)
+                ia, ib = np.unravel_index(np.argmax(distances), distances.shape)
+                vector = np.asarray(points[ib] - points[ia], dtype=float)
+                length = float(np.linalg.norm(vector))
+                if length <= 0:
+                    raise GeometryError(wall.face, "degenerate explicit wall")
+                normal = np.array([vector[1], -vector[0]]) / length
+                center = (points[ia] + points[ib]) / 2
+                epsilon = min(.001, length * .001)
+                # A fine-grid residual between the supplied ring and an actual
+                # short wall can exceed length/1000. Shrinking that probe alone
+                # leaves both points on the same side. Also try bounded local
+                # probes up to a quarter of the segment under the same 1 mm
+                # cap. This changes neither geometry nor review tolerances.
+                steps = [epsilon * 10. ** (-power) for power in range(10)]
+                steps.extend((min(.001, length * .01),
+                              min(.001, length * .1),
+                              min(.001, length * .25)))
+                sign = None
+                for step in steps:
+                    plus = shapely.contains(
+                        self.__botBound, shapely.points(center + normal * step))
+                    minus = shapely.contains(
+                        self.__botBound, shapely.points(center - normal * step))
+                    if plus != minus:
+                        sign = -1 if plus else 1
+                        break
+                if sign is None:
+                    # Older RDF writers serialized boundaryWKT on a 1 cm
+                    # recognition grid while retaining exact XYZ wall Faces.
+                    # A 1 mm-only probe then misses both sides of a valid wall.
+                    # Relax *orientation probing*, never the stored geometry,
+                    # only for a demonstrably centimetre-quantized ring and
+                    # within that grid's diagonal quantization error.
+                    ring = shapely.get_coordinates(self.__botBound)
+                    legacy_grid = np.allclose(ring * 100., np.round(ring * 100.),
+                                              rtol=0., atol=1e-7)
+                    cap = min(length * .25, np.sqrt(2.) * .01 + 1e-8)
+                    if legacy_grid:
+                        for step in sorted({min(cap, d) for d in (.002, .005, .01, cap)}):
+                            plus = shapely.contains(self.__botBound, shapely.Point(center + normal * step))
+                            minus = shapely.contains(self.__botBound, shapely.Point(center - normal * step))
+                            if plus != minus:
+                                sign = -1 if plus else 1
+                                warnings.warn('Legacy centimetre-quantized boundaryWKT: '
+                                              'wall orientation resolved within serialization precision.',
+                                              UserWarning, stacklevel=2)
+                                break
+                if sign is None:
+                    # Legacy shared Wall objects can span several rooms. Its
+                    # global midpoint can be metres outside this room although
+                    # a genuine subsegment bounds it. Probe the supported,
+                    # parallel room-ring segments, not that global midpoint.
+                    tolerance = cap if legacy_grid else 1e-6
+                    direction = vector / length
+                    votes = set()
+                    for polygon in shapely.get_parts(self.__botBound):
+                        if shapely.get_type_id(polygon) != 3:
+                            continue
+                        for ring in (polygon.exterior, *polygon.interiors):
+                            coords = np.asarray(ring.coords)[:, :2]
+                            for start, end in zip(coords, coords[1:]):
+                                delta = end-start
+                                span = float(np.linalg.norm(delta))
+                                if span <= 1e-12 or abs(float(delta@direction))/span < np.cos(np.radians(15)):
+                                    continue
+                                limits = sorted((float((start-points[ia])@direction), float((end-points[ia])@direction)))
+                                lo, hi = max(0., limits[0]), min(length, limits[1])
+                                if hi-lo <= max(1e-7, min(.01, length*.1)):
+                                    continue
+                                local = points[ia]+direction*(lo+hi)/2
+                                if self.__botBound.boundary.distance(shapely.Point(local)) > tolerance+1e-8:
+                                    continue
+                                for step in sorted({min(tolerance, d) for d in (1e-6, .001, .005, tolerance)}):
+                                    plus = shapely.contains(self.__botBound, shapely.Point(local+normal*step))
+                                    minus = shapely.contains(self.__botBound, shapely.Point(local-normal*step))
+                                    if plus != minus:
+                                        votes.add(-1 if plus else 1)
+                                        break
+                    if len(votes) == 1:
+                        sign = votes.pop()
+                if sign is None and legacy_grid and getattr(wall,'Uid',None) in self.__legacySharedWalls:
+                    # Old RDF Edge interfaces also listed shared Walls that
+                    # only touch this room at a corner. They have no local
+                    # outward normal. Keep the source plane normal; the energy
+                    # adapter clips each owner to its actual positive-area patch.
+                    # This is reader-authorized only for multiply-owned source
+                    # elements, not a general detached-wall fallback.
+                    line=shapely.LineString([points[ia],points[ib]])
+                    if line.distance(self.__botBound)<=cap and line.intersection(self.__botBound.buffer(-cap)).is_empty:
+                        source=np.asarray(wall.normal,dtype=float)
+                        factors.append(Vector([float(source[0]*length),float(source[1]*length),0.]))
+                        warnings.warn('Legacy shared-wall interface has only corner contact with this room; '
+                                      'source normal retained for per-owner area clipping.',UserWarning,stacklevel=2)
+                        continue
+                if sign is None:
+                    raise GeometryError(
+                        wall.face,
+                        "cannot establish actual holed-room outward wall normal",
+                    )
+                factors.append(Vector([
+                    float(normal[0] * length * sign),
+                    float(normal[1] * length * sign),
+                    0,
+                ]))
+            return np.asarray(factors)
         poly_coordinates = shapely.get_coordinates(self.__botBound)
         if self.is_ccw():
             factor = np.array([0, 0, -1])
@@ -2653,10 +2794,22 @@ class MoosasEdge:
         poly_coordinates = shapely.get_coordinates(polyPoints)
 
         polyg = shapely.polygons(poly_coordinates)
-        if str(shapely.is_valid_reason(polyg)).find('Self-intersection') != -1:
+        if not shapely.is_valid(polyg):
             polyg_ori = polyg
-            polyg = max(makeValid(polyg), key=shapely.area)
-            print(f"******Warning: GeometryError, self-intersection:{polyg_ori.__repr__()}fix to {polyg.__repr__()}")
+            try:
+                valid_parts = makeValid(polyg)
+            except Exception:
+                # Some exported gbXML boundaries contain repeated or crossed
+                # wall segments.  ``make_valid`` can reduce those rings to
+                # lines, so recover the largest polygon enclosed by the
+                # original wall segments instead of aborting the whole model.
+                polygonized = shapely.get_parts(shapely.polygonize(target))
+                polygonized = [p for p in polygonized if not shapely.is_empty(p)]
+                if not polygonized:
+                    raise
+                valid_parts = polygonized
+            polyg = max(valid_parts, key=shapely.area)
+            print(f"******Warning: GeometryError, invalid boundary:{polyg_ori.__repr__()}fix to {polyg.__repr__()}")
         return polyg
 
     def force_2d(self, top=False) -> shapely.Geometry:
@@ -2803,7 +2956,7 @@ class MoosasSpace(object):
 
             "zone_template": None
         }
-        self.applySettings('climatezone3_GB/T51350-2019_RESIDENTIAL')
+        self.applySettings('climatezone3_GB55015-2021_RESIDENTIAL')
 
 
     @classmethod
@@ -3005,6 +3158,13 @@ class MoosasSpace(object):
         if self.is_void():
             return self.edge.toplevel - self.edge.level
         else:
+            if self.space_type == "attic":
+                # Roof facets can carry different reference levels. Use their
+                # actual elevations so RDF interface order cannot change the
+                # reported attic height during a save/reload cycle.
+                ceiling_z = np.mean([face.level + face.offset for face in self.ceiling.face])
+                floor_z = np.mean([face.level + face.offset for face in self.floor.face])
+                return float(ceiling_z - floor_z)
             return self.ceiling.level + self.ceiling.offset - self.floor.level - self.floor.offset
 
     @property
@@ -3069,10 +3229,11 @@ class MoosasSpace(object):
             params += list(self.edge.getWeightCenter() * 10)
             self.__id = encodeParams(*params)
         # Record self.id to all MoosasGeometries
+        is_void = self.is_void()
         for moface in self.getAllFaces(to_dict=False):
             if originalId != "" and originalId in moface.space:
                 moface.space.remove(originalId)
-            if not self.is_void():
+            if not is_void:
                 if not self.id in moface.space:
                     moface.space.append(self.id)
         return self.__id
@@ -3248,6 +3409,10 @@ class MoosasSpace(object):
             template = buildingTemplateHint
             buildingTemplateHint = list(self.parent.buildingTemplate.values()).index(template)
             buildingTemplateHint = list(self.parent.buildingTemplate.keys())[buildingTemplateHint]
+        if '_thermal_template' in template:
+            from ...model.thermal_templates import apply_thermal_template
+            apply_thermal_template(self, template, buildingTemplateHint)
+            return
         self.settings['zone_template'] = buildingTemplateHint
 
         templateType = str(template.get("type", "")).strip().upper()

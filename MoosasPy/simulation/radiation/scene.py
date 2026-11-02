@@ -20,7 +20,8 @@ def _generate_radiance_geometry(roof, floor, others):
     others : list of MeshFace
         List of mesh faces representing other elements (e.g., walls, glazing).
         The category attribute of each face determines its treatment:
-        category 0 for walls, category 1 for glazing.
+        categories 0/3/4/-1 for opaque faces and 1/5/6 for glazing.
+        Air boundaries (2) and ignored faces (-2) are omitted.
     
     Returns
     -------
@@ -36,9 +37,9 @@ def _generate_radiance_geometry(roof, floor, others):
         geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_roof", ids)
         ids += 1
     for moFace in others:
-        if moFace.category == 0:
+        if moFace.category in (0, 3, 4, -1):
             geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_wall", ids)
-        if moFace.category == 1:
+        if moFace.category in (1, 5, 6):
             geoStr += _mesh_to_radiance_object(moFace.representation(), "glazing_", ids)
         ids += 1
     return geoStr
@@ -122,12 +123,15 @@ def _triangulate_opaque(moFace:MoosasElement)->list[shapely.Geometry]:
             holes+=list(shapely.get_rings(face))[1:]
     for gls in moFace.glazingElement:
         holes.append(gls.representation())
-    baseBrep = [proj.toUV(face) for face in baseBrep]
+    baseBrep = [shapely.polygons(proj.toUV(face)) for face in baseBrep]
     baseBrep = shapely.union_all(baseBrep)
     holes = [proj.toUV(face) for face in holes]
     for h in holes:
+        if shapely.get_dimensions(h) == 1:
+            h = shapely.polygons(h)
         baseBrep = shapely.difference(baseBrep,h)
-    baseBrep = shapely.delaunay_triangles(baseBrep)
+    # Constrain triangles to the boundary, including concavities and window holes.
+    baseBrep = shapely.constrained_delaunay_triangles(baseBrep)
     baseBrep = [proj.toWorld(tri) for tri in shapely.get_parts(baseBrep)]
     return baseBrep
 def _space_to_radiance(space: MoosasSpace, date: datetime, sky_type, lat, lon, diffuse_illuminance=10000,

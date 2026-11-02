@@ -1,4 +1,3 @@
-import math
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,12 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import MoosasPy
 from MoosasPy.simulation import CommandResult, SimulationResult, WorkspaceReport
-from MoosasPy.simulation.energy.runner import (
-    EnergyResult,
-    EnergyRunner,
-    build_energy_input,
-)
-from MoosasPy.simulation.energy.engine import EnergyOutput
+from MoosasPy.simulation.energy.runner import EnergyResult
 from MoosasPy.simulation.coupling import (
     EnergyAirflowCoupler,
     PVResult,
@@ -83,7 +77,11 @@ class SimulationContractTests(unittest.TestCase):
 
         self.assertEqual(
             set(energy.__all__),
-            {"EnergyResult", "EnergyRunner", "build_energy_input", "calculate_pv_generation"},
+            {
+                "EnergyResult", "EnergyRunner", "build_energy_input", "calculate_pv_generation",
+                "EnergyDefaults", "EnergyRequest", "EnergyState",
+                "LayerRequest", "SurfaceRequest", "ZoneRequest",
+            },
         )
         for legacy_name in ("energyAnalysis", "getEnergyInput", "parseEnergyOutput"):
             self.assertFalse(hasattr(energy, legacy_name))
@@ -137,10 +135,10 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(result.warnings, ("coarse grid",))
 
     def test_energy_result_implements_shared_contract(self):
-        result = EnergyResult(data={"total": {"cooling": 10.0}})
+        result = EnergyResult()
 
         self.assertIsInstance(result, SimulationResult)
-        self.assertEqual(result.data, {"total": {"cooling": 10.0}})
+        self.assertEqual(result.commands, ())
 
     def test_pv_result_implements_shared_contract(self):
         result = PVResult(data={"total": 10.0})
@@ -187,111 +185,6 @@ class SimulationContractTests(unittest.TestCase):
 
         self.assertEqual(len(roof.data["months"]), 12)
         self.assertEqual(len(facade.data["days"]), 365)
-
-    def test_energy_runner_returns_python_engine_data(self):
-        zone = SimpleNamespace(paramToString=lambda: "zone", paramTags=lambda: "header")
-        energy_input = {"zones": [zone], "args": ["-w", "weather.csv"]}
-        output = EnergyOutput(
-            total=np.zeros(4), spaces=np.zeros((1, 4)), months=np.zeros((12, 4))
-        )
-
-        with patch("MoosasPy.simulation.energy.runner.simulate_energy", return_value=output):
-            result = EnergyRunner(energy_input=energy_input).run()
-
-        self.assertEqual(result.data["total"]["total"], 0.0)
-        self.assertEqual(result.commands, ())
-
-    def test_energy_runner_does_not_mutate_reused_input(self):
-        zone = SimpleNamespace(paramToString=lambda: "zone", paramTags=lambda: "header")
-        energy_input = {"zones": [zone], "args": ["-w", "weather.csv"]}
-        output = EnergyOutput(
-            total=np.zeros(4), spaces=np.zeros((1, 4)), months=np.zeros((12, 4)),
-            hours=np.zeros((8760, 4)), zone_months=np.zeros((1, 12, 4)),
-            zone_hours=np.zeros((1, 8760, 4)),
-        )
-
-        with patch("MoosasPy.simulation.energy.runner.simulate_energy", return_value=output):
-            runner = EnergyRunner(
-                energy_input=energy_input,
-                temporal_scale="hourly",
-                spatial_scale="zone",
-            )
-            runner.run()
-            runner.run()
-
-        self.assertEqual(energy_input["args"], ["-w", "weather.csv"])
-
-    def test_energy_scales_map_to_one_temporal_flag_and_one_spatial_flag(self):
-        space = SimpleNamespace(
-            id="zone-1",
-            settings={},
-            area=10.0,
-            height=3.0,
-            edge=SimpleNamespace(wall=[]),
-            ceiling=SimpleNamespace(face=[]),
-            floor=SimpleNamespace(face=[]),
-        )
-        model = SimpleNamespace(spaceList=[space], schedule=None)
-        weather = SimpleNamespace(
-            weather_file="weather.csv",
-            location=SimpleNamespace(latitude=37.8, altitude=0.0),
-        )
-
-        monthly = build_energy_input(model, weather, temporal_scale="monthly")
-        daily = build_energy_input(model, weather, temporal_scale="daily")
-        hourly_zone = build_energy_input(
-            model,
-            weather,
-            temporal_scale="hourly",
-            spatial_scale="zone",
-        )
-
-        self.assertNotIn("-d", monthly["args"])
-        self.assertNotIn("-r", monthly["args"])
-        self.assertAlmostEqual(
-            float(monthly["args"][monthly["args"].index("-l") + 1]),
-            math.radians(37.8),
-        )
-        self.assertEqual(daily["args"][-2:], ["-d", "1"])
-        self.assertEqual(hourly_zone["args"][-4:], ["-r", "1", "-z", "1"])
-
-    def test_energy_scales_reject_unknown_values(self):
-        zone = SimpleNamespace(paramToString=lambda: "zone", paramTags=lambda: "header")
-        with self.assertRaisesRegex(ValueError, "temporal_scale"):
-            EnergyRunner(energy_input={"zones": [zone], "args": []}, temporal_scale="annual")
-        with self.assertRaisesRegex(ValueError, "spatial_scale"):
-            EnergyRunner(energy_input={"zones": [zone], "args": []}, spatial_scale="space")
-
-    def test_energy_building_types_map_to_engine_codes(self):
-        space = SimpleNamespace(
-            id="zone-1",
-            settings={},
-            area=10.0,
-            height=3.0,
-            edge=SimpleNamespace(wall=[]),
-            ceiling=SimpleNamespace(face=[]),
-            floor=SimpleNamespace(face=[]),
-        )
-        model = SimpleNamespace(spaceList=[space], schedule=None)
-        weather = SimpleNamespace(
-            weather_file="weather.csv",
-            location=SimpleNamespace(latitude=37.8, altitude=0.0),
-        )
-        expected_codes = {
-            buildingType.RESIDENTIAL: "0",
-            buildingType.OFFICE: "1",
-            buildingType.HOTEL: "2",
-            buildingType.SCHOOL: "3",
-            buildingType.COMMERCIAL: "4",
-        }
-
-        for core, expected_code in expected_codes.items():
-            energy_input = build_energy_input(model, weather, core=core)
-            type_index = energy_input["args"].index("-t")
-            self.assertEqual(energy_input["args"][type_index + 1], expected_code)
-
-        with self.assertRaisesRegex(ValueError, "core must be one of"):
-            build_energy_input(model, weather, core=buildingType.HOSPITAL)
 
     def test_airflow_runner_builds_project_from_model_in_its_workspace(self):
         command_result = CommandResult(("contamx", "model.prj"), 0, "", "")

@@ -40,6 +40,15 @@ def loadBuildingTemplate(templateFile)->dict:
         with underscores, and each value is a dictionary mapping 'zone_' column names to 
         their respective values for that row.
     """
+    if str(templateFile).lower().endswith('.json'):
+        from ..model.thermal_templates import building_templates
+        loaded = building_templates(templateFile)
+        template.clear()
+        template.update(loaded)
+        # Models must not share the mutable process-wide search cache.
+        from copy import deepcopy
+        return deepcopy(loaded)
+    loaded = {}
     try:
         with open(templateFile, 'r') as f:
             title = f.readline().strip('\n').split(',')
@@ -57,12 +66,14 @@ def loadBuildingTemplate(templateFile)->dict:
                 _template = {_name[i]: _value[i] for i in range(len(_value))}
                 for i in _key_tab:
                     _template[title[i]] = arr[i]
-                template[_key] = _template
+                loaded[_key] = _template
 
     except:
         raise FileNotFoundError('Load Error: building template')
 
-    return template
+    template.clear()
+    template.update(loaded)
+    return dict(loaded)
 
 
 def searchTemplate(str_list, templatelist=template):

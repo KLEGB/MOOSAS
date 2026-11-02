@@ -11,6 +11,10 @@ from ...utils import ET, np, shapely
 def _xml_float_or_none(value):
     if value in (None, ""):
         return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _has_valid_parent_face(element) -> bool:
@@ -31,15 +35,13 @@ def _has_serializable_space_topology(space) -> bool:
         and len(getattr(floor, "face", [])) > 0
         and len(getattr(ceiling, "face", [])) > 0
     )
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def build_xml(model: MoosasModel, write_geometry: bool = False) -> ET.Element:
     """Build the XML representation of a complete Moosas model."""
     root = ET.Element("model")
+    from ..energy_metadata import encode_energy_metadata
+    ET.SubElement(root, "energy_metadata").text = encode_energy_metadata(model)
     elements = {"MoosasFace": set(), "MoosasSkylight": set(), "MoosasWall": set(), "MoosasGlazing": set()}
     spaces = [space for space in model.spaceList + model.voidList if _has_serializable_space_topology(space)]
     skipped_spaces = len(model.spaceList) + len(model.voidList) - len(spaces)
@@ -185,7 +187,8 @@ def loadXml(filePath, geoPath):
     from ..resources import configure_model_resources
 
     configure_model_resources(model)
-    model.geometryList = _readGeo(geoPath)
+    # A model sidecar is already transformed geometry: preserve its SI values.
+    model.geometryList = _readGeo(geoPath, snap_coordinates=False)
     model = preClassified(model)
     # read the tree to dict
     root = praseXml(filePath)['model']
@@ -304,6 +307,15 @@ def loadXml(filePath, geoPath):
                 MoosasElement(model, face_ids, uid=str(element["Uid"]))
             )
 
+    # Restore aperture hosts after both opaque and transparent elements exist.
+    parents = {str(e.Uid):e for e in list(model.wallList)+list(model.faceList)}
+    openings = {str(e.Uid):e for e in list(model.glazingList)+list(model.skylightList)}
+    for record in root['glazing'] + root['skylight']:
+        parent = parents.get(str(record.get('parentFace','')))
+        opening = openings.get(str(record['Uid']))
+        if parent is not None and opening is not None and opening not in parent.glazingElement:
+            parent.add_glazing(opening)
+
     # load space
     loaded_spaces = {}
     space_records = []
@@ -339,6 +351,7 @@ def loadXml(filePath, geoPath):
             Uid = str(element.get('id', None))
             spc = MoosasSpace(_floor=topology["Floor"], _ceiling=topology["ceiling"], _edge=topology["Edge"], Uid=Uid)
 
+            spc.settings.pop('_thermal_template', None)
             for key in element['setting']:
                 try:
                     spc.settings[key] = float(element['setting'][key])
@@ -363,6 +376,8 @@ def loadXml(filePath, geoPath):
             model.voidList.append(space)
         else:
             model.spaceList.append(space)
+    from ..energy_metadata import apply_energy_metadata
+    apply_energy_metadata(model,root.get('energy_metadata'))
     return model
 
 

@@ -9,10 +9,11 @@ from ..utils.standard import loadBuildingTemplate
 from ..utils.tools import path
 
 
-def configure_model_resources(model, schedule_path: str | None = None):
+def configure_model_resources(model, schedule_path: str | None = None, template_path: str | None = None):
     """Attach the default building template and schedule library to a model."""
-    template_path = os.path.join(path.dataBaseDir, "building_template.csv")
-    if not model.buildingTemplate:
+    replace_templates = template_path is not None
+    template_path = template_path or os.path.join(path.dataBaseDir, "building_template.json")
+    if replace_templates or not model.buildingTemplate:
         model.buildingTemplate = loadBuildingTemplate(template_path)
     if not model.schedule:
         load_schedule(model, schedule_path)
@@ -23,6 +24,8 @@ def _schedule_role_from_name(schedule_name: str) -> str | None:
     lower = str(schedule_name).lower()
     if "occdens" in lower or "occupantdensity" in lower:
         return "zone_ppsm"
+    if "occheat" in lower or "occupantheatgain" in lower:
+        return "zone_popheat"
     if "equip" in lower or "equipmentheatgain" in lower:
         return "zone_equipment"
     if "light" in lower or "lightingheatgain" in lower:
@@ -90,6 +93,11 @@ def load_schedule(model, schedule_path: str | None = None):
                 if len(values) != 7:
                     raise ValueError(f"Invalid weekly schedule row '{name}', expected 7 day references.")
                 loaded[name] = {"type": "Weekly", "value": values}
+            elif mode == "hourly":
+                values = parts[2:]
+                if len(values) != 8760:
+                    raise ValueError(f"Invalid hourly schedule row '{name}', expected 8760 values.")
+                loaded[name] = {"type": "Hourly", "value": values}
 
     model.schedule.update(loaded)
     model.schedulePath = schedule_path

@@ -95,6 +95,8 @@ def _literal_to_python(value):
     if value is None:
         return None
     if isinstance(value, Literal):
+        if str(value.datatype) == 'urn:moosas:json':
+            return json.loads(str(value))
         value = value.toPython()
     if isinstance(value, URIRef):
         text = str(value).strip()
@@ -261,9 +263,13 @@ class MoosasRDF(Graph):
         None
             This function does not return any value.
         """
+        from ..energy_metadata import encode_energy_metadata
+        self.add((URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata'), Literal(encode_energy_metadata(model))))
         self.buildOntology(model)
         self.encodeScheduleOntology()
         self.encodeSchedule(model)
+        from .gbxml.energy import encode
+        encode(model, self)
         self.encodeStorey(model)
         for tmp in model.buildingTemplate.keys():
             self.encodeProgram(tmp, model.buildingTemplate[tmp])
@@ -639,7 +645,10 @@ class MoosasRDF(Graph):
         self.add((self.moosas.term(pgName), self.rdf.type, self.moosas.Program))
         self.add((self.moosas.term(pgName), self.moosas.Uid, Literal(pgName)))
         for zInfo in pgDict.keys():
-            self.add((self.moosas.term(pgName), self.moosas.term(zInfo), Literal(pgDict[zInfo])))
+            value = pgDict[zInfo]
+            literal = (Literal(json.dumps(value, ensure_ascii=False, allow_nan=False), datatype=URIRef('urn:moosas:json'))
+                       if isinstance(value, (dict, list)) else Literal(value))
+            self.add((self.moosas.term(pgName), self.moosas.term(zInfo), literal))
 
     def encodeGeo(self, geo: MoosasGeometry):
         """
@@ -725,7 +734,7 @@ class MoosasRDF(Graph):
             if value is None:
                 continue
             self.add((element_uri, self.moosas.hasSetting, Literal(key)))
-            self.add((element_uri, self.moosas[key], Literal(value)))
+            self.add((element_uri, self.moosas[key], Literal(json.dumps(value), datatype=URIRef('urn:moosas:json')) if isinstance(value,(dict,list,tuple)) else Literal(value)))
         for key in getattr(Element, 'explicit_settings', set()):
             self.add((element_uri, self.moosas.explicitSetting, Literal(key)))
         if typeName in ("Glazing", "Skylight"):
@@ -880,7 +889,7 @@ class MoosasRDF(Graph):
                 continue
             self.add((URIRef(f"Space_{space.id}"), self.moosas.hasSetting, Literal(key)))
 
-            self.add((URIRef(f"Space_{space.id}"), self.moosas[str(key)], Literal(value)))
+            self.add((URIRef(f"Space_{space.id}"), self.moosas[str(key)], Literal(json.dumps(value), datatype=URIRef('urn:moosas:json')) if isinstance(value,(dict,list,tuple)) else Literal(value)))
         for key in getattr(space, 'explicit_settings', []):
             self.add((URIRef(f"Space_{space.id}"), self.moosas.explicitSetting, Literal(key)))
 
@@ -967,18 +976,19 @@ class MoosasRDF(Graph):
         """
         if isinstance(geoUri, str):
             geoUri = URIRef(str(geoUri))
-        faceId = self.getObject(geoUri, self.moosas.faceId)
+        faceId = _first_or_none(self.getObject(geoUri, self.moosas.faceId))
         if model:
             geo = model.findFace(str(faceId))
             if len(geo) > 0:
                 return geo[0]
-        cat = int(float(self.getObject(geoUri, self.moosas.Category)))
-        face = URIRef(str(self.getObject(geoUri, self.geo.hasGeometry)))
-        face = shapely.from_wkt(str(self.getObject(face, self.geo.asWKT)))
-        if self.getObject(geoUri, self.moosas.hasHole) is not None:
+        cat = int(float(_first_or_none(self.getObject(geoUri, self.moosas.Category))))
+        face = URIRef(str(_first_or_none(self.getObject(geoUri, self.geo.hasGeometry))))
+        face = shapely.from_wkt(str(_first_or_none(self.getObject(face, self.geo.asWKT))))
+        hole_values = self.getObject(geoUri, self.moosas.hasHole)
+        if hole_values is not None:
             holes = []
-            for hole in self.getObject(geoUri, self.moosas.hasHole):
-                hole = self.getObject(URIRef(str(hole)), self.geo.asWKT)
+            for hole in mixItemListToList(hole_values):
+                hole = _first_or_none(self.getObject(URIRef(str(hole)), self.geo.asWKT))
                 if hole:
                     holes.append(shapely.from_wkt(str(hole)))
 
@@ -1258,7 +1268,8 @@ def _import_schedule_nodes(rdfGraph: MoosasRDF, model: MoosasModel):
     model.schedulePath = None
     schedule_nodes = set()
     for cls in (rdfGraph.pgd.DailySchedule, rdfGraph.pgd.WeeklySchedule):
-        for node in rdfGraph.getSubject(rdfGraph.rdf.type, cls):
+        nodes = rdfGraph.getSubject(rdfGraph.rdf.type, cls)
+        for node in mixItemListToList(nodes) if nodes is not None else []:
             schedule_nodes.add(URIRef(str(node)))
 
     for scheduleUri in sorted(schedule_nodes, key=str):
@@ -1299,13 +1310,14 @@ def _import_schedule_nodes(rdfGraph: MoosasRDF, model: MoosasModel):
 
 
 def _decode_space_settings(rdfGraph: MoosasRDF, spaceUri, spc: MoosasSpace):
+    spc.settings.pop('_thermal_template', None)
     spcSettings = mixItemListToList(rdfGraph.getObject(spaceUri, rdfGraph.moosas.hasSetting))
     for key in spcSettings:
         raw_value = _first_or_none(rdfGraph.getObject(spaceUri, rdfGraph.moosas[str(key)]))
         canonical = raw_value is not None
         if not canonical:
             raw_value = _first_or_none(rdfGraph.getObject(spaceUri, Literal(key)))
-        spc.settings[str(key)] = raw_value.toPython() if canonical and isinstance(raw_value, Literal) else _decode_space_setting_value(raw_value)
+        spc.settings[str(key)] = _literal_to_python(raw_value) if canonical else _decode_space_setting_value(raw_value)
     if 'zone_inflitration' in spc.settings:
         spc.settings.setdefault('zone_infiltration', spc.settings.pop('zone_inflitration'))
     spc.explicit_settings = [str(k) for k in rdfGraph.objects(spaceUri, rdfGraph.moosas.explicitSetting)]
@@ -1582,9 +1594,8 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         if faceUri is not None:
             element = rdfGraph.decodeElement(faceUri, model)
             if element:
-                parentFace = str(rdfGraph.getSubject(rdfGraph.bot.hasSubElement, URIRef(faceUri)))
-
-                parentFace = rdfGraph.decodeElement(parentFace, model)
+                parentFace = _first_or_none(rdfGraph.getSubject(rdfGraph.bot.hasSubElement, URIRef(faceUri)))
+                parentFace = rdfGraph.decodeElement(str(parentFace), model) if parentFace else None
                 if parentFace:
                     parentFace.add_glazing(element)
                 model.glazingList.append(element)
@@ -1596,8 +1607,8 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         if faceUri is not None:
             element = rdfGraph.decodeElement(faceUri, model)
             if element:
-                parentFace = str(rdfGraph.getSubject(rdfGraph.bot.hasSubElement, URIRef(faceUri)))
-                parentFace = rdfGraph.decodeElement(parentFace, model)
+                parentFace = _first_or_none(rdfGraph.getSubject(rdfGraph.bot.hasSubElement, URIRef(faceUri)))
+                parentFace = rdfGraph.decodeElement(str(parentFace), model) if parentFace else None
                 if parentFace:
                     parentFace.add_glazing(element)
                 model.skylightList.append(element)
@@ -1616,9 +1627,12 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     # print()
     # load Space
     loaded_spaces = []
+    space_uris = set(map(str,spList))
+    shared_edge_cache = {}
     for i, spaceUri in enumerate(spList):
         spaceUri = URIRef(str(spaceUri))
         topology = {"Floor": [], "Ceiling": [], "Edge": []}
+        legacy_shared_walls = set()
 
         # New format: Space --interfaceOf--> Interface --interfaceOf--> element_*
         interfaceList = mixItemListToList(rdfGraph.getSubject(rdfGraph.bot.interfaceOf, spaceUri))
@@ -1630,8 +1644,18 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
 
             linkedObjects = mixItemListToList(rdfGraph.getObject(interfaceUri, rdfGraph.bot.interfaceOf))
             elementUris = [URIRef(str(obj)) for obj in linkedObjects if str(obj) != str(spaceUri)]
+            if topoElementType in (rdfGraph.moosas.Floor, rdfGraph.moosas.Ceiling):
+                allowed_types = {rdfGraph.moosas.Face}
+            elif topoElementType == rdfGraph.moosas.Edge:
+                allowed_types = {rdfGraph.moosas.Wall, rdfGraph.moosas.AirWall}
+            else:
+                continue
+            elementUris = [uri for uri in elementUris
+                           if _first_or_none(rdfGraph.getObject(uri, rdfGraph.pgd.hasSurfaceType)) in allowed_types]
             if len(elementUris) == 0:
                 continue
+            if len(elementUris) != 1:
+                raise ValueError(f"Ambiguous {topoElementType} topology interface: {interfaceUri}")
             element = rdfGraph.decodeElement(elementUris[0], model)
             if not element:
                 continue
@@ -1644,6 +1668,12 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
                 orderVal = _first_or_none(rdfGraph.getObject(interfaceUri, rdfGraph.moosas.subElementOrder))
                 order = int(float(orderVal)) if orderVal is not None else 0
                 topology["Edge"].append((order, element))
+                key=str(elementUris[0])
+                if key not in shared_edge_cache:
+                    owners={str(owner) for interface in rdfGraph.subjects(rdfGraph.bot.interfaceOf,elementUris[0])
+                            for owner in rdfGraph.objects(interface,rdfGraph.bot.interfaceOf) if str(owner) in space_uris}
+                    shared_edge_cache[key]=len(owners)>1
+                if shared_edge_cache[key]:legacy_shared_walls.add(element.Uid)
 
         floorTopo = MoosasFloor(topology["Floor"]) if len(topology["Floor"]) > 0 else None
         ceilTopo = MoosasFloor(topology["Ceiling"]) if len(topology["Ceiling"]) > 0 else None
@@ -1655,7 +1685,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
             rdfGraph.getObject(spaceUri, rdfGraph.moosas.boundaryWKT)
         )
         boundary = shapely.from_wkt(str(boundary_wkt)) if boundary_wkt is not None else None
-        edgeTopo = MoosasEdge(edgeElements, boundary=boundary)
+        edgeTopo = MoosasEdge(edgeElements, boundary=boundary,legacy_shared_walls=legacy_shared_walls)
 
         spc = MoosasSpace(
             _floor=floorTopo,
@@ -1689,8 +1719,30 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         else:
             model.spaceList.append(space)
 
+    # A sloping wall/end panel may be a ceiling interface for the room below
+    # while remaining an Edge in its own room. That secondary use does not
+    # belong in a MoosasFloor topology, but it is still a real Space user.
+    active_ids = {space.id for space in model.spaceList}
+    active_spaces = {str(uri): space for uri, space in loaded_spaces
+                     if space.id in active_ids}
+    for element in list(model.wallList) + list(model.faceList):
+        element_uris = mixItemListToList(rdfGraph.getSubject(rdfGraph.moosas.Uid, Literal(element.Uid)))
+        for element_uri in element_uris:
+            element_uri = URIRef(str(element_uri))
+            for interface_uri in mixItemListToList(rdfGraph.getSubject(rdfGraph.bot.interfaceOf, element_uri)):
+                interface_uri = URIRef(str(interface_uri))
+                for space_uri in mixItemListToList(rdfGraph.getObject(interface_uri, rdfGraph.bot.interfaceOf)):
+                    space = active_spaces.get(str(space_uri))
+                    if space is not None and space.id not in element.space:
+                        element.space.append(space.id)
+
     # Space settings are available only after the topology pass. Apply legacy
     # U/SHGC fallbacks now, while preserving all RDF-supplied element settings.
     _apply_element_parameter_defaults(model, rdfGraph)
+    from ..energy_metadata import apply_energy_metadata
+    metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
+    apply_energy_metadata(model, str(metadata) if metadata is not None else None)
+    from .gbxml.energy import from_graph
+    from_graph(model, rdfGraph)
     return model
 

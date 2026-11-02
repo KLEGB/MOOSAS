@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
 
 from .result import SaveResult
 from ...utils import path as path_utils
@@ -22,9 +21,17 @@ def _geo_sidecar(file_path: Path) -> Path:
 
 
 def load_model(file_path: str | Path):
-    """Load RDF, XML, JSON, or IDF into a complete ``MoosasModel``."""
+    """Load RDF, XML, JSON, IDF, or gbXML into a complete ``MoosasModel``."""
     source = Path(file_path)
     model_format = _model_format(source)
+
+    # Many tools emit gbXML with a generic .xml suffix.  Detect that form
+    # before dispatching to the Moosas XML+GEO sidecar loader.
+    if model_format == "xml":
+        from .gbxml import is_gbxml
+
+        if is_gbxml(source):
+            model_format = "gbxml"
 
     if model_format in {"rdf", "ttl"}:
         from .rdf import loadRDF
@@ -42,6 +49,10 @@ def load_model(file_path: str | Path):
         from .idf import readIDF
 
         return readIDF(str(source)).model
+    if model_format == "gbxml":
+        from .gbxml import load_gbxml
+
+        return load_gbxml(source)
 
     raise ValueError(f"Unsupported model load format: {model_format or source}")
 
@@ -59,6 +70,8 @@ def save_model(model, file_path: str | Path, **format_options) -> SaveResult:
         raise ValueError(f"Unsupported model save format: {model_format or target}")
     if format_options:
         raise TypeError(f"{model_format} save does not accept format options")
+    if model_format == 'idf' and getattr(model,'energy_settings',{}).get('external_thermal_model'):
+        raise ValueError('Source-backed IDF export requires the source-aligned EnergyPlus exporter; the legacy writer cannot preserve external thermal settings')
     path_utils.checkBuildDir(str(target))
 
     if model_format in {"rdf", "ttl"}:
@@ -93,12 +106,8 @@ def save_model(model, file_path: str | Path, **format_options) -> SaveResult:
         writeGraph(str(target), model)
         generated = (target,)
     elif model_format == "gbxml":
-        from .gbxml import convert_rdf_to_gbxml
-        from .rdf import writeRDF
+        from .gbxml import save_gbxml
 
-        with tempfile.TemporaryDirectory(prefix="moosas_gbxml_") as directory:
-            rdf_path = Path(directory) / "model.ttl"
-            writeRDF(model, str(rdf_path), fileFormat="turtle")
-            convert_rdf_to_gbxml(rdf_path, target, rdf_format="turtle")
+        save_gbxml(model, target)
         generated = (target,)
     return SaveResult(primary_path=target, generated_paths=generated)

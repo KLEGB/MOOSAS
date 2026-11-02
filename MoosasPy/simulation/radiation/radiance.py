@@ -33,18 +33,19 @@ def _mesh_to_radiance_object(geos, material, object_id):
             print("******Warning: GeometryError, invalid projection while writing rad")
             continue
         try:
-            geoUV = proj.toUV(geo)
-            triangles = shapely.delaunay_triangles(geoUV)
+            # Project rings separately to retain holes in the input polygon.
+            rings = [proj.toUV(ring) for ring in shapely.get_rings(geo)]
+            geoUV = shapely.polygons(rings[0], holes=rings[1:] or None)
+            triangles = shapely.constrained_delaunay_triangles(geoUV)
             triangles = [proj.toWorld(tri) for tri in shapely.get_parts(triangles)]
             if len(triangles) == 0:
-                return ""
+                continue
             for trIdx, tri in enumerate(triangles):
                 pts = shapely.get_coordinates(tri, include_z=True)
                 geoStr += [f"{material} polygon {object_id}_{gid}_{trIdx} 0 0 {(len(pts)-1) * 3}"]
                 for pt in pts[:-1]:
                     geoStr += ["    "+" ".join(pt.astype(str))]
                 geoStr += [""]
-            return "\n".join(geoStr)+"\n"
         except Exception as e:
             print("GeometryError:",e)
     return "\n".join(geoStr) + "\n"

@@ -1,6 +1,6 @@
 ﻿"""Coupled energy and airflow simulation workflows."""
 
-from ..energy.runner import EnergyRunner, ThermalSettings, build_energy_input
+from ..energy.runner import EnergyRunner, build_energy_input
 from ...transform.geometry.geos import Projection, Vector, Ray
 from ...model import MoosasModel
 from ...model.resources import get_schedule_name, load_schedule, write_schedule
@@ -403,17 +403,13 @@ class EnergyAirflowCoupler(object):
         if energyDict:
             self.networkDict = self._normalize_energy_schedule_fields_in_dict(energyDict)
         energyDict = self.networkDict
-        base_args = list(build_energy_input(self.model, self.weather, require_radiation=False).get("args", []))
-        energyInput = {
-            "zones": [],
-            "args": [self._normalize_energy_cli_arg(arg) for arg in base_args],
-        }
-        for z in energyDict['zones'].values():
-            theZone = {key: z[key] for key in self.ENERGY_INDEX}
-            for field_name in ("zone_ppsm", "zone_equipment", "zone_lighting"):
-                theZone[field_name] = self._resolve_energy_schedule_ref(z, field_name)
-            energyInput["zones"].append(ThermalSettings(**(theZone)))
-        return energyInput
+        overrides = {}
+        for key, zone in energyDict['zones'].items():
+            name = str(zone.get('userName', key))
+            overrides[name] = {field: zone[field] for field in self.ENERGY_INDEX if field in zone}
+            for field in ('zone_ppsm','zone_equipment','zone_lighting'):
+                overrides[name][field] = self._resolve_energy_schedule_ref(zone,field)
+        return build_energy_input(self.model,self.weather,zone_ids=tuple(overrides),zone_overrides=overrides)
 
     def reconstructVentilationInputs(self, energyDict: dict = None):
         """
@@ -664,9 +660,9 @@ class EnergyAirflowCoupler(object):
         zone_days = e_data.get("zone_days", [])
         zone_hours = e_data.get("zone_hours", [])
         result = {}
-        for i, z in enumerate(energyInput["zones"]):
-            zone_name = z.params.get("zone_name", f"zone_{i}")
-            zone_area = float(z.params.get("zone_area", 0.0))
+        for i, z in enumerate(energyInput.zones):
+            zone_name = z.zone_id
+            zone_area = z.area_m2
             hours = zone_hours[i] if i < len(zone_hours) else []
             days = zone_days[i] if i < len(zone_days) else [
                 {

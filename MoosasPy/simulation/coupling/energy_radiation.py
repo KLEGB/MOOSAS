@@ -3,29 +3,28 @@
 from __future__ import annotations
 
 from ..energy.runner import EnergyRunner
-from ..radiation import calculate_model_radiation
-from ..weather import CumulativeSky, WeatherData
+from ..weather import WeatherData
 
 
 def run_energy_with_radiation(
     model,
     *,
     weather: WeatherData,
-    cumulative_skies: dict[str, CumulativeSky],
-    radiation_mode: int = 1,
-    reflection: int = 0,
+    irradiance_by_surface,
     on_stage=None,
     **energy_options,
 ):
-    """Calculate radiation, then run energy analysis with those results."""
-    if radiation_mode not in (1, 2):
-        raise ValueError("radiation_mode must be 1 or 2")
-    calculate_model_radiation(model, cumulative_skies, reflection=reflection)
+    """Run energy with explicit hourly incident shortwave, in W/m² per surface.
+
+    Irradiance is before glazing optics; seasonal space gains and SHGC-weighted
+    totals cannot reconstruct this boundary and are intentionally not accepted.
+    """
     if on_stage is not None:
         on_stage('energy')
     return EnergyRunner(
         model=model,
         weather=weather,
-        require_radiation=radiation_mode,
+        require_radiation=True,
+        irradiance_by_surface=irradiance_by_surface,
         **energy_options,
     ).run()

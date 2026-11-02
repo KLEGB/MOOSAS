@@ -1,0 +1,3054 @@
+{
+  "schema": "moosas.thermal-templates",
+  "version": 1,
+  "standard": {
+    "id": "GB55015-2021",
+    "title": "建筑节能与可再生能源利用通用规范",
+    "effective_date": "2022-04-01",
+    "source_url": "https://ynjn.yn.gov.cn/jnbz/202110/P020261011631961784994.pdf",
+    "source_sha256": "7907f68b9c89a2295bab50de3e4f9bdc8479b21db0f31849a87cd293f7fc2829",
+    "pages": "Printed pages 4–17: envelope tables; 62–64: Appendix B definitions; 69–77: reference operation",
+    "scope": "Normative limits and selected reference conditions only. This library is a simulation scenario, not a building compliance certificate. U includes reference surface films and structural thermal bridges; materials are equivalent homogenized assumptions. Partition/unheated-basement limits are retained for future boundary extensions and are not applied to adiabatic boundaries; entrance doors and balcony panels are outside this adapter scope.",
+    "alternate_pdf_url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/qtwj/202204/W020220412578195558564.pdf",
+    "publication_url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/qtwj/202204/t20220412_2674410.html"
+  },
+  "assumptions": {
+    "wall": {
+      "thermal_mass_j_m2k": 60000,
+      "solar_reflectance": 0.3,
+      "outside_emissivity": 0.9,
+      "inside_emissivity": 0.9
+    },
+    "slab": {
+      "thermal_mass_j_m2k": 120000,
+      "solar_reflectance": 0.3,
+      "outside_emissivity": 0.9,
+      "inside_emissivity": 0.9
+    },
+    "glass": {
+      "thermal_mass_j_m2k": 0,
+      "solar_reflectance": 0.4,
+      "solar_transmittance": 0.5,
+      "outside_emissivity": 0.84,
+      "inside_emissivity": 0.84
+    },
+    "glass_absorptance": 0.1,
+    "internal_resistance_m2k_w": 0.2,
+    "ground_base_resistance_m2k_w": 0.2,
+    "unspecified_ground_insulation_r": 1.0,
+    "unspecified_resistance_m2k_w": 1.0,
+    "notes": "Capacities are full-construction J/(m2 K), split at shared adiabatic midplanes. Glass is massless; summer equivalent optics use alpha=0.1, tau=max(SHGC_limit-alpha,0), rho=1-SHGC_limit, so tau+alpha<=limit. This does not reproduce a measured glazing product or winter SHGC. Ground insulation R is added to assumed base R; full-floor use of peripheral minimum is a scenario assumption. Unknown table columns use the stricter limit. Default public aliases select class A; select B explicitly only after checking Appendix B area/group-area criteria. Climate aliases select subzone A and do not infer a site climate classification. Residential cooling COP 3.6 outside cold-B/hot-summer reference climates is an engineering extension. Storey count from model levels is an estimate. Normative limits do not prove compliance after explicit model overrides."
+  },
+  "envelopes": {
+    "residential_severe_cold_A": {
+      "table": "3.1.8-1; 3.1.9-1",
+      "roof_u": 0.15,
+      "wall_u": [
+        0.25,
+        0.35
+      ],
+      "exposed_floor_u": [
+        0.25,
+        0.35
+      ],
+      "window_u": [
+        [
+          1.4,
+          1.6
+        ],
+        [
+          1.4,
+          1.6
+        ]
+      ],
+      "wwr_bins": [
+        0.3,
+        0.45
+      ],
+      "column": "storeys",
+      "skylight_u": 1.4,
+      "ground_insulation_r": 2.0,
+      "underground_wall_insulation_r": 2.0,
+      "north_sector_degrees": 60,
+      "shgc_directions": "EW_S_N",
+      "unheated_basement_ceiling_u": 0.35,
+      "unheated_partition_u": 1.2
+    },
+    "residential_severe_cold_B": {
+      "table": "3.1.8-2; 3.1.9-1",
+      "roof_u": 0.2,
+      "wall_u": [
+        0.25,
+        0.35
+      ],
+      "exposed_floor_u": [
+        0.25,
+        0.35
+      ],
+      "window_u": [
+        [
+          1.4,
+          1.8
+        ],
+        [
+          1.4,
+          1.8
+        ]
+      ],
+      "wwr_bins": [
+        0.3,
+        0.45
+      ],
+      "column": "storeys",
+      "skylight_u": 1.4,
+      "ground_insulation_r": 1.8,
+      "underground_wall_insulation_r": 2.0,
+      "north_sector_degrees": 60,
+      "shgc_directions": "EW_S_N",
+      "unheated_basement_ceiling_u": 0.4,
+      "unheated_partition_u": 1.2
+    },
+    "residential_severe_cold_C": {
+      "table": "3.1.8-3; 3.1.9-1",
+      "roof_u": 0.2,
+      "wall_u": [
+        0.3,
+        0.4
+      ],
+      "exposed_floor_u": [
+        0.3,
+        0.4
+      ],
+      "window_u": [
+        [
+          1.6,
+          2.0
+        ],
+        [
+          1.6,
+          1.8
+        ]
+      ],
+      "wwr_bins": [
+        0.3,
+        0.45
+      ],
+      "column": "storeys",
+      "skylight_u": 1.6,
+      "ground_insulation_r": 1.8,
+      "underground_wall_insulation_r": 2.0,
+      "north_sector_degrees": 60,
+      "shgc_directions": "EW_S_N",
+      "unheated_basement_ceiling_u": 0.45,
+      "unheated_partition_u": 1.5
+    },
+    "residential_cold_A": {
+      "table": "3.1.8-4; 3.1.9-2",
+      "roof_u": 0.25,
+      "wall_u": [
+        0.35,
+        0.45
+      ],
+      "exposed_floor_u": [
+        0.35,
+        0.45
+      ],
+      "window_u": [
+        [
+          1.8,
+          2.2
+        ],
+        [
+          1.5,
+          2.0
+        ]
+      ],
+      "wwr_bins": [
+        0.3,
+        0.5
+      ],
+      "column": "storeys",
+      "skylight_u": 1.8,
+      "ground_insulation_r": 1.6,
+      "underground_wall_insulation_r": 1.8,
+      "north_sector_degrees": 60,
+      "shgc_directions": "EW_S_N",
+      "unheated_basement_ceiling_u": 0.5,
+      "unheated_partition_u": 1.5
+    },
+    "residential_cold_B": {
+      "table": "3.1.8-5; 3.1.9-2",
+      "roof_u": 0.3,
+      "wall_u": [
+        0.35,
+        0.45
+      ],
+      "exposed_floor_u": [
+        0.35,
+        0.45
+      ],
+      "window_u": [
+        [
+          1.8,
+          2.2
+        ],
+        [
+          1.5,
+          2.0
+        ]
+      ],
+      "wwr_bins": [
+        0.3,
+        0.5
+      ],
+      "column": "storeys",
+      "skylight_u": 1.8,
+      "ground_insulation_r": 1.5,
+      "underground_wall_insulation_r": 1.6,
+      "north_sector_degrees": 60,
+      "shgc_directions": "EW_S_N",
+      "window_shgc": [
+        [
+          0.55,
+          null,
+          null
+        ],
+        [
+          0.55,
+          null,
+          null
+        ]
+      ],
+      "skylight_shgc": 0.45,
+      "unheated_basement_ceiling_u": 0.5,
+      "unheated_partition_u": 1.5
+    },
+    "residential_hot_summer_cold_winter_A": {
+      "table": "3.1.8-6; 3.1.9-3",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.6,
+        1.0
+      ],
+      "exposed_floor_u": 1.0,
+      "window_u": [
+        2.8,
+        2.5,
+        2.0
+      ],
+      "wwr_bins": [
+        0.25,
+        0.4,
+        0.6
+      ],
+      "column": "inertia",
+      "skylight_u": 2.8,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "north_sector_degrees": 30,
+      "shgc_directions": "EW_S_N",
+      "window_shgc": [
+        null,
+        [
+          0.4,
+          null,
+          null
+        ],
+        [
+          0.25,
+          null,
+          null
+        ]
+      ],
+      "skylight_shgc": 0.2,
+      "winter_shgc_min": [
+        null,
+        null,
+        0.5
+      ],
+      "internal_partition_u": 1.5,
+      "internal_floor_u": 1.8
+    },
+    "residential_hot_summer_cold_winter_B": {
+      "table": "3.1.8-7; 3.1.9-3",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.8,
+        1.2
+      ],
+      "exposed_floor_u": 1.2,
+      "window_u": [
+        2.8,
+        2.8,
+        2.5
+      ],
+      "wwr_bins": [
+        0.25,
+        0.4,
+        0.6
+      ],
+      "column": "inertia",
+      "skylight_u": 2.8,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "north_sector_degrees": 30,
+      "shgc_directions": "EW_S_N",
+      "window_shgc": [
+        null,
+        [
+          0.4,
+          null,
+          null
+        ],
+        [
+          0.25,
+          null,
+          null
+        ]
+      ],
+      "skylight_shgc": 0.2,
+      "winter_shgc_min": [
+        null,
+        null,
+        0.5
+      ],
+      "internal_partition_u": 1.5,
+      "internal_floor_u": 1.8
+    },
+    "residential_hot_summer_warm_winter_A": {
+      "table": "3.1.8-8; 3.1.9-4",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.7,
+        1.5
+      ],
+      "exposed_floor_u": null,
+      "window_u": [
+        3.0,
+        3.0,
+        2.5
+      ],
+      "wwr_bins": [
+        0.25,
+        0.35,
+        0.4
+      ],
+      "column": "inertia",
+      "skylight_u": 3.0,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "north_sector_degrees": 30,
+      "shgc_directions": "W_ES_N",
+      "window_shgc": [
+        [
+          0.35,
+          0.35,
+          0.35
+        ],
+        [
+          0.3,
+          0.3,
+          0.35
+        ],
+        [
+          0.2,
+          0.3,
+          0.35
+        ]
+      ],
+      "skylight_shgc": 0.2
+    },
+    "residential_hot_summer_warm_winter_B": {
+      "table": "3.1.8-9; 3.1.9-4",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.7,
+        1.5
+      ],
+      "exposed_floor_u": null,
+      "window_u": [
+        3.5,
+        3.5,
+        3.0
+      ],
+      "wwr_bins": [
+        0.25,
+        0.35,
+        0.4
+      ],
+      "column": "inertia",
+      "skylight_u": 3.5,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "north_sector_degrees": 30,
+      "shgc_directions": "W_ES_N",
+      "window_shgc": [
+        [
+          0.3,
+          0.35,
+          0.35
+        ],
+        [
+          0.25,
+          0.3,
+          0.3
+        ],
+        [
+          0.2,
+          0.3,
+          0.3
+        ]
+      ],
+      "skylight_shgc": 0.2
+    },
+    "residential_mild_A": {
+      "table": "3.1.8-10; 3.1.9-5",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.6,
+        1.0
+      ],
+      "exposed_floor_u": 1.0,
+      "window_u": [
+        2.8,
+        2.5,
+        2.0
+      ],
+      "wwr_bins": [
+        0.2,
+        0.4,
+        0.5
+      ],
+      "column": "inertia",
+      "skylight_u": 2.8,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "north_sector_degrees": 30,
+      "shgc_directions": "EW_S_N",
+      "window_shgc": [
+        null,
+        [
+          0.5,
+          null,
+          null
+        ],
+        [
+          0.5,
+          null,
+          null
+        ]
+      ],
+      "skylight_shgc": 0.3,
+      "winter_shgc_min": [
+        null,
+        null,
+        0.5
+      ],
+      "skylight_winter_shgc_min": 0.5,
+      "internal_partition_u": 1.5,
+      "internal_floor_u": 1.8
+    },
+    "residential_mild_B": {
+      "table": "3.1.8-11; 3.1.9-5",
+      "roof_u": 1.0,
+      "wall_u": 1.8,
+      "exposed_floor_u": null,
+      "window_u": [
+        4.0
+      ],
+      "wwr_bins": [
+        1.0
+      ],
+      "column": "inertia",
+      "skylight_u": null,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "north_sector_degrees": 30,
+      "shgc_directions": "EW_S_N",
+      "window_shgc": [
+        [
+          0.4,
+          null,
+          null
+        ]
+      ],
+      "skylight_shgc": 0.3,
+      "winter_shgc_min": [
+        null
+      ],
+      "applicability": "Window U applies to east/west only; using it for all directions is a conservative scenario assumption.",
+      "skylight_winter_shgc_min": 0.5
+    },
+    "public_A_severe_cold_AB": {
+      "table": "3.1.10-1",
+      "roof_u": [
+        0.25,
+        0.2
+      ],
+      "wall_u": [
+        0.35,
+        0.3
+      ],
+      "exposed_floor_u": [
+        0.35,
+        0.3
+      ],
+      "window_u": [
+        [
+          2.5,
+          2.2
+        ],
+        [
+          2.3,
+          2.0
+        ],
+        [
+          2.0,
+          1.6
+        ],
+        [
+          1.7,
+          1.5
+        ],
+        [
+          1.4,
+          1.3
+        ],
+        [
+          1.4,
+          1.3
+        ],
+        [
+          1.3,
+          1.2
+        ],
+        [
+          1.2,
+          1.1
+        ]
+      ],
+      "wwr_bins": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        1.0
+      ],
+      "column": "shape_factor",
+      "skylight_u": 1.8,
+      "skylight_shgc": null,
+      "window_shgc": null,
+      "shgc_directions": "ESW_N",
+      "north_sector_degrees": 60,
+      "ground_insulation_r": 1.1,
+      "underground_wall_insulation_r": 1.5,
+      "maximum_shape_factor": 0.5,
+      "maximum_skylight_ratio": 0.2,
+      "unheated_basement_ceiling_u": 0.5,
+      "unheated_stair_partition_u": 0.8
+    },
+    "public_A_severe_cold_C": {
+      "table": "3.1.10-2",
+      "roof_u": [
+        0.3,
+        0.25
+      ],
+      "wall_u": [
+        0.38,
+        0.35
+      ],
+      "exposed_floor_u": [
+        0.38,
+        0.35
+      ],
+      "window_u": [
+        [
+          2.7,
+          2.5
+        ],
+        [
+          2.4,
+          2.0
+        ],
+        [
+          2.1,
+          1.9
+        ],
+        [
+          1.7,
+          1.6
+        ],
+        [
+          1.5,
+          1.5
+        ],
+        [
+          1.5,
+          1.5
+        ],
+        [
+          1.4,
+          1.4
+        ],
+        [
+          1.3,
+          1.2
+        ]
+      ],
+      "wwr_bins": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        1.0
+      ],
+      "column": "shape_factor",
+      "skylight_u": 2.3,
+      "skylight_shgc": null,
+      "window_shgc": null,
+      "shgc_directions": "ESW_N",
+      "north_sector_degrees": 60,
+      "ground_insulation_r": 1.1,
+      "underground_wall_insulation_r": 1.5,
+      "maximum_shape_factor": 0.5,
+      "maximum_skylight_ratio": 0.2,
+      "unheated_basement_ceiling_u": 0.7,
+      "unheated_stair_partition_u": 1.0
+    },
+    "public_A_cold": {
+      "table": "3.1.10-3",
+      "roof_u": [
+        0.4,
+        0.35
+      ],
+      "wall_u": [
+        0.5,
+        0.45
+      ],
+      "exposed_floor_u": [
+        0.5,
+        0.45
+      ],
+      "window_u": [
+        [
+          2.5,
+          2.5
+        ],
+        [
+          2.5,
+          2.4
+        ],
+        [
+          2.0,
+          1.8
+        ],
+        [
+          1.9,
+          1.7
+        ],
+        [
+          1.8,
+          1.6
+        ],
+        [
+          1.7,
+          1.6
+        ],
+        [
+          1.5,
+          1.4
+        ],
+        [
+          1.3,
+          1.3
+        ]
+      ],
+      "wwr_bins": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        1.0
+      ],
+      "column": "shape_factor",
+      "skylight_u": 2.4,
+      "skylight_shgc": 0.35,
+      "window_shgc": [
+        [
+          null,
+          null
+        ],
+        [
+          0.48,
+          null
+        ],
+        [
+          0.4,
+          null
+        ],
+        [
+          0.4,
+          null
+        ],
+        [
+          0.35,
+          null
+        ],
+        [
+          0.3,
+          0.4
+        ],
+        [
+          0.3,
+          0.4
+        ],
+        [
+          0.25,
+          0.4
+        ]
+      ],
+      "shgc_directions": "ESW_N",
+      "north_sector_degrees": 60,
+      "ground_insulation_r": 0.6,
+      "underground_wall_insulation_r": 0.9,
+      "maximum_shape_factor": 0.5,
+      "maximum_skylight_ratio": 0.2,
+      "unheated_basement_ceiling_u": 1.0,
+      "unheated_stair_partition_u": 1.2
+    },
+    "public_A_hot_summer_cold_winter": {
+      "table": "3.1.10-4",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.6,
+        0.8
+      ],
+      "exposed_floor_u": 0.7,
+      "window_u": [
+        3.0,
+        2.6,
+        2.2,
+        2.0,
+        2.1,
+        2.1,
+        2.0,
+        1.8
+      ],
+      "wwr_bins": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        1.0
+      ],
+      "column": "inertia",
+      "skylight_u": 2.0,
+      "skylight_shgc": 0.3,
+      "window_shgc": [
+        [
+          0.45,
+          0.45
+        ],
+        [
+          0.4,
+          0.45
+        ],
+        [
+          0.35,
+          0.4
+        ],
+        [
+          0.3,
+          0.35
+        ],
+        [
+          0.3,
+          0.35
+        ],
+        [
+          0.25,
+          0.3
+        ],
+        [
+          0.25,
+          0.3
+        ],
+        [
+          0.2,
+          0.2
+        ]
+      ],
+      "shgc_directions": "ESW_N",
+      "north_sector_degrees": 30,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "maximum_shape_factor": null,
+      "maximum_skylight_ratio": 0.2
+    },
+    "public_A_hot_summer_warm_winter": {
+      "table": "3.1.10-5",
+      "roof_u": 0.4,
+      "wall_u": [
+        0.7,
+        1.5
+      ],
+      "exposed_floor_u": null,
+      "window_u": [
+        4.0,
+        3.0,
+        2.5,
+        2.5,
+        2.4,
+        2.4,
+        2.4,
+        2.0
+      ],
+      "wwr_bins": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        1.0
+      ],
+      "column": "inertia",
+      "skylight_u": 2.5,
+      "skylight_shgc": 0.25,
+      "window_shgc": [
+        [
+          0.4,
+          0.4
+        ],
+        [
+          0.35,
+          0.4
+        ],
+        [
+          0.3,
+          0.35
+        ],
+        [
+          0.25,
+          0.3
+        ],
+        [
+          0.2,
+          0.25
+        ],
+        [
+          0.2,
+          0.25
+        ],
+        [
+          0.18,
+          0.24
+        ],
+        [
+          0.18,
+          0.18
+        ]
+      ],
+      "shgc_directions": "ESW_N",
+      "north_sector_degrees": 30,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "maximum_shape_factor": null,
+      "maximum_skylight_ratio": 0.2
+    },
+    "public_A_mild_A": {
+      "table": "3.1.10-6",
+      "roof_u": [
+        0.5,
+        0.8
+      ],
+      "wall_u": [
+        0.8,
+        1.5
+      ],
+      "exposed_floor_u": 1.5,
+      "window_u": [
+        5.2,
+        4.0,
+        3.0,
+        2.7,
+        2.5,
+        2.5,
+        2.5,
+        2.0
+      ],
+      "wwr_bins": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        1.0
+      ],
+      "column": "inertia",
+      "skylight_u": 3.0,
+      "skylight_shgc": 0.3,
+      "window_shgc": [
+        [
+          null,
+          null
+        ],
+        [
+          0.4,
+          0.45
+        ],
+        [
+          0.35,
+          0.4
+        ],
+        [
+          0.3,
+          0.35
+        ],
+        [
+          0.3,
+          0.35
+        ],
+        [
+          0.25,
+          0.3
+        ],
+        [
+          0.25,
+          0.3
+        ],
+        [
+          0.2,
+          0.2
+        ]
+      ],
+      "shgc_directions": "ESW_N",
+      "north_sector_degrees": 30,
+      "ground_insulation_r": null,
+      "underground_wall_insulation_r": null,
+      "maximum_shape_factor": null,
+      "maximum_skylight_ratio": 0.2
+    },
+    "public_B_severe_cold_AB": {
+      "table": "3.1.11-1; 3.1.11-2",
+      "roof_u": 0.35,
+      "wall_u": 0.45,
+      "exposed_floor_u": 0.45,
+      "window_u": [
+        2.0
+      ],
+      "wwr_bins": [
+        1.0
+      ],
+      "skylight_u": 2.0,
+      "skylight_shgc": null,
+      "window_shgc": [
+        null
+      ],
+      "unheated_basement_ceiling_u": 0.5
+    },
+    "public_B_severe_cold_C": {
+      "table": "3.1.11-1; 3.1.11-2",
+      "roof_u": 0.45,
+      "wall_u": 0.5,
+      "exposed_floor_u": 0.5,
+      "window_u": [
+        2.2
+      ],
+      "wwr_bins": [
+        1.0
+      ],
+      "skylight_u": 2.2,
+      "skylight_shgc": null,
+      "window_shgc": [
+        null
+      ],
+      "unheated_basement_ceiling_u": 0.7
+    },
+    "public_B_cold": {
+      "table": "3.1.11-1; 3.1.11-2",
+      "roof_u": 0.55,
+      "wall_u": 0.6,
+      "exposed_floor_u": 0.6,
+      "window_u": [
+        2.5
+      ],
+      "wwr_bins": [
+        1.0
+      ],
+      "skylight_u": 2.5,
+      "skylight_shgc": 0.4,
+      "window_shgc": [
+        null
+      ],
+      "unheated_basement_ceiling_u": 1.0
+    },
+    "public_B_hot_summer_cold_winter": {
+      "table": "3.1.11-1; 3.1.11-2",
+      "roof_u": 0.6,
+      "wall_u": 1.0,
+      "exposed_floor_u": 1.0,
+      "window_u": [
+        3.0
+      ],
+      "wwr_bins": [
+        1.0
+      ],
+      "skylight_u": 3.0,
+      "skylight_shgc": 0.35,
+      "window_shgc": [
+        0.45
+      ],
+      "unheated_basement_ceiling_u": null
+    },
+    "public_B_hot_summer_warm_winter": {
+      "table": "3.1.11-1; 3.1.11-2",
+      "roof_u": 0.6,
+      "wall_u": 1.5,
+      "exposed_floor_u": null,
+      "window_u": [
+        4.0
+      ],
+      "wwr_bins": [
+        1.0
+      ],
+      "skylight_u": 4.0,
+      "skylight_shgc": 0.3,
+      "window_shgc": [
+        0.4
+      ],
+      "unheated_basement_ceiling_u": null
+    }
+  },
+  "operations": {
+    "OFFICE": {
+      "zone_ppsm": 0.1,
+      "zone_lighting": 8,
+      "zone_equipment": 15,
+      "zone_h_temp": 20,
+      "zone_c_temp": 26,
+      "zone_pfav": 30,
+      "zone_popheat": 75,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.6,
+      "zone_infiltration": 0.5,
+      "zone_nightACH": 0.5,
+      "zone_work_start": 7,
+      "zone_work_end": 18,
+      "profiles": {
+        "occupancy": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.1,
+            0.5,
+            0.95,
+            0.95,
+            0.8,
+            0.8,
+            0.95,
+            0.95,
+            0.95,
+            0.95,
+            0.3,
+            0.3,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "lighting": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.1,
+            0.5,
+            0.95,
+            0.95,
+            0.8,
+            0.8,
+            0.95,
+            0.95,
+            0.95,
+            0.95,
+            0.3,
+            0.3,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "equipment": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.1,
+            0.5,
+            0.95,
+            0.95,
+            0.5,
+            0.5,
+            0.95,
+            0.95,
+            0.95,
+            0.95,
+            0.3,
+            0.2,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "hvac": {
+          "weekday": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "reference": "Appendix C: C.0.6-1,3..7,9,11,12; C.0.7-2",
+      "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value."
+    },
+    "SCHOOL": {
+      "zone_ppsm": 0.16666666666666666,
+      "zone_lighting": 8,
+      "zone_equipment": 5,
+      "zone_h_temp": 20,
+      "zone_c_temp": 26,
+      "zone_pfav": 30,
+      "zone_popheat": 75,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.6,
+      "zone_infiltration": 0.5,
+      "zone_nightACH": 0.5,
+      "zone_work_start": 7,
+      "zone_work_end": 18,
+      "profiles": {
+        "occupancy": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.1,
+            0.5,
+            0.95,
+            0.95,
+            0.8,
+            0.8,
+            0.95,
+            0.95,
+            0.95,
+            0.95,
+            0.3,
+            0.3,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "lighting": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.1,
+            0.5,
+            0.95,
+            0.95,
+            0.8,
+            0.8,
+            0.95,
+            0.95,
+            0.95,
+            0.95,
+            0.3,
+            0.3,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "equipment": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.1,
+            0.5,
+            0.95,
+            0.95,
+            0.5,
+            0.5,
+            0.95,
+            0.95,
+            0.95,
+            0.95,
+            0.3,
+            0.2,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "hvac": {
+          "weekday": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "reference": "Appendix C: C.0.6-1,3..7,9,11,12; C.0.7-2",
+      "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value."
+    },
+    "HOTEL": {
+      "zone_ppsm": 0.04,
+      "zone_lighting": 6,
+      "zone_equipment": 15,
+      "zone_h_temp": 22,
+      "zone_c_temp": 26,
+      "zone_pfav": 30,
+      "zone_popheat": 75,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.6,
+      "zone_infiltration": 0.5,
+      "zone_nightACH": 0.5,
+      "zone_work_start": 0,
+      "zone_work_end": 24,
+      "profiles": {
+        "occupancy": {
+          "weekday": [
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7
+          ],
+          "weekend": [
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7,
+            0.7
+          ]
+        },
+        "lighting": {
+          "weekday": [
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.5,
+            0.5,
+            0.6,
+            0.9,
+            0.9,
+            0.9,
+            0.9,
+            0.1,
+            0.1,
+            0.1
+          ],
+          "weekend": [
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.5,
+            0.5,
+            0.6,
+            0.9,
+            0.9,
+            0.9,
+            0.9,
+            0.1,
+            0.1,
+            0.1
+          ]
+        },
+        "equipment": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0,
+            0,
+            0
+          ]
+        },
+        "hvac": {
+          "weekday": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "weekend": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "reference": "Appendix C: C.0.6-1,3..7,9,11,12; C.0.7-2",
+      "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value."
+    },
+    "COMMERCIAL": {
+      "zone_ppsm": 0.125,
+      "zone_lighting": 9,
+      "zone_equipment": 13,
+      "zone_h_temp": 18,
+      "zone_c_temp": 26,
+      "zone_pfav": 30,
+      "zone_popheat": 75,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.6,
+      "zone_infiltration": 0.5,
+      "zone_nightACH": 0.5,
+      "zone_work_start": 8,
+      "zone_work_end": 21,
+      "profiles": {
+        "occupancy": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.2,
+            0.5,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.7,
+            0.5,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.2,
+            0.5,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.7,
+            0.5,
+            0,
+            0,
+            0
+          ]
+        },
+        "lighting": {
+          "weekday": [
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.5,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.8,
+            1.0,
+            1.0,
+            1.0,
+            0.1,
+            0.1,
+            0.1
+          ],
+          "weekend": [
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.5,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.6,
+            0.8,
+            1.0,
+            1.0,
+            1.0,
+            0.1,
+            0.1,
+            0.1
+          ]
+        },
+        "equipment": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.2,
+            0.5,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.7,
+            0.5,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.2,
+            0.5,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.7,
+            0.5,
+            0,
+            0,
+            0
+          ]
+        },
+        "hvac": {
+          "weekday": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "weekend": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "reference": "Appendix C: C.0.6-1,3..7,9,11,12; C.0.7-2",
+      "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value."
+    },
+    "RESIDENTIAL": {
+      "zone_ppsm": 0.04,
+      "zone_lighting": 5,
+      "zone_equipment": 3.8,
+      "zone_h_temp": 18,
+      "zone_c_temp": 26,
+      "zone_pfav": 0,
+      "zone_popheat": 75,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.6,
+      "zone_infiltration": 0.5,
+      "zone_nightACH": 0.5,
+      "zone_work_start": 0,
+      "zone_work_end": 24,
+      "profiles": {
+        "occupancy": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.5,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.5,
+            0,
+            0,
+            0
+          ]
+        },
+        "lighting": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            1.0,
+            1.0,
+            0.5,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            1.0,
+            1.0,
+            0.5,
+            0,
+            0,
+            0
+          ]
+        },
+        "equipment": {
+          "weekday": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.5,
+            0,
+            0,
+            0
+          ],
+          "weekend": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.5,
+            0,
+            0,
+            0
+          ]
+        },
+        "hvac": {
+          "weekday": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "weekend": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "reference": "Appendix C: C.0.6-1,3..7,9,11,12; C.0.7-2",
+      "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value."
+    }
+  },
+  "templates": {
+    "residential_severe_cold_A_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_severe_cold_A",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_severe_cold_B_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_severe_cold_B",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_severe_cold_C_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_severe_cold_C",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_cold_A_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_cold_A",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_cold_B_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_cold_B",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_hot_summer_cold_winter_A_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_hot_summer_cold_winter_A",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_hot_summer_cold_winter_B_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_hot_summer_cold_winter_B",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_hot_summer_warm_winter_A_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_hot_summer_warm_winter_A",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_hot_summer_warm_winter_B_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_hot_summer_warm_winter_B",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_mild_A_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_mild_A",
+      "operation": "RESIDENTIAL"
+    },
+    "residential_mild_B_GB55015-2021_RESIDENTIAL": {
+      "envelope": "residential_mild_B",
+      "operation": "RESIDENTIAL"
+    },
+    "public_A_severe_cold_AB_GB55015-2021_OFFICE": {
+      "envelope": "public_A_severe_cold_AB",
+      "operation": "OFFICE"
+    },
+    "public_A_severe_cold_AB_GB55015-2021_HOTEL": {
+      "envelope": "public_A_severe_cold_AB",
+      "operation": "HOTEL"
+    },
+    "public_A_severe_cold_AB_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_A_severe_cold_AB",
+      "operation": "COMMERCIAL"
+    },
+    "public_A_severe_cold_AB_GB55015-2021_SCHOOL": {
+      "envelope": "public_A_severe_cold_AB",
+      "operation": "SCHOOL"
+    },
+    "public_A_severe_cold_C_GB55015-2021_OFFICE": {
+      "envelope": "public_A_severe_cold_C",
+      "operation": "OFFICE"
+    },
+    "public_A_severe_cold_C_GB55015-2021_HOTEL": {
+      "envelope": "public_A_severe_cold_C",
+      "operation": "HOTEL"
+    },
+    "public_A_severe_cold_C_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_A_severe_cold_C",
+      "operation": "COMMERCIAL"
+    },
+    "public_A_severe_cold_C_GB55015-2021_SCHOOL": {
+      "envelope": "public_A_severe_cold_C",
+      "operation": "SCHOOL"
+    },
+    "public_A_cold_GB55015-2021_OFFICE": {
+      "envelope": "public_A_cold",
+      "operation": "OFFICE"
+    },
+    "public_A_cold_GB55015-2021_HOTEL": {
+      "envelope": "public_A_cold",
+      "operation": "HOTEL"
+    },
+    "public_A_cold_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_A_cold",
+      "operation": "COMMERCIAL"
+    },
+    "public_A_cold_GB55015-2021_SCHOOL": {
+      "envelope": "public_A_cold",
+      "operation": "SCHOOL"
+    },
+    "public_A_hot_summer_cold_winter_GB55015-2021_OFFICE": {
+      "envelope": "public_A_hot_summer_cold_winter",
+      "operation": "OFFICE"
+    },
+    "public_A_hot_summer_cold_winter_GB55015-2021_HOTEL": {
+      "envelope": "public_A_hot_summer_cold_winter",
+      "operation": "HOTEL"
+    },
+    "public_A_hot_summer_cold_winter_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_A_hot_summer_cold_winter",
+      "operation": "COMMERCIAL"
+    },
+    "public_A_hot_summer_cold_winter_GB55015-2021_SCHOOL": {
+      "envelope": "public_A_hot_summer_cold_winter",
+      "operation": "SCHOOL"
+    },
+    "public_A_hot_summer_warm_winter_GB55015-2021_OFFICE": {
+      "envelope": "public_A_hot_summer_warm_winter",
+      "operation": "OFFICE"
+    },
+    "public_A_hot_summer_warm_winter_GB55015-2021_HOTEL": {
+      "envelope": "public_A_hot_summer_warm_winter",
+      "operation": "HOTEL"
+    },
+    "public_A_hot_summer_warm_winter_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_A_hot_summer_warm_winter",
+      "operation": "COMMERCIAL"
+    },
+    "public_A_hot_summer_warm_winter_GB55015-2021_SCHOOL": {
+      "envelope": "public_A_hot_summer_warm_winter",
+      "operation": "SCHOOL"
+    },
+    "public_A_mild_A_GB55015-2021_OFFICE": {
+      "envelope": "public_A_mild_A",
+      "operation": "OFFICE"
+    },
+    "public_A_mild_A_GB55015-2021_HOTEL": {
+      "envelope": "public_A_mild_A",
+      "operation": "HOTEL"
+    },
+    "public_A_mild_A_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_A_mild_A",
+      "operation": "COMMERCIAL"
+    },
+    "public_A_mild_A_GB55015-2021_SCHOOL": {
+      "envelope": "public_A_mild_A",
+      "operation": "SCHOOL"
+    },
+    "public_B_severe_cold_AB_GB55015-2021_OFFICE": {
+      "envelope": "public_B_severe_cold_AB",
+      "operation": "OFFICE"
+    },
+    "public_B_severe_cold_AB_GB55015-2021_HOTEL": {
+      "envelope": "public_B_severe_cold_AB",
+      "operation": "HOTEL"
+    },
+    "public_B_severe_cold_AB_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_B_severe_cold_AB",
+      "operation": "COMMERCIAL"
+    },
+    "public_B_severe_cold_AB_GB55015-2021_SCHOOL": {
+      "envelope": "public_B_severe_cold_AB",
+      "operation": "SCHOOL"
+    },
+    "public_B_severe_cold_C_GB55015-2021_OFFICE": {
+      "envelope": "public_B_severe_cold_C",
+      "operation": "OFFICE"
+    },
+    "public_B_severe_cold_C_GB55015-2021_HOTEL": {
+      "envelope": "public_B_severe_cold_C",
+      "operation": "HOTEL"
+    },
+    "public_B_severe_cold_C_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_B_severe_cold_C",
+      "operation": "COMMERCIAL"
+    },
+    "public_B_severe_cold_C_GB55015-2021_SCHOOL": {
+      "envelope": "public_B_severe_cold_C",
+      "operation": "SCHOOL"
+    },
+    "public_B_cold_GB55015-2021_OFFICE": {
+      "envelope": "public_B_cold",
+      "operation": "OFFICE"
+    },
+    "public_B_cold_GB55015-2021_HOTEL": {
+      "envelope": "public_B_cold",
+      "operation": "HOTEL"
+    },
+    "public_B_cold_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_B_cold",
+      "operation": "COMMERCIAL"
+    },
+    "public_B_cold_GB55015-2021_SCHOOL": {
+      "envelope": "public_B_cold",
+      "operation": "SCHOOL"
+    },
+    "public_B_hot_summer_cold_winter_GB55015-2021_OFFICE": {
+      "envelope": "public_B_hot_summer_cold_winter",
+      "operation": "OFFICE"
+    },
+    "public_B_hot_summer_cold_winter_GB55015-2021_HOTEL": {
+      "envelope": "public_B_hot_summer_cold_winter",
+      "operation": "HOTEL"
+    },
+    "public_B_hot_summer_cold_winter_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_B_hot_summer_cold_winter",
+      "operation": "COMMERCIAL"
+    },
+    "public_B_hot_summer_cold_winter_GB55015-2021_SCHOOL": {
+      "envelope": "public_B_hot_summer_cold_winter",
+      "operation": "SCHOOL"
+    },
+    "public_B_hot_summer_warm_winter_GB55015-2021_OFFICE": {
+      "envelope": "public_B_hot_summer_warm_winter",
+      "operation": "OFFICE"
+    },
+    "public_B_hot_summer_warm_winter_GB55015-2021_HOTEL": {
+      "envelope": "public_B_hot_summer_warm_winter",
+      "operation": "HOTEL"
+    },
+    "public_B_hot_summer_warm_winter_GB55015-2021_COMMERCIAL": {
+      "envelope": "public_B_hot_summer_warm_winter",
+      "operation": "COMMERCIAL"
+    },
+    "public_B_hot_summer_warm_winter_GB55015-2021_SCHOOL": {
+      "envelope": "public_B_hot_summer_warm_winter",
+      "operation": "SCHOOL"
+    }
+  },
+  "aliases": {
+    "climatezone1_GB55015-2021_OFFICE": "public_A_severe_cold_AB_GB55015-2021_OFFICE",
+    "climatezone1_GB55015-2021_SCHOOL": "public_A_severe_cold_AB_GB55015-2021_SCHOOL",
+    "climatezone1_GB55015-2021_HOTEL": "public_A_severe_cold_AB_GB55015-2021_HOTEL",
+    "climatezone1_GB55015-2021_COMMERCIAL": "public_A_severe_cold_AB_GB55015-2021_COMMERCIAL",
+    "climatezone1_GB55015-2021_RESIDENTIAL": "residential_severe_cold_A_GB55015-2021_RESIDENTIAL",
+    "climatezone2_GB55015-2021_OFFICE": "public_A_cold_GB55015-2021_OFFICE",
+    "climatezone2_GB55015-2021_SCHOOL": "public_A_cold_GB55015-2021_SCHOOL",
+    "climatezone2_GB55015-2021_HOTEL": "public_A_cold_GB55015-2021_HOTEL",
+    "climatezone2_GB55015-2021_COMMERCIAL": "public_A_cold_GB55015-2021_COMMERCIAL",
+    "climatezone2_GB55015-2021_RESIDENTIAL": "residential_cold_A_GB55015-2021_RESIDENTIAL",
+    "climatezone3_GB55015-2021_OFFICE": "public_A_hot_summer_cold_winter_GB55015-2021_OFFICE",
+    "climatezone3_GB55015-2021_SCHOOL": "public_A_hot_summer_cold_winter_GB55015-2021_SCHOOL",
+    "climatezone3_GB55015-2021_HOTEL": "public_A_hot_summer_cold_winter_GB55015-2021_HOTEL",
+    "climatezone3_GB55015-2021_COMMERCIAL": "public_A_hot_summer_cold_winter_GB55015-2021_COMMERCIAL",
+    "climatezone3_GB55015-2021_RESIDENTIAL": "residential_hot_summer_cold_winter_A_GB55015-2021_RESIDENTIAL",
+    "climatezone4_GB55015-2021_OFFICE": "public_A_hot_summer_warm_winter_GB55015-2021_OFFICE",
+    "climatezone4_GB55015-2021_SCHOOL": "public_A_hot_summer_warm_winter_GB55015-2021_SCHOOL",
+    "climatezone4_GB55015-2021_HOTEL": "public_A_hot_summer_warm_winter_GB55015-2021_HOTEL",
+    "climatezone4_GB55015-2021_COMMERCIAL": "public_A_hot_summer_warm_winter_GB55015-2021_COMMERCIAL",
+    "climatezone4_GB55015-2021_RESIDENTIAL": "residential_hot_summer_warm_winter_A_GB55015-2021_RESIDENTIAL",
+    "climatezone5_GB55015-2021_OFFICE": "public_A_mild_A_GB55015-2021_OFFICE",
+    "climatezone5_GB55015-2021_SCHOOL": "public_A_mild_A_GB55015-2021_SCHOOL",
+    "climatezone5_GB55015-2021_HOTEL": "public_A_mild_A_GB55015-2021_HOTEL",
+    "climatezone5_GB55015-2021_COMMERCIAL": "public_A_mild_A_GB55015-2021_COMMERCIAL",
+    "climatezone5_GB55015-2021_RESIDENTIAL": "residential_mild_A_GB55015-2021_RESIDENTIAL"
+  },
+  "legacy_templates": {
+    "climatezone1_GB/T51350-2019_RESIDENTIAL": {
+      "climate_zone": "climatezone1",
+      "standard": "GB/T51350-2019",
+      "type": "RESIDENTIAL",
+      "zone_wallU": 0.15,
+      "zone_winU": 1.0,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.5,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.033,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 3.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.3,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone2_GB/T51350-2019_RESIDENTIAL": {
+      "climate_zone": "climatezone2",
+      "standard": "GB/T51350-2019",
+      "type": "RESIDENTIAL",
+      "zone_wallU": 0.2,
+      "zone_winU": 1.2,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.8,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.033,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 3.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.5,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone3_GB/T51350-2019_RESIDENTIAL": {
+      "climate_zone": "climatezone3",
+      "standard": "GB/T51350-2019",
+      "type": "RESIDENTIAL",
+      "zone_wallU": 0.35,
+      "zone_winU": 1.8,
+      "zone_win_SHGC": 0.3,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.0,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.033,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 3.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone4_GB/T51350-2019_RESIDENTIAL": {
+      "climate_zone": "climatezone4",
+      "standard": "GB/T51350-2019",
+      "type": "RESIDENTIAL",
+      "zone_wallU": 0.5,
+      "zone_winU": 2.2,
+      "zone_win_SHGC": 0.2,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.033,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 3.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 3.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone5_GB/T51350-2019_RESIDENTIAL": {
+      "climate_zone": "climatezone5",
+      "standard": "GB/T51350-2019",
+      "type": "RESIDENTIAL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.2,
+      "zone_win_SHGC": 0.35,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.033,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 3.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone1_GB/T51350-2019_OFFICE": {
+      "climate_zone": "climatezone1",
+      "standard": "GB/T51350-2019",
+      "type": "OFFICE",
+      "zone_wallU": 0.15,
+      "zone_winU": 1.2,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.5,
+      "zone_work_start": 8.0,
+      "zone_work_end": 18.0,
+      "zone_ppsm": 0.1,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.3,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone2_GB/T51350-2019_OFFICE": {
+      "climate_zone": "climatezone2",
+      "standard": "GB/T51350-2019",
+      "type": "OFFICE",
+      "zone_wallU": 0.18,
+      "zone_winU": 1.5,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.8,
+      "zone_work_start": 8.0,
+      "zone_work_end": 18.0,
+      "zone_ppsm": 0.1,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.5,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone3_GB/T51350-2019_OFFICE": {
+      "climate_zone": "climatezone3",
+      "standard": "GB/T51350-2019",
+      "type": "OFFICE",
+      "zone_wallU": 0.4,
+      "zone_winU": 2.0,
+      "zone_win_SHGC": 0.3,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.0,
+      "zone_work_start": 8.0,
+      "zone_work_end": 18.0,
+      "zone_ppsm": 0.1,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone4_GB/T51350-2019_OFFICE": {
+      "climate_zone": "climatezone4",
+      "standard": "GB/T51350-2019",
+      "type": "OFFICE",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.2,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 8.0,
+      "zone_work_end": 18.0,
+      "zone_ppsm": 0.1,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 3.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone5_GB/T51350-2019_OFFICE": {
+      "climate_zone": "climatezone5",
+      "standard": "GB/T51350-2019",
+      "type": "OFFICE",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.35,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 8.0,
+      "zone_work_end": 18.0,
+      "zone_ppsm": 0.1,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone1_GB/T51350-2019_COMMERCIAL": {
+      "climate_zone": "climatezone1",
+      "standard": "GB/T51350-2019",
+      "type": "COMMERCIAL",
+      "zone_wallU": 0.15,
+      "zone_winU": 1.2,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.5,
+      "zone_work_start": 10.0,
+      "zone_work_end": 21.0,
+      "zone_ppsm": 0.25,
+      "zone_pfav": 30.0,
+      "zone_popheat": 100.0,
+      "zone_equipment": 9.0,
+      "zone_lighting": 7.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.3,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone2_GB/T51350-2019_COMMERCIAL": {
+      "climate_zone": "climatezone2",
+      "standard": "GB/T51350-2019",
+      "type": "COMMERCIAL",
+      "zone_wallU": 0.18,
+      "zone_winU": 1.5,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.8,
+      "zone_work_start": 10.0,
+      "zone_work_end": 21.0,
+      "zone_ppsm": 0.25,
+      "zone_pfav": 30.0,
+      "zone_popheat": 100.0,
+      "zone_equipment": 9.0,
+      "zone_lighting": 7.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.5,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone3_GB/T51350-2019_COMMERCIAL": {
+      "climate_zone": "climatezone3",
+      "standard": "GB/T51350-2019",
+      "type": "COMMERCIAL",
+      "zone_wallU": 0.4,
+      "zone_winU": 2.0,
+      "zone_win_SHGC": 0.3,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.0,
+      "zone_work_start": 10.0,
+      "zone_work_end": 21.0,
+      "zone_ppsm": 0.25,
+      "zone_pfav": 30.0,
+      "zone_popheat": 100.0,
+      "zone_equipment": 9.0,
+      "zone_lighting": 7.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone4_GB/T51350-2019_COMMERCIAL": {
+      "climate_zone": "climatezone4",
+      "standard": "GB/T51350-2019",
+      "type": "COMMERCIAL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.2,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 10.0,
+      "zone_work_end": 21.0,
+      "zone_ppsm": 0.25,
+      "zone_pfav": 30.0,
+      "zone_popheat": 100.0,
+      "zone_equipment": 9.0,
+      "zone_lighting": 7.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 3.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone5_GB/T51350-2019_COMMERCIAL": {
+      "climate_zone": "climatezone5",
+      "standard": "GB/T51350-2019",
+      "type": "COMMERCIAL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.35,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 10.0,
+      "zone_work_end": 21.0,
+      "zone_ppsm": 0.25,
+      "zone_pfav": 30.0,
+      "zone_popheat": 100.0,
+      "zone_equipment": 9.0,
+      "zone_lighting": 7.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone1_GB/T51350-2019_HOTEL": {
+      "climate_zone": "climatezone1",
+      "standard": "GB/T51350-2019",
+      "type": "HOTEL",
+      "zone_wallU": 0.15,
+      "zone_winU": 1.2,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.5,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.04,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.3,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone2_GB/T51350-2019_HOTEL": {
+      "climate_zone": "climatezone2",
+      "standard": "GB/T51350-2019",
+      "type": "HOTEL",
+      "zone_wallU": 0.18,
+      "zone_winU": 1.5,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.8,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.04,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.5,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone3_GB/T51350-2019_HOTEL": {
+      "climate_zone": "climatezone3",
+      "standard": "GB/T51350-2019",
+      "type": "HOTEL",
+      "zone_wallU": 0.4,
+      "zone_winU": 2.0,
+      "zone_win_SHGC": 0.3,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.0,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.04,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone4_GB/T51350-2019_HOTEL": {
+      "climate_zone": "climatezone4",
+      "standard": "GB/T51350-2019",
+      "type": "HOTEL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.2,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.04,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 3.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone5_GB/T51350-2019_HOTEL": {
+      "climate_zone": "climatezone5",
+      "standard": "GB/T51350-2019",
+      "type": "HOTEL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.35,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 0.0,
+      "zone_work_end": 23.0,
+      "zone_ppsm": 0.04,
+      "zone_pfav": 30.0,
+      "zone_popheat": 75.0,
+      "zone_equipment": 10.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone1_GB/T51350-2019_SCHOOL": {
+      "climate_zone": "climatezone1",
+      "standard": "GB/T51350-2019",
+      "type": "SCHOOL",
+      "zone_wallU": 0.15,
+      "zone_winU": 1.2,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.5,
+      "zone_work_start": 8.0,
+      "zone_work_end": 17.0,
+      "zone_ppsm": 0.167,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.3,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone2_GB/T51350-2019_SCHOOL": {
+      "climate_zone": "climatezone2",
+      "standard": "GB/T51350-2019",
+      "type": "SCHOOL",
+      "zone_wallU": 0.18,
+      "zone_winU": 1.5,
+      "zone_win_SHGC": 0.45,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 2.8,
+      "zone_work_start": 8.0,
+      "zone_work_end": 17.0,
+      "zone_ppsm": 0.167,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.1,
+      "zone_nightACH": 0.5,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone3_GB/T51350-2019_SCHOOL": {
+      "climate_zone": "climatezone3",
+      "standard": "GB/T51350-2019",
+      "type": "SCHOOL",
+      "zone_wallU": 0.4,
+      "zone_winU": 2.0,
+      "zone_win_SHGC": 0.3,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 20.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.0,
+      "zone_work_start": 8.0,
+      "zone_work_end": 17.0,
+      "zone_ppsm": 0.167,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone4_GB/T51350-2019_SCHOOL": {
+      "climate_zone": "climatezone4",
+      "standard": "GB/T51350-2019",
+      "type": "SCHOOL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.2,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 8.0,
+      "zone_work_end": 17.0,
+      "zone_ppsm": 0.167,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 3.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    },
+    "climatezone5_GB/T51350-2019_SCHOOL": {
+      "climate_zone": "climatezone5",
+      "standard": "GB/T51350-2019",
+      "type": "SCHOOL",
+      "zone_wallU": 0.6,
+      "zone_winU": 2.5,
+      "zone_win_SHGC": 0.35,
+      "zone_c_temp": 26.0,
+      "zone_c_hum": 0.6,
+      "zone_h_temp": 18.0,
+      "zone_collingEER": 3.5,
+      "zone_HeatingEER": 3.2,
+      "zone_work_start": 8.0,
+      "zone_work_end": 17.0,
+      "zone_ppsm": 0.167,
+      "zone_pfav": 30.0,
+      "zone_popheat": 70.0,
+      "zone_equipment": 3.0,
+      "zone_lighting": 4.0,
+      "zone_infiltration": 0.15,
+      "zone_nightACH": 2.0,
+      "template_status": "legacy_unverified_GB_T51350; retained only for archived model compatibility"
+    }
+  },
+  "units": {
+    "u": "W/(m2 K)",
+    "insulation_r": "m2 K/W",
+    "thermal_mass": "J/(m2 K)",
+    "zone_ppsm": "person/m2",
+    "zone_pfav": "m3/(h person)",
+    "zone_popheat": "W/person",
+    "zone_equipment": "W/m2",
+    "zone_lighting": "W/m2",
+    "zone_infiltration": "1/h",
+    "temperature": "degC",
+    "profiles": "dimensionless 0..1"
+  }
+}

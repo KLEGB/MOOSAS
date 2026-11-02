@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import subprocess
 from typing import Callable, Protocol, TextIO
 
@@ -41,6 +42,8 @@ class NativeEngine(Protocol):
 
     name: str
 
+    def open_binary_session(self, command, *, stdin, stdout, stderr, bufsize=0): ...
+
     def execute(
         self,
         command: tuple[str, ...],
@@ -60,11 +63,25 @@ class SubprocessEngine:
     def __init__(self, run_process: Callable | None = None):
         self._run_process = run_process
 
+    def open_binary_session(self, command, *, stdin, stdout, stderr, bufsize=0):
+        """Open a persistent numeric-protocol process without text transcoding."""
+        return subprocess.Popen(command, stdin=stdin, stdout=stdout, stderr=stderr, bufsize=bufsize,
+                                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+
     def execute(self, command, *, cwd=None, stdin=None, stdout=None, timeout_seconds=300.0):
         run_process = self._run_process or subprocess.run
+        launch_command = command
+        launch_options = {}
+        if os.name == 'nt' and self._run_process is None and Path(command[0]).is_file():
+            # Legacy Radiance copies argv[0] into a short fixed-size buffer.
+            # Preserve the audited command, but launch its exact application
+            # path with a short program name in the native command line.
+            application = Path(command[0]).resolve()
+            launch_command = (application.name,*command[1:])
+            launch_options['executable'] = str(application)
         try:
             completed = run_process(
-                command,
+                launch_command,
                 cwd=str(cwd) if cwd is not None else None,
                 stdin=stdin,
                 stdout=stdout if stdout is not None else subprocess.PIPE,
@@ -72,6 +89,7 @@ class SubprocessEngine:
                 text=True,
                 timeout=timeout_seconds,
                 check=False,
+                **launch_options,
             )
         except subprocess.TimeoutExpired as error:
             raise NativeEngineTimeoutError(
