@@ -47,5 +47,5 @@ def apply_energy_metadata(model, value):
             element.explicit_settings = set(record.get('explicit_settings',element.explicit_settings))
             element.space = record.get('owners',element.space)
             element.isOuter = record.get('is_outer',element.isOuter)
-    from .io.gbxml_energy import attach
+    from .io.gbxml.energy import attach
     attach(model,model.energy_settings.get('external_thermal_model'))

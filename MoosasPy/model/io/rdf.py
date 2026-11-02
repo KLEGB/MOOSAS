@@ -268,7 +268,7 @@ class MoosasRDF(Graph):
         self.buildOntology(model)
         self.encodeScheduleOntology()
         self.encodeSchedule(model)
-        from .gbxml_energy import encode
+        from .gbxml.energy import encode
         encode(model, self)
         self.encodeStorey(model)
         for tmp in model.buildingTemplate.keys():
@@ -1742,7 +1742,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     from ..energy_metadata import apply_energy_metadata
     metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
     apply_energy_metadata(model, str(metadata) if metadata is not None else None)
-    from .gbxml_energy import from_graph
+    from .gbxml.energy import from_graph
     from_graph(model, rdfGraph)
     return model
 

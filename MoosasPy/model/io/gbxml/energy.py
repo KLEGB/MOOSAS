@@ -382,7 +382,7 @@ def attach(model, evidence):
                 evidence['zone_settings'][str(s.id)].get('volume_m3',0)>0]
     model.spaceList.extend(promoted)
     model.voidList = [s for s in model.voidList if s not in promoted]
-    from ..resources import rebuild_schedule_index
+    from ...resources import rebuild_schedule_index
     rebuild_schedule_index(model)
 
 
@@ -390,7 +390,7 @@ def from_graph(model, graph):
     payload = graph.value(DOC,GBE.projection)
     evidence = json.loads(str(payload)) if payload is not None else model.energy_settings.get('external_thermal_model')
     if evidence:
-        from .gbxml_exchange import restore_exchange
+        from .exchange import restore_exchange
         tree = restore_exchange(graph)
         if tree is not None:
             current = project(tree.getroot(),source_name=evidence['source_name'],source_sha256=evidence['source_sha256'])

@@ -1,6 +1,4 @@
-﻿from __future__ import annotations
-
-"""RDF <-> gbXML conversion utilities for MOOSAS.
+﻿"""RDF <-> gbXML conversion utilities for MOOSAS.
 
 This module implements an end-to-end conversion workflow between the BOT /
 MOOSAS RDF representation used by :mod:`MoosasPy.model.io.rdf` and a compact gbXML
@@ -10,11 +8,14 @@ The converter is intentionally graph based.  It does not require constructing a
 ``MoosasModel`` instance, so it can be used as an independent workflow boundary
 for RDF-centric pipelines.
 """
+from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import math
+import tempfile
 from copy import deepcopy
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import xml.etree.ElementTree as etree
@@ -690,12 +691,12 @@ def convert_rdf_to_gbxml(
         rdflib parser format.  Defaults to ``turtle``.
     """
 
-    from .gbxml_exchange import restore_exchange, validate_references
+    from .exchange import restore_exchange, validate_references
     graph = Graph().parse(str(input_path), format=rdf_format)
-    from .gbxml_energy import DOC as THERMAL_DOC,GBE
+    from .energy import DOC as THERMAL_DOC,GBE
     evidence = graph.value(THERMAL_DOC,GBE.projection)
     if evidence is not None:
-        from .gbxml_exchange import DOC as EXCHANGE_DOC,EX,capture_exchange
+        from .exchange import DOC as EXCHANGE_DOC,EX,capture_exchange
         if graph.value(EXCHANGE_DOC,EX.xmlSkeleton) is None:
             import json
             capture_exchange(etree.fromstring(json.loads(str(evidence))['source_xml']),graph)
@@ -774,7 +775,7 @@ def convert_gbxml_to_rdf(
 
     tree = etree.parse(str(input_path))
     root = tree.getroot()
-    from .gbxml_energy import units
+    from .energy import units
     length_scale, area_scale, volume_scale = units(root)
 
     graph = Graph()
@@ -897,9 +898,9 @@ def convert_gbxml_to_rdf(
                 if face_uri is not None:
                     graph.add((face_uri, MOOSAS.hasHole, opening_face_uri))
 
-    from .gbxml_exchange import capture_exchange
+    from .exchange import capture_exchange
     capture_exchange(root, graph)
-    from .gbxml_energy import capture
+    from .energy import capture
     capture(root, graph, input_path)
     graph.serialize(destination=str(output_path), format=rdf_format)
     return graph
@@ -910,25 +911,32 @@ rdf_to_gbxml = convert_rdf_to_gbxml
 gbxml_to_rdf = convert_gbxml_to_rdf
 
 
-if __name__ == "__main__":
-    import argparse
+def is_gbxml(file_path: str | Path) -> bool:
+    """Recognize gbXML documents using a generic .xml extension."""
+    try:
+        root = etree.parse(file_path).getroot()
+    except (OSError, etree.ParseError):
+        return False
+    return root.tag.rsplit("}", 1)[-1].lower() == "gbxml"
 
-    parser = argparse.ArgumentParser(description="Convert BOT/MOOSAS RDF and gbXML files.")
-    sub = parser.add_subparsers(dest="command", required=True)
 
-    p1 = sub.add_parser("rdf-to-gbxml", help="Convert RDF Turtle to gbXML")
-    p1.add_argument("input")
-    p1.add_argument("output")
-    p1.add_argument("--rdf-format", default="turtle")
+def load_gbxml(file_path: str | Path):
+    """Load a complete model through the BOT/MOOSAS RDF representation."""
+    from ..rdf import loadRDF
 
-    p2 = sub.add_parser("gbxml-to-rdf", help="Convert gbXML to RDF Turtle")
-    p2.add_argument("input")
-    p2.add_argument("output")
-    p2.add_argument("--rdf-format", default="turtle")
-    p2.add_argument("--base-uri", default="")
+    with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_load_") as directory:
+        rdf_path = Path(directory) / "model.ttl"
+        convert_gbxml_to_rdf(file_path, rdf_path, rdf_format="turtle")
+        return loadRDF(str(rdf_path), fileFormat="turtle")
 
-    args = parser.parse_args()
-    if args.command == "rdf-to-gbxml":
-        convert_rdf_to_gbxml(args.input, args.output, rdf_format=args.rdf_format)
-    elif args.command == "gbxml-to-rdf":
-        convert_gbxml_to_rdf(args.input, args.output, rdf_format=args.rdf_format, base_uri=args.base_uri)
+
+def save_gbxml(model, file_path: str | Path):
+    """Export model geometry, thermal evidence and exchange metadata."""
+    from ..rdf import writeRDF
+
+    with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_") as directory:
+        rdf_path = Path(directory) / "model.ttl"
+        writeRDF(model, str(rdf_path), fileFormat="turtle")
+        convert_rdf_to_gbxml(rdf_path, file_path, rdf_format="turtle")
+
+

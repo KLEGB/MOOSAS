@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
-import xml.etree.ElementTree as ET
 
 from .result import SaveResult
 from ...utils import path as path_utils
@@ -22,14 +20,6 @@ def _geo_sidecar(file_path: Path) -> Path:
     return file_path.with_suffix(".geo")
 
 
-def _looks_like_gbxml(file_path: Path) -> bool:
-    try:
-        root = ET.parse(file_path).getroot()
-    except (OSError, ET.ParseError):
-        return False
-    return root.tag.rsplit("}", 1)[-1].lower() == "gbxml"
-
-
 def load_model(file_path: str | Path):
     """Load RDF, XML, JSON, IDF, or gbXML into a complete ``MoosasModel``."""
     source = Path(file_path)
@@ -37,8 +27,11 @@ def load_model(file_path: str | Path):
 
     # Many tools emit gbXML with a generic .xml suffix.  Detect that form
     # before dispatching to the Moosas XML+GEO sidecar loader.
-    if model_format == "xml" and _looks_like_gbxml(source):
-        model_format = "gbxml"
+    if model_format == "xml":
+        from .gbxml import is_gbxml
+
+        if is_gbxml(source):
+            model_format = "gbxml"
 
     if model_format in {"rdf", "ttl"}:
         from .rdf import loadRDF
@@ -57,17 +50,9 @@ def load_model(file_path: str | Path):
 
         return readIDF(str(source)).model
     if model_format == "gbxml":
-        # The gbXML adapter normalizes the exchange format into the same BOT /
-        # MOOSAS RDF graph used by the native model loader.  Keeping this
-        # bridge here means callers can use the ordinary ``MoosasModel.load``
-        # and receive a fully populated model that supports ``save``.
-        from .gbxml import convert_gbxml_to_rdf
-        from .rdf import loadRDF
+        from .gbxml import load_gbxml
 
-        with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_load_", dir=source.parent) as directory:
-            rdf_path = Path(directory) / "model.ttl"
-            convert_gbxml_to_rdf(source, rdf_path, rdf_format="turtle")
-            return loadRDF(str(rdf_path), fileFormat="turtle")
+        return load_gbxml(source)
 
     raise ValueError(f"Unsupported model load format: {model_format or source}")
 
@@ -121,12 +106,8 @@ def save_model(model, file_path: str | Path, **format_options) -> SaveResult:
         writeGraph(str(target), model)
         generated = (target,)
     elif model_format == "gbxml":
-        from .gbxml import convert_rdf_to_gbxml
-        from .rdf import writeRDF
+        from .gbxml import save_gbxml
 
-        with tempfile.TemporaryDirectory(prefix=".moosas_gbxml_", dir=target.parent) as directory:
-            rdf_path = Path(directory) / "model.ttl"
-            writeRDF(model, str(rdf_path), fileFormat="turtle")
-            convert_rdf_to_gbxml(rdf_path, target, rdf_format="turtle")
+        save_gbxml(model, target)
         generated = (target,)
     return SaveResult(primary_path=target, generated_paths=generated)

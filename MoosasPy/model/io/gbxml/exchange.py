@@ -93,13 +93,13 @@ def _set_text(node, tag, value):
 
 def restore_exchange(graph):
     """Rebuild source-dialect gbXML and overlay graph changes; None for native RDF."""
-    from .gbxml import _get_first_coords, _polyloop_coords, _add_polyloop, _collect_interface_links
+    from . import _get_first_coords, _polyloop_coords, _add_polyloop, _collect_interface_links
     template = graph.value(DOC, EX.xmlSkeleton)
     if template is None:
         return None
     ET.register_namespace('', NS)
     root = ET.fromstring(str(template))
-    from .gbxml_energy import units
+    from .energy import units
     length_scale, area_scale, volume_scale = units(root)
     subjects = {str(ident): s for s, ident in graph.subject_objects(EX.sourceId)}
     source_ids = {s: ident for ident, s in subjects.items()}
