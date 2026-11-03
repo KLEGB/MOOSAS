@@ -9,10 +9,13 @@ from MoosasPy.simulation.radiation import calculation as radiation_calculation
 from MoosasPy.model.io.graph import buildGraph
 from MoosasPy.transform.geometry.convexify import GeometryConvexifier
 from MoosasPy.model import MoosasModel
+from MoosasPy.model.resources import configure_model_resources
 from MoosasPy.transform.geometry.element import (
     MoosasEdge,
     MoosasElement,
     MoosasFace,
+    MoosasFloor,
+    MoosasGlazing,
     MoosasGeometry,
     MoosasSpace,
     MoosasWall,
@@ -27,7 +30,7 @@ from MoosasPy.transform.stages.convexification import convexify_model
 from MoosasPy.transform.stages.classification import classify_model
 from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_model
 from MoosasPy.transform.stages.splitting import split_wall_intersections
-from MoosasPy.transform.stages.topology import _normalize_horizontal_faces
+from MoosasPy.transform.stages.topology import _normalize_horizontal_faces, build_space_topology
 from MoosasPy.utils import GeometryError, shapely
 from MoosasPy.utils.constant import geom
 from MoosasPy.transform.importers.geo import _readGeo
@@ -51,6 +54,103 @@ def test_geo_import_preserves_millimetre_details(tmp_path):
     coordinates = shapely.get_coordinates(geometry[0].face, include_z=True)[:-1]
     assert coordinates.min(axis=0) == pytest.approx([0.003, 0.007, 3.123])
     assert coordinates.max(axis=0) == pytest.approx([1.003, 1.007, 3.123])
+
+
+def test_merged_duplicate_wall_area_counts_geometry_once():
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    line = shapely.LineString([(0, 0), (6, 0)])
+    first = MoosasWall.fromProjection(line, 0, 3, model)
+    second = MoosasWall.fromProjection(shapely.reverse(line), 0, 3, model)
+    first.dissolve(second)
+
+    assert len(np.array(first.face).flatten()) == 2
+    assert first.area == pytest.approx(18)
+    assert first.area3d(project=Projection(first.getWeightCenter(), first.normal)) == pytest.approx(18)
+
+
+def test_overlapping_wall_faces_use_union_area():
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    first = MoosasWall.fromProjection(shapely.LineString([(0, 0), (4, 0)]), 0, 3, model)
+    second = MoosasWall.fromProjection(shapely.LineString([(2, 0), (6, 0)]), 0, 3, model)
+    merged = MoosasWall(model, [first.faceId, second.faceId])
+
+    assert merged.area == pytest.approx(18)
+
+
+@pytest.mark.parametrize("air_boundary", [False, True])
+def test_wall_split_preserves_thermal_and_glazing_settings(air_boundary):
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    wall = MoosasWall.fromProjection(
+        shapely.LineString([(0, 0), (8, 0)]), 0, 3, model, airBoundary=air_boundary
+    )
+    wall.settings["u_value"] = 0.35
+    wall.explicit_settings.add("u_value")
+    glazing = MoosasGlazing.fromProjection(shapely.LineString([(2, 0), (6, 0)]), 1, 2, model)
+    glazing.U_Value = 1.4
+    glazing.SHGC = 0.28
+    glazing.operable = 0.4
+    wall.add_glazing(glazing)
+    model.wallList = [wall]
+    model.glazingList = [glazing]
+
+    parts = MoosasWall.break_(wall, shapely.Point(4, 0))
+
+    assert len(parts) == 2
+    assert sum(part.area for part in parts) == pytest.approx(wall.area)
+    assert all(part.is_air_boundary == air_boundary for part in parts)
+    assert all(part.settings["u_value"] == 0.35 for part in parts)
+    assert all(part.explicit_settings == {"u_value"} for part in parts)
+    windows = [window for part in parts for window in part.glazingElement]
+    assert len(windows) == 2
+    assert sum(window.area for window in windows) == pytest.approx(glazing.area)
+    assert all(window.U_Value == 1.4 and window.SHGC == 0.28 and window.operable == 0.4 for window in windows)
+
+
+@pytest.mark.parametrize("origin", [(0, 0), (1026.912, 84.523)])
+@pytest.mark.parametrize("virtual_neighbor", [False, True])
+def test_partial_shared_walls_are_split_and_linked_before_export(origin, virtual_neighbor):
+    model = MoosasModel()
+    configure_model_resources(model)
+    model.levelList = [0.0, 3.0]
+    for index, rectangle in enumerate([(0, 0, 4, 10), (4, 0, 8, 6)]):
+        polygon = shapely.affinity.translate(shapely.box(*rectangle), *origin)
+        coordinates = shapely.get_coordinates(polygon)
+        walls = [
+            MoosasWall.fromProjection(shapely.LineString([first, second]), 0, 3, model)
+            for first, second in zip(coordinates[:-1], coordinates[1:])
+        ]
+        if index == 1 and virtual_neighbor:
+            for wall in walls:
+                if np.allclose(shapely.get_coordinates(wall.force_2d())[:, 0], origin[0] + 4):
+                    wall.setCategory(2)
+        floors = []
+        for elevation in (0, 3):
+            face_id = model.includeGeo(shapely.force_3d(polygon, z=elevation), cat=0)
+            face = MoosasFace(model, face_id)
+            model.faceList.append(face)
+            floors.append(MoosasFloor([face]))
+        space = MoosasSpace(floors[0], MoosasEdge(walls), floors[1], Uid=f"room-{index}")
+        model.spaceList.append(space)
+        model.wallList.extend(walls)
+
+    build_space_topology(model, False)
+
+    shared = [wall for wall in model.wallList if not wall.isOuter]
+    assert len(shared) == 1
+    assert shared[0].area == pytest.approx(18)
+    assert not shared[0].is_air_boundary
+    assert set(shared[0].space) == {"room-0", "room-1"}
+    assert all(shared[0] in space.edge.wall for space in model.spaceList)
+    assert sum(wall.area for wall in model.wallList if wall.isOuter) == pytest.approx(108)
+    assert sum(space.area for space in model.spaceList) == pytest.approx(64)
+    assert model.spaceList[0].neighbor.keys() == {"room-1"}
+    wall_count = len(model.wallList)
+    build_space_topology(model, False)
+    assert len(model.wallList) == wall_count
+    assert sum(wall.area for wall in model.wallList if wall.isOuter) == pytest.approx(108)
 
 
 @pytest.mark.parametrize("origin", [(0.001, 0.001), (1113.982, 155.463)])

@@ -5,7 +5,7 @@ from ...model import MoosasModel
 from ...utils import mixItemListToList, np, shapely
 from ...utils.constant import geom
 from ...utils.tools import searchBy
-from ..geometry.element import MoosasFace, MoosasFloor, MoosasGlazing, MoosasSkylight, MoosasSpace
+from ..geometry.element import MoosasEdge, MoosasFace, MoosasFloor, MoosasGlazing, MoosasSkylight, MoosasSpace, MoosasWall
 from ..geometry.geos import GeometryError, Vector, overlapArea
 from .glazing import match_face_glazing
 
@@ -41,7 +41,9 @@ def build_space_topology(
         print()
 
     print("\r2LSB: Recording Boundary topology", end="")
+    _normalize_wall_faces(model)
     for space in model.spaceList:
+        space.neighbor.clear()
         space.regenerateId()
     _normalize_horizontal_faces(model)
 
@@ -61,6 +63,77 @@ def build_space_topology(
                 model.spaceIdDict[neighbor_id].add_neighbor(space.id, element)
     print()
     return model
+
+
+def _normalize_wall_faces(model: MoosasModel) -> None:
+    """Node active wall projections and share coincident wall segments."""
+    spaces = list(model.spaceList) + list(model.voidList)
+    spaces += [void for space in model.spaceList for void in space.void]
+    edges = list(dict.fromkeys(space.edge for space in spaces))
+    walls = list(dict.fromkeys(wall for edge in edges for wall in edge.wall))
+    groups = {}
+    for wall in walls:
+        bounds = (wall.level + wall.offset, wall.toplevel + wall.topoffset)
+        groups.setdefault(bounds, []).append(wall)
+
+    replacements = {}
+    for group in groups.values():
+        projections = [wall.force_2d() for wall in group]
+        noded = shapely.union_all(projections, grid_size=geom.POINT_PRECISION)
+        coordinates = np.unique(shapely.get_coordinates(noded), axis=0)
+        points = shapely.points(coordinates)
+        canonical = {}
+        # A physical wall must take precedence over a coincident virtual cut.
+        for wall in sorted(group, key=lambda item: item.is_air_boundary):
+            line = wall.force_2d()
+            endpoints = shapely.points(shapely.get_coordinates(line))
+            interior = points[
+                shapely.dwithin(points, line, geom.POINT_PRECISION / 10)
+                & ~shapely.dwithin(points, endpoints[0], geom.POINT_PRECISION)
+                & ~shapely.dwithin(points, endpoints[-1], geom.POINT_PRECISION)
+            ]
+            parts = MoosasWall.break_(wall, list(interior)) if len(interior) else [wall]
+            replacements[wall] = []
+            for part in parts:
+                key = shapely.to_wkb(shapely.normalize(part.force_2d()))
+                if key not in canonical:
+                    canonical[key] = part
+                else:
+                    shared = canonical[key]
+                    if shared is not part and shared.is_air_boundary == part.is_air_boundary:
+                        shared.dissolve(part)
+                replacements[wall].append(canonical[key])
+
+    rebuilt_edges = {}
+    for edge in edges:
+        parts = list(dict.fromkeys(
+            part for wall in edge.wall for part in replacements[wall]
+        ))
+        rebuilt = MoosasEdge(parts, boundary=edge.force_2d())
+        rebuilt.Uid = edge.Uid
+        rebuilt.internalMass = list(edge.internalMass)
+        rebuilt_edges[edge] = rebuilt
+    for space in spaces:
+        space.edge = rebuilt_edges[space.edge]
+    model.edgeList = [rebuilt_edges.get(edge, edge) for edge in model.edgeList]
+    active = list(dict.fromkeys(part for parts in replacements.values() for part in parts))
+    for wall in active:
+        wall.space = []
+        wall.isOuter = True
+        wall.neighbor.clear()
+        for glazing in wall.glazingElement:
+            glazing.space = []
+    old_walls = set(walls)
+    model.wallList = [wall for wall in model.wallList if wall not in old_walls] + active
+    old_glazing = {
+        glazing for wall in walls if replacements[wall] != [wall]
+        for glazing in wall.glazingElement
+    }
+    active_glazing = {glazing for wall in active for glazing in wall.glazingElement}
+    model.glazingList = [
+        glazing for glazing in model.glazingList
+        if glazing not in old_glazing or glazing in active_glazing
+    ]
 
 
 def _normalize_horizontal_faces(model: MoosasModel) -> None:

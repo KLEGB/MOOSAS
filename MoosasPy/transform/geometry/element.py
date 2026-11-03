@@ -811,7 +811,7 @@ class MoosasElement(object):
             geo.delete = True
 
     def area3d(self, faces=None, project=None) -> float:
-        """use projection to get the correct area of the object"""
+        """Measure the projected union so merged coincident faces count once."""
         if project is None:
             trans = Projection(self.getWeightCenter(), self.normal)
         else:
@@ -820,8 +820,7 @@ class MoosasElement(object):
             faces = np.array(self.face).flatten()
         # print(self.face)
         # [print(faceNormal(face), self.normal) for face in faces]
-        area = np.sum([shapely.area(trans.toUV(face)) for face in faces]).item()
-        return area
+        return float(shapely.area(shapely.union_all([trans.toUV(face) for face in faces])))
 
     def faceUV(self, uniform=False) -> list[shapely.Geometry]:
         """
@@ -1607,6 +1606,14 @@ class MoosasWall(MoosasElement):
             return [wall]
         # print("\nbreakFunction",cls)
         newWalls = cls.fromSeriesPoint(breakPoints, bottom, top, wall.glazingElement, wall.parent)
+        for descendant in newWalls:
+            descendant.settings = dict(wall.settings)
+            descendant.explicit_settings = set(wall.explicit_settings)
+            descendant.setCategory(wall.category)
+            descendant.space = list(wall.space)
+            descendant.isOuter = wall.isOuter
+            descendant.shading = list(wall.shading)
+            descendant.description = wall.description
         return newWalls
 
     @classmethod

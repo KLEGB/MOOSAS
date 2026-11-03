@@ -188,6 +188,14 @@ thresholds are unchanged. Rebuild models from their original
 geometry sources to benefit from the finer precision: loading an existing
 model or IDF cannot restore coordinates already discarded.
 
+Space topology nodes active walls at shared endpoints before recording adjacency.
+Partially coincident walls are split into matching segments and shared by the
+adjacent spaces, rather than exported as two outdoor walls. Physical walls take
+precedence over coincident virtual cuts. Wall splitting retains thermal settings,
+categories and glazing settings. The projected union of an element's source
+faces determines its area, so dissolved duplicate faces do not inflate
+area-based infiltration. Source geometry IDs are retained for alignment.
+
 ### Building Model
 
 `MoosasModel` stores geometry, spaces, topology, thermal settings, schedules,
