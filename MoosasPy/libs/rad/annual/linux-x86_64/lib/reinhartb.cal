@@ -1,0 +1,63 @@
+{ RCSid $Id$ }
+{
+	Compute Reinhart high-density sky patch bin (rbin)
+
+	RHS		- right-handed system?
+	JTR		- bin jitter/mixing amount
+	MF		- Subdivision value (usually a power of two)
+	Dx,Dy,Dz	- Incident direction (normalized, towards surface face)
+	rNx,rNy,rNz	- Surface normal (normalized, away from surface)
+	Ux,Uy,Uz	- Up direction vector (does not need to be normalized)
+
+	Modified from reinhart.cal
+
+	July 2014	G. Ward
+}
+				{ Useful factors and functions }
+DEGREE` : PI/180;
+mod`(n,d) : n - floor(n/d)*d;
+Asin(x) : if(x-1, PI/2, if(-1-x, -PI/2, asin(x))) / DEGREE;
+Atan2(y,x) : mod( atan2(y,x)/DEGREE, 360);
+
+				{ Default to Tregenza sky }
+MF = 1;
+				{ Set to -1 for left-handed coordinate system }
+RHS = 1;
+				{ Sharp bin boundaries by default }
+JTR = 0;
+				{ Default axis orientation (+Y == north) }
+rNx = 0; rNy = 0; rNz = -1;
+Ux = 0; Uy = 1; Uz = 0;
+				{ Compute oriented axis angles }
+inc_dz = -Dx*rNx-Dy*rNy-Dz*rNz;
+inc_rx = -RHS*(Dx*(Uy*rNz-Uz*rNy) + Dy*(Uz*rNx-Ux*rNz) + Dz*(Ux*rNy-Uy*rNx));
+inc_ry = Dx*Ux+Dy*Uy+Dz*Uz + inc_dz*(rNx*Ux+rNy*Uy+rNz*Uz);
+
+r_alt = Asin(inc_dz);
+r_azi = Atan2(inc_rx,inc_ry);
+				{ Number of patches per row }
+tnaz(r) : select(r, 30, 30, 24, 24, 18, 12, 6);
+TNR : tnaz(0);
+rnaz(r) = if(r-(MF*TNR-.5), 1, MF*tnaz(floor((r+.5)/MF) + 1));
+
+alpha = 90/(MF*TNR + .5);	{ Separation between rows in degrees }
+
+raccum(r) = if(r-.5, rnaz(r-1) + raccum(r-1), 0);
+				{ Random perturbation for final bin # }
+jtr1 = JTR*(.5 - rand(1.958*Dx - 5.386*Dy - 3.772*Dz));
+jtr2 = JTR*(.5 - rand(-6.334*Dx - 2.165*Dy + 7.953*Dz));
+
+r_row0 = floor(r_alt/alpha);
+r_row = if(JTR, min(max(0,floor(r_alt/alpha + jtr1)),MF*TNR), r_row0);
+
+r_inc0 = 360/rnaz(r_row0);
+r_inc = 360/rnaz(r_row);
+
+r_adj = .5*r_inc + if(JTR, jtr2*min(r_inc,r_inc0), 0);
+
+r_azn = floor( mod(r_azi+r_adj, 360) / r_inc );
+
+				{ Final bin value, -1 for "ground" }
+rbin = if(r_alt, raccum(r_row) + r_azn, -1);
+
+Nrbins = raccum(MF*TNR+1);	{ total number of bins }

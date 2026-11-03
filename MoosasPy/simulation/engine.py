@@ -60,8 +60,9 @@ class SubprocessEngine:
 
     name = "subprocess"
 
-    def __init__(self, run_process: Callable | None = None):
+    def __init__(self, run_process: Callable | None = None, *, env=None):
         self._run_process = run_process
+        self.env = dict(env) if env is not None else None
 
     def open_binary_session(self, command, *, stdin, stdout, stderr, bufsize=0):
         """Open a persistent numeric-protocol process without text transcoding."""
@@ -72,6 +73,8 @@ class SubprocessEngine:
         run_process = self._run_process or subprocess.run
         launch_command = command
         launch_options = {}
+        if self.env is not None:
+            launch_options['env'] = self.env
         if os.name == 'nt' and self._run_process is None and Path(command[0]).is_file():
             # Legacy Radiance copies argv[0] into a short fixed-size buffer.
             # Preserve the audited command, but launch its exact application

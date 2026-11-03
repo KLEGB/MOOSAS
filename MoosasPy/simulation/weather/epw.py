@@ -301,3 +301,39 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def prepare_daylight_weather(epw_file: str, output_path: str) -> str:
+    """Write an hourly non-leap WEA, preserving fractional UTC offsets.
+
+    EPW records are end-of-hour; WEA uses local-standard-time midpoints.
+    Missing DNI/DHI, subhourly data and incomplete/leap years are rejected.
+    This independent asset does not alter Energy's weather protocol.
+    """
+    from datetime import datetime, timedelta
+    from pathlib import Path
+    with open(epw_file, encoding='utf-8-sig', newline='') as source:
+        rows = list(csv.reader(source))
+    if len(rows) != 8768 or len(rows[0]) < 10 or rows[0][0] != 'LOCATION':
+        raise ValueError('Daylight EPW requires a complete non-leap 8760-hour year')
+    if rows[7][0] != 'DATA PERIODS' or int(rows[7][2]) != 1:
+        raise ValueError('Daylight EPW requires one record per hour')
+    location = rows[0]
+    latitude, longitude, offset, altitude = map(float, location[6:10])
+    if not all(np.isfinite([latitude, longitude, offset, altitude])) or not (-90 <= latitude <= 90 and -180 <= longitude <= 180 and -14 <= offset <= 14):
+        raise ValueError('Invalid daylight EPW location')
+    lines = [f'place {location[1]}', f'latitude {latitude}',
+             f'longitude {-longitude}', f'time_zone {-15 * offset}',
+             f'site_elevation {altitude}', 'weather_data_file_units 1']
+    for index, row in enumerate(rows[8:]):
+        stamp = datetime(2001, 1, 1) + timedelta(hours=index)
+        if len(row) < 16 or tuple(map(int, row[1:4])) != (stamp.month, stamp.day, stamp.hour + 1) or int(row[4]) not in (0, 30, 60):
+            raise ValueError(f'Invalid/non-hourly EPW time axis at record {index}')
+        dni, dhi = map(float, (row[14], row[15]))
+        if not all(np.isfinite([dni, dhi])) or not (0 <= dni < 9999 and 0 <= dhi < 9999):
+            raise ValueError(f'Missing/invalid DNI or DHI at EPW record {index}')
+        lines.append(f'{stamp.month} {stamp.day} {stamp.hour + .5} {dni} {dhi}')
+    target = Path(output_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return str(target)

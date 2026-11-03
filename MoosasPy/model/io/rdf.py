@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
 import re
 import warnings
 from rdflib import Graph, Namespace, Literal, URIRef
-from rdflib.namespace import RDF, RDFS, GEO, BRICK, WGS
+from rdflib.namespace import RDF, RDFS, GEO, BRICK, WGS, XSD
 
 from ..model import *
 from ..resources import rebuild_schedule_index
@@ -91,10 +91,23 @@ def _is_numeric_text(value) -> bool:
         return False
 
 
+def _setting_literal(value):
+    """Preserve booleans, numeric strings, arrays and nested settings exactly."""
+    from ..energy_metadata import _json_value
+    if hasattr(value, 'tolist'):
+        value = value.tolist()
+    if isinstance(value, (dict, list, tuple)):
+        return Literal(json.dumps(value, default=_json_value, allow_nan=False),
+                       datatype=URIRef('urn:moosas:json'))
+    return Literal(value, datatype=XSD.string) if isinstance(value, str) else Literal(value)
+
+
 def _literal_to_python(value):
     if value is None:
         return None
     if isinstance(value, Literal):
+        if value.datatype == XSD.string:
+            return str(value)
         if str(value.datatype) == 'urn:moosas:json':
             return json.loads(str(value))
         value = value.toPython()
@@ -338,6 +351,10 @@ class MoosasRDF(Graph):
             self.add((shading_uri, self.pgd.hasSurfaceType, self.moosas.Shading))
             for face_id in mixItemListToList(shading.faceId):
                 self.add((shading_uri, self.moosas.hasFace, URIRef(str(face_id))))
+            for key, value in shading.settings.items():
+                self.add((shading_uri, self.moosas.hasSetting, Literal(key)))
+                self.add((shading_uri, self.moosas[key], _setting_literal(value)))
+
 
     @staticmethod
     def _space_has_complete_topology(space):
@@ -734,7 +751,7 @@ class MoosasRDF(Graph):
             if value is None:
                 continue
             self.add((element_uri, self.moosas.hasSetting, Literal(key)))
-            self.add((element_uri, self.moosas[key], Literal(json.dumps(value), datatype=URIRef('urn:moosas:json')) if isinstance(value,(dict,list,tuple)) else Literal(value)))
+            self.add((element_uri, self.moosas[key], _setting_literal(value)))
         for key in getattr(Element, 'explicit_settings', set()):
             self.add((element_uri, self.moosas.explicitSetting, Literal(key)))
         if typeName in ("Glazing", "Skylight"):
@@ -889,7 +906,7 @@ class MoosasRDF(Graph):
                 continue
             self.add((URIRef(f"Space_{space.id}"), self.moosas.hasSetting, Literal(key)))
 
-            self.add((URIRef(f"Space_{space.id}"), self.moosas[str(key)], Literal(json.dumps(value), datatype=URIRef('urn:moosas:json')) if isinstance(value,(dict,list,tuple)) else Literal(value)))
+            self.add((URIRef(f"Space_{space.id}"), self.moosas[str(key)], _setting_literal(value)))
         for key in getattr(space, 'explicit_settings', []):
             self.add((URIRef(f"Space_{space.id}"), self.moosas.explicitSetting, Literal(key)))
 
@@ -1565,6 +1582,10 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
             for uri in geometry_uris
         ]
         model.shadingList.append(MoosasElement(model, face_ids, uid=uid))
+        for key in rdfGraph.objects(shading_uri, rdfGraph.moosas.hasSetting):
+            raw = next(rdfGraph.objects(shading_uri, rdfGraph.moosas[str(key)]), None)
+            model.shadingList[-1].settings[str(key)] = _literal_to_python(raw)
+
     # construct LevelList
     for i, levelUri in enumerate(levelList):
         levelUri = URIRef(str(levelUri))
@@ -1733,6 +1754,30 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     from ..energy_metadata import apply_energy_metadata
     metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
     apply_energy_metadata(model, str(metadata) if metadata is not None else None)
+    # Canonical per-subject triples are editable and take precedence over the
+    # legacy metadata snapshot, including after hand editing a TTL file.
+    subjects = list(loaded_spaces)
+    elements = {str(e.Uid): e for collection in (model.faceList, model.wallList,
+                model.glazingList, model.skylightList, model.shadingList) for e in collection}
+    for uid, element in elements.items():
+        subject = next(rdfGraph.subjects(rdfGraph.moosas.Uid, Literal(uid)), None)
+        if subject is not None:
+            subjects.append((subject, element))
+    for subject, item in subjects:
+        for key in rdfGraph.objects(subject, rdfGraph.moosas.hasSetting):
+            raw = next(rdfGraph.objects(subject, rdfGraph.moosas[str(key)]), None)
+            if raw is not None:
+                setting = 'zone_infiltration' if str(key) == 'zone_inflitration' else str(key)
+                item.settings[setting] = _literal_to_python(raw)
+        explicit = list(rdfGraph.objects(subject, rdfGraph.moosas.explicitSetting))
+        if explicit:
+            item.explicit_settings = set(map(str, explicit)) if hasattr(item, 'Uid') else list(map(str, explicit))
+        if hasattr(item, 'SHGC'):
+            if 'shgc' in item.settings:
+                item.SHGC = float(item.settings['shgc'])
+            if 'operable' in item.settings:
+                item.operable = float(item.settings['operable'])
+
     from .gbxml.energy import from_graph
     from_graph(model, rdfGraph)
     return model

@@ -1,4 +1,4 @@
-﻿from .radiance import _get_sky, _material_library, _mesh_to_radiance_object
+from .radiance import _get_sky, _material_library, _mesh_to_radiance_object
 from ...model import MoosasModel
 from ...transform.geometry.element import MoosasElement, MoosasSpace
 from ...transform.geometry.geos import Projection, Vector
@@ -46,7 +46,7 @@ def _generate_radiance_geometry(roof, floor, others):
 
 
 def _model_to_radiance(model: MoosasModel, date: datetime, sky_type, lat, lon, diffuse_illuminance=10000,
-                       rad_path=rf"{path.libDir}\rad\model.rad"):
+                       rad_path=rf"{path.libDir}\rad\model.rad", utc_offset_hours=0):
     """
     Convert a MoosasModel to a Radiance input file (.rad) string and write it to disk.
     
@@ -72,28 +72,7 @@ def _model_to_radiance(model: MoosasModel, date: datetime, sky_type, lat, lon, d
     str
         The complete Radiance input string containing sky, materials, and geometry definitions.
     """
-    roof, floor, others = [], [], []
-    for spc in model.spaceList:
-        faces = spc.getAllFaces(to_dict=True)
-        ceils, ground = [], []
-        for moface in faces["MoosasCeiling"]:
-            ceils = np.append(ceils, moface)
-        for moface in faces["MoosasFloor"]:
-            ground = np.append(ground, moface)
-        roof = np.append(roof, ceils)
-        floor = np.append(floor, ground)
-    roof = list(set(roof).difference(set(floor)))
-    floor = list(floor)
-    others = list(model.wallList)+list(model.glazingList)+list(model.skylightList)
-    # roof = [model.geoId.index(item) for item in roof]
-    # floor = [model.geoId.index(item) for item in floor]
-    # others = [model.geoId.index(item) for item in others]
-    # roof = np.array(model.geometryList)[roof]
-    # floor = np.array(model.geometryList)[floor]
-    # others = np.array(model.geometryList)[others]
-
-    geoStr = _generate_radiance_geometry(roof, floor, others)
-    radStr = _get_sky(date, sky_type, lat, lon, diffuse_illuminance) + _material_library() + geoStr
+    radStr = _get_sky(date, sky_type, lat, lon, diffuse_illuminance, utc_offset_hours) + "\n" + _daylight_scene(model)[0]
     with open(rad_path, 'w+') as f:
         f.write(radStr)
     return radStr
@@ -218,3 +197,45 @@ def _write_grid(element: MoosasElement, grid_path=rf"{path.libDir}\rad\grid.inpu
         f.write('\n'.join(gridStr) + "\n")
 
     return gridStr
+
+
+def _daylight_scene(model, *, black=False, overrides=None, split_transport=False):
+    """One sky-free optical scene shared by PIT and annual calculations.
+
+    Canonical visible properties are intentionally independent of SHGC and
+    shortwave properties. Legacy transparency/reflection have no declared
+    spectral band and are not silently reinterpreted as visible properties.
+    """
+    from .radiance import _visible_material
+    elements = {}
+    roles = {}
+    for space in model.spaceList:
+        faces = space.getAllFaces(to_dict=True)
+        for key, role in [('MoosasCeiling', 'ceiling'), ('MoosasFloor', 'floor')]:
+            for element in faces[key]:
+                elements[str(element.Uid)] = element
+                roles[str(element.Uid)] = role
+    for collection in (model.wallList, model.glazingList, model.skylightList, model.shadingList):
+        for element in collection:
+            elements[str(element.Uid)] = element
+    overrides = overrides or {}
+    unknown = set(overrides) - set(elements)
+    if unknown:
+        raise ValueError(f'Optical overrides reference unknown elements: {sorted(unknown)}')
+    text, optics = [], []
+    for index, (uid, element) in enumerate(sorted(elements.items())):
+        if element.category in (2, -2):
+            continue
+        glass = element.category in (1, 5, 6)
+        settings = {**getattr(element, 'settings', {}), **overrides.get(uid, {})}
+        material, record = _visible_material(settings, roles.get(uid, 'wall'), glass, f'mat_{index}', black, split_transport)
+        record.update(uid=uid, source='override' if uid in overrides else 'settings_or_default')
+        optics.append(record)
+        geometry = element.representation() if glass else _triangulate_opaque(element)
+        if not glass and not geometry:
+            continue  # Fully glazed parent: its opening is exported separately.
+        polygons = _mesh_to_radiance_object(geometry, f'mat_{index}', index)
+        if ' polygon ' not in polygons:
+            raise ValueError(f'No Radiance polygons exported for element {uid}')
+        text.extend((material, polygons))
+    return '\n'.join(text), optics

@@ -9,6 +9,8 @@ from .calculation import (
 from .daylight import estimate_space_daylight_factor
 from .sunlight import calculate_position_sun_hours
 from .runner import (
+	AnnualDaylightRequest,
+	AnnualDaylightResult,
 	DaylightFloorResult,
 	RadianceCommandError,
 	RadianceCommandResult,
@@ -19,6 +21,8 @@ from .runner import (
 )
 
 __all__ = [
+	"AnnualDaylightRequest",
+	"AnnualDaylightResult",
 	"DaylightFloorResult",
 	"RadianceCommandError",
 	"RadianceCommandResult",

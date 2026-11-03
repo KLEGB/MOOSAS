@@ -1,4 +1,4 @@
-﻿from ...utils import shapely
+from ...utils import shapely
 from datetime import datetime
 from ...transform.geometry.geos import Projection
 
@@ -30,8 +30,7 @@ def _mesh_to_radiance_object(geos, material, object_id):
         try:
             proj = Projection.fromPolygon(geo)
         except IndexError as e:
-            print("******Warning: GeometryError, invalid projection while writing rad")
-            continue
+            raise ValueError(f"Invalid Radiance projection for {object_id}") from e
         try:
             # Project rings separately to retain holes in the input polygon.
             rings = [proj.toUV(ring) for ring in shapely.get_rings(geo)]
@@ -47,7 +46,7 @@ def _mesh_to_radiance_object(geos, material, object_id):
                     geoStr += ["    "+" ".join(pt.astype(str))]
                 geoStr += [""]
         except Exception as e:
-            print("GeometryError:",e)
+            raise ValueError(f"Radiance geometry export failed for {object_id}") from e
     return "\n".join(geoStr) + "\n"
 
 
@@ -97,7 +96,7 @@ void glass glazing_
     return matStr
 
 
-def _get_sky(date: datetime, sky_type, lat, lon, diffuse_illuminance=10000):
+def _get_sky(date: datetime, sky_type, lat, lon, diffuse_illuminance=10000, utc_offset_hours=0):
     """
     Generate a Radiance sky description string for a given date and location.
     
@@ -120,7 +119,10 @@ def _get_sky(date: datetime, sky_type, lat, lon, diffuse_illuminance=10000):
         A formatted string containing the Radiance sky definition commands, including gensky command
         and associated glow and source elements for sky and ground.
     """
-    skyStr = f"!gensky {str(date.month).zfill(2)} {str(date.day).zfill(2)} {str(date.hour).zfill(2)} {sky_type} -a {lat} -o {lon} -g 0.200"
+    hour = date.hour + date.minute / 60 + date.second / 3600
+    if date.utcoffset() is not None:
+        utc_offset_hours = date.utcoffset().total_seconds() / 3600
+    skyStr = f"!gensky {date.month} {date.day} {hour} {sky_type} -a {lat} -o {-float(lon)} -m {-15 * utc_offset_hours} -g 0.200"
     if sky_type == "-c":
         skyStr += f" -B {diffuse_illuminance / 179.0}"
     skyStr += "\n"
@@ -145,3 +147,25 @@ ground_glow source ground
 4
     0 0 -1 180"""
     return skyStr
+
+
+def _visible_material(settings, role, glass, name, black=False, split_transport=False):
+    """Export physical normal-incidence VLT as Radiance glass transmissivity."""
+    import math
+    key = 'visible_transmittance' if glass else 'visible_reflectance'
+    default = .7 if glass else {'floor': .3, 'ceiling': .75}.get(role, .6)
+    value = float(settings.get(key, default))
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise ValueError(f'{name}: {key} must be in [0,1]')
+    record = {key: value, 'assumed': key not in settings}
+    if glass and value > 0:
+        # Default glass refractive index is 1.52; even lossless glass reflects.
+        tn = (math.sqrt(.8402528435 + .0072522239 * value * value) - .9166530661) / (.0036261119 * value)
+        if tn > 1 + 1e-6:
+            raise ValueError(f'{name}: VLT exceeds clear glass limit (~0.918); complex optics are unsupported')
+        material = f'void glass {name}\n0\n0\n3 {tn} {tn} {tn}\n'
+    else:
+        reflectance = 0 if black or glass else value
+        green = 0 if split_transport else reflectance
+        material = f'void plastic {name}\n0\n0\n5 {reflectance} {green} {reflectance} 0 0\n'
+    return material, record
