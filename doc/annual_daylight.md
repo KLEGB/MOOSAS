@@ -120,10 +120,19 @@ Canonical properties are `moosas:hasSetting` keys plus the corresponding
 `moosas:<key>` literal. Scalars retain native RDF types; compound values use
 the existing typed JSON literal. Arrays, dictionaries, booleans, numeric
 strings and NumPy arrays retain their types. No new RDF class is introduced.
-Existing plain scalar literals and legacy fields remain readable. Independent
-shading settings now round-trip too. Editable canonical triples override
-legacy duplicated metadata snapshots after loading, so a TTL property edit
-reaches the solver rather than being overwritten by an obsolete snapshot.
+Existing plain scalar literals and legacy element fields remain readable.
+Independent shading settings and explicit-setting markers now round-trip too.
+RDF space/element settings and their explicit markers are stored and read only
+as per-subject triples. The energy metadata payload retains model-level settings,
+schedules, conditioning and element ownership, but no duplicate settings snapshots.
+XML/JSON retain their complete metadata snapshots because they use a different
+persistence representation.
+
+Settings present only in an old RDF metadata snapshot are no longer imported.
+Export such files again from their source model before using this version.
+The misspelled `zone_inflitration` key is rejected; use `zone_infiltration`.
+Windows and skylights expose `SHGC` and `operable` through their settings so
+direct edits reach both serialization and the airflow adapter.
 
 `visible_transmittance != solar_transmittance != SHGC`. Ambiguous old
 `transparency/reflection` fields are preserved but not automatically assigned
@@ -138,12 +147,33 @@ altering the persisted model. Unknown element IDs are rejected. The manifest
 records assumptions, resolved optics, native executable hashes, source hashes,
 actual commands, grid settings, time convention and metric thresholds.
 
+## Native tool selection
+
+The default runtime is the bundled Windows/Linux x86-64 Radiance installation.
+Other platforms must supply a complete installation through `executable_dir`.
+Every executable is resolved only in the selected directory; missing tools fail
+explicitly instead of using the old weather tools or a system PATH installation.
+The runner's subprocess environment uses the selected `bin` first on PATH and
+its adjacent `lib` plus the run directory on RAYPATH. It does not import legacy
+or inherited Radiance function-library search paths.
+
+Matrix inputs must declare `NROWS`, `NCOLS` and `NCOMP=3` and contain the expected
+finite RGB data. ASCII, native float and native double payloads are supported.
+
 ## Reproduce NBuilding validation
 
-```bash
-OPENBLAS_NUM_THREADS=2 python -m test.run_annual_nbuilding NBuilding.rdf results
-python -m pytest test/test_annual_daylight.py
+From the repository root on this Windows workspace:
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+$env:OPENBLAS_NUM_THREADS = '2'
+& 'D:\miniconda3\Scripts\conda.exe' run -n moosas python test\run_annual_nbuilding.py test\caseFile\NBuilding.rdf results
+& 'D:\miniconda3\Scripts\conda.exe' run -n moosas python -m pytest test\test_annual_daylight.py
 ```
+
+The explicit source import path avoids a collision between this repository's
+`test` directory and Python installations that provide a standard-library
+`test` package.
 
 The integration script uses the bundled Beijing TMY solely as a repeatable
 software test. It deliberately sets different visible/solar transmission,
@@ -152,3 +182,22 @@ element and every room through TTL, then checks Energy and airflow inputs
 before running all rooms for 8760 hours. Optical defaults for the legacy
 input remain disclosed. Results are not a measured validation or a certified
 assessment of the building's as-built glazing and occupancy.
+
+## Windows develop integration validation
+
+The cleaned integration passed 574 tests with 7 skipped in the `moosas` Conda
+environment on Windows. The NBuilding integration exercised all 37 spaces and
+275 elements through TTL, Energy and CONTAM, then computed 710 sensors by 8760
+hours with a 2 m grid, 1024 ambient divisions and two native processes. All
+values were finite and satisfied total illuminance >= direct illuminance >= 0.
+This is a coarse-grid integration check, not a repeat of the 0.5 m reference run.
+
+Weather-matched PIT checks at 32 identical sensors gave normalized mean
+absolute differences of 5.53%, 3.08%, 2.18% and 6.02% for the four seasonal
+timestamps used by `check_annual_pit.py`. Native analytic-reflection and exact
+direct-sun regressions also passed their 2% and 1% relative tolerances.
+
+The wheel built successfully and all 25 annual-runtime files matched their
+source hashes. On this machine E-drive file-handle `fstat` calls returned
+`WinError 87`; using a C-drive wheel staging directory avoided that filesystem
+problem without changing project packaging configuration.

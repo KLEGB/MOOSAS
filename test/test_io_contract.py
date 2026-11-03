@@ -21,7 +21,7 @@ from MoosasPy.model.io.idf.parser import ZoneTemplate
 from MoosasPy.model.io.idf.version import bundled_template_idf_path, configure_idd
 from MoosasPy.model.resources import configure_model_resources, rebuild_schedule_index
 from MoosasPy.transform import transform
-from MoosasPy.transform.geometry.element import MoosasElement, MoosasGeometry
+from MoosasPy.transform.geometry.element import MoosasElement, MoosasGeometry, MoosasSkylight
 from MoosasPy.transform.geometry.geos import Vector
 from MoosasPy.utils import shapely
 
@@ -155,6 +155,68 @@ def _single_room_model(tmp_path):
     assert len(model.spaceList) == 1
     assert len(model.glazingList) == 1
     return model
+
+
+@pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
+def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
+    model = _single_room_model(tmp_path)
+    space = model.spaceList[0]
+    window = model.glazingList[0]
+    model.energy_settings = {'validation': {'enabled': True, 'hours': 24}}
+    model.schedule = {'probe_daily': {'type': 'Daily', 'value': [1.] * 24}}
+    space.conditioned = False
+    space.settings['daylight_occupied_mask'] = [True] * 8760
+    space.explicit_settings = ['daylight_occupied_mask']
+    window.settings.update(visible_transmittance=.61, operable=.37, shgc=.42,
+                           numeric_string='001', flags=np.array([True, False]))
+    window.explicit_settings = {'visible_transmittance'}
+    owners = list(window.space)
+    outer = window.isOuter
+    target = tmp_path / ('solver-model' + suffix)
+    model.save(target)
+    restored = MoosasModel.load(target)
+    result = next(w for w in restored.glazingList if w.Uid == window.Uid)
+    restored_space = next(s for s in restored.spaceList if s.id == space.id)
+    assert restored.energy_settings == model.energy_settings
+    assert restored.schedule == model.schedule
+    assert restored_space.conditioned is False
+    assert restored_space.settings['daylight_occupied_mask'] == [True] * 8760
+    assert restored_space.explicit_settings == space.explicit_settings
+    assert result.settings['numeric_string'] == '001'
+    assert result.settings['flags'] == [True, False]
+    assert result.SHGC == .42 and result.operable == .37
+    assert result.explicit_settings == {'visible_transmittance'}
+    assert result.space == owners and result.isOuter == outer
+
+
+@pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
+def test_skylight_settings_reach_properties_and_airflow(tmp_path, suffix):
+    from MoosasPy.simulation.airflow.network import AfnPath
+
+    model = _single_room_model(tmp_path)
+    space = model.spaceList[0]
+    geometry = MoosasGeometry(
+        shapely.Polygon([(1, 1, 3), (2, 1, 3), (2, 2, 3), (1, 2, 3)]),
+        'probe-skylight-geometry', [0, 0, 1], 5, errors='raise',
+    )
+    model.geometryList.append(geometry)
+    model.geoId.append(geometry.faceId)
+    skylight = MoosasSkylight(model, geometry, uid='probe-skylight', space=[space.id])
+    space.getAllFaces(to_dict=True)['MoosasCeiling'][0].add_glazing(skylight)
+    model.skylightList.append(skylight)
+    skylight.settings.update(shgc=.42, operable=.37, visible_transmittance=.61,
+                             airflow_element={'cd': .61})
+    skylight.explicit_settings = {'visible_transmittance'}
+    assert skylight.SHGC == .42 and skylight.operable == .37
+    target = tmp_path / ('skylight-model' + suffix)
+    model.save(target)
+    restored = MoosasModel.load(target)
+    result, = restored.skylightList
+    assert result.SHGC == .42 and result.operable == .37
+    assert result.explicit_settings == {'visible_transmittance'}
+    path = AfnPath.fromElement(result)
+    assert path.element['operable'] == .37 and path.element['shgc'] == .42
+    assert path.element['cd'] == .61
 
 
 @pytest.mark.parametrize("ground_method", ["GroundFCfactorMethod", "Ground", "Foundation"])

@@ -1296,7 +1296,7 @@ class MoosasSkylight(MoosasFace):
     '''
         一个特别简单的glazing类，只为与Moosasface区分开
         '''
-    __slots__ = ['parentFace','SHGC','operable']
+    __slots__ = ['parentFace']
 
     def __init__(self, model: MoosasContainer, faceId: str | MoosasGeometry, level: float = None,
                  offset: float = None, glazingId=None,
@@ -1337,8 +1337,25 @@ class MoosasSkylight(MoosasFace):
         super(MoosasSkylight, self).__init__(model, faceId, level=level, offset=offset, glazingElement=glazingElement,
                                              space=space, glazingId=glazingId, uid=uid)
         self.parentFace: MoosasFace | None = None
-        self.SHGC: float | None = None
-        self.operable: float = operable
+        self.SHGC = None
+        self.operable = operable
+
+    @property
+    def SHGC(self):
+        return self.settings['shgc']
+
+    @SHGC.setter
+    def SHGC(self, value):
+        self.settings['shgc'] = value
+
+    @property
+    def operable(self):
+        return self.settings['operable']
+
+    @operable.setter
+    def operable(self, value):
+        self.settings['operable'] = value
+
     @property
     def orientation(self):
         """

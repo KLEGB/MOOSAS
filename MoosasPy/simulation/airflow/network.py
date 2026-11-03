@@ -726,13 +726,13 @@ class AfnPath(object):
             user_name=thePath["userName"],
             path_height=0.0,
             path_width=0.0,
-            operable=moGeometry.settings.get('operable', moGeometry.operable),
+            operable=moGeometry.operable,
             path_type=thePath["pathType"],
         )
         # Preserve the optical property in network snapshots.  The in-memory
         # Coupler normally has ``geometry`` available; this makes a JSON/LPG
         # round trip equally capable of calculating transmitted solar heat.
-        thePath["element"]["shgc"] = float(moGeometry.settings.get('shgc', moGeometry.SHGC) or 0.0)
+        thePath["element"]["shgc"] = float(moGeometry.SHGC or 0.0)
         thePath["geometry"] = moGeometry
         thePath = cls(**thePath)
         thePath._width

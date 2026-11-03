@@ -109,12 +109,14 @@ Energy 输入包含 37 个热区；通风输入包含 37 个区、136 条路径�
 其中新增采光测试 9 项，包括面积/孔洞、多片区域、指标边界与夜间分母、
 小数时区、缺测拒绝、TTL 编辑优先级与类型、原生年度直射、天气 PIT 和解析反射。
 
-```bash
-python -m pytest test -q
-OPENBLAS_NUM_THREADS=2 python -m test.run_annual_nbuilding \
-  /path/to/NBuilding.rdf results --processes 6 \
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+$env:OPENBLAS_NUM_THREADS = '2'
+& 'D:\miniconda3\Scripts\conda.exe' run -n moosas python -m pytest test -q
+& 'D:\miniconda3\Scripts\conda.exe' run -n moosas python test\run_annual_nbuilding.py `
+  path\to\NBuilding.rdf results --processes 6 `
   --probe-window gls_0_206 --probe-wall wall_0_132
-python -m test.check_annual_pit /path/to/results/moosas-annual-<id>
+& 'D:\miniconda3\Scripts\conda.exe' run -n moosas python test\check_annual_pit.py path\to\results\moosas-annual-<id>
 ```
 
 [机器可读验证记录](validation/annual_daylight_20261103/NBuilding_validation.json)、

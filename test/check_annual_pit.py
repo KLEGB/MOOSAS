@@ -1,6 +1,7 @@
-"""Compare an existing annual result with weather-matched native PIT samples.
+r"""Compare an existing annual result with weather-matched native PIT samples.
 
-python -m test.check_annual_pit /path/to/moosas-annual-<id>
+From the repository root with PYTHONPATH set to that root:
+python test\check_annual_pit.py path\to\moosas-annual-<id>
 """
 import argparse
 import json

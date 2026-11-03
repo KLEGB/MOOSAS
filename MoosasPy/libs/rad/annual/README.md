@@ -12,11 +12,13 @@ Verified original archive SHA-256:
 - Linux: `04ee53cafbb64b943a53616b3d0ee379dd7ef80379c83aa7a145e547d9809c28`
 - Windows: `c4f02efcb4a33f4a43b7ce0ba58100544abc317a1be61f7b0425a64a66eb8a09`
 
-Linux x86-64 execution is tested. Windows x86-64 executable dependencies are
-checked statically; a Windows runtime smoke test is still required. Other
+Linux x86-64 execution is tested. Windows x86-64 execution is also covered by
+the native annual, weather-PIT and analytic-reflection tests. Other
 platforms may pass a compatible complete Radiance installation's `bin` as
 `executable_dir`. Its adjacent `lib` must contain Radiance function files.
 
 `RadianceRunner` sets `PATH` and `RAYPATH` on its own subprocess engine only.
+Only the selected installation supplies executables and function files:
+missing tools do not fall back to `libs/weather` or a system PATH installation.
 An injected engine must provide the same environment for nested `rfluxmtx`
 processes. Existing radiation/UHI tools remain separate.

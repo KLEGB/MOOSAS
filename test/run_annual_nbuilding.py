@@ -1,6 +1,7 @@
-"""Reproducible NBuilding TTL, Energy/AFN input, and annual Radiance exercise.
+r"""Reproducible NBuilding TTL, Energy/AFN input, and annual Radiance exercise.
 
-python -m test.run_annual_nbuilding NBuilding.rdf results --grid-spacing 0.5
+From the repository root with PYTHONPATH set to that root:
+python test\run_annual_nbuilding.py NBuilding.rdf results --grid-spacing 0.5
 Uses the bundled Beijing TMY for a software test, not site certification.
 """
 import argparse

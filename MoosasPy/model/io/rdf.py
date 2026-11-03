@@ -277,7 +277,8 @@ class MoosasRDF(Graph):
             This function does not return any value.
         """
         from ..energy_metadata import encode_energy_metadata
-        self.add((URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata'), Literal(encode_energy_metadata(model))))
+        self.add((URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata'),
+                  Literal(encode_energy_metadata(model, include_settings=False))))
         self.buildOntology(model)
         self.encodeScheduleOntology()
         self.encodeSchedule(model)
@@ -354,6 +355,8 @@ class MoosasRDF(Graph):
             for key, value in shading.settings.items():
                 self.add((shading_uri, self.moosas.hasSetting, Literal(key)))
                 self.add((shading_uri, self.moosas[key], _setting_literal(value)))
+            for key in shading.explicit_settings:
+                self.add((shading_uri, self.moosas.explicitSetting, Literal(key)))
 
 
     @staticmethod
@@ -1042,13 +1045,10 @@ class MoosasRDF(Graph):
                 if value is not None:
                     settings[key] = _literal_to_python(value)
             element.settings.update(settings)
-            element.explicit_settings.update(
+            element.explicit_settings = {
                 str(_literal_to_python(v))
                 for v in _as_rdf_values(self.getObject(elementUri, self.moosas.explicitSetting))
-            )
-            # Element construction values from RDF must not be overwritten by
-            # the owner space template constructed later in the load process.
-            element.explicit_settings.update({'u_value', 'shgc'}.intersection(settings))
+            }
             if 'u_value' in settings:
                 element.U_Value = float(settings['u_value'])
             if isinstance(element, (MoosasGlazing, MoosasSkylight)):
@@ -1330,13 +1330,13 @@ def _decode_space_settings(rdfGraph: MoosasRDF, spaceUri, spc: MoosasSpace):
     spc.settings.pop('_thermal_template', None)
     spcSettings = mixItemListToList(rdfGraph.getObject(spaceUri, rdfGraph.moosas.hasSetting))
     for key in spcSettings:
+        if str(key) == 'zone_inflitration':
+            raise ValueError('zone_inflitration is unsupported; use zone_infiltration')
         raw_value = _first_or_none(rdfGraph.getObject(spaceUri, rdfGraph.moosas[str(key)]))
         canonical = raw_value is not None
         if not canonical:
             raw_value = _first_or_none(rdfGraph.getObject(spaceUri, Literal(key)))
         spc.settings[str(key)] = _literal_to_python(raw_value) if canonical else _decode_space_setting_value(raw_value)
-    if 'zone_inflitration' in spc.settings:
-        spc.settings.setdefault('zone_infiltration', spc.settings.pop('zone_inflitration'))
     spc.explicit_settings = [str(k) for k in rdfGraph.objects(spaceUri, rdfGraph.moosas.explicitSetting)]
 
 
@@ -1432,7 +1432,7 @@ def _apply_element_parameter_defaults(model, rdfGraph=None):
                 opaque[id(element)] = element
     groups = (
         (list(opaque.values()), _WALL_DEFAULTS, {'u_value': 'zone_wallU'}),
-        (list(model.glazingList), _GLAZING_DEFAULTS,
+        (list(model.glazingList) + list(model.skylightList), _GLAZING_DEFAULTS,
          {'u_value': 'zone_winU', 'shgc': 'zone_win_SHGC'}),
     )
     legacy_capacity_elements = []
@@ -1585,6 +1585,9 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         for key in rdfGraph.objects(shading_uri, rdfGraph.moosas.hasSetting):
             raw = next(rdfGraph.objects(shading_uri, rdfGraph.moosas[str(key)]), None)
             model.shadingList[-1].settings[str(key)] = _literal_to_python(raw)
+        model.shadingList[-1].explicit_settings = {
+            str(key) for key in rdfGraph.objects(shading_uri, rdfGraph.moosas.explicitSetting)
+        }
 
     # construct LevelList
     for i, levelUri in enumerate(levelList):
@@ -1753,32 +1756,9 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     _apply_element_parameter_defaults(model, rdfGraph)
     from ..energy_metadata import apply_energy_metadata
     metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
-    apply_energy_metadata(model, str(metadata) if metadata is not None else None)
-    # Canonical per-subject triples are editable and take precedence over the
-    # legacy metadata snapshot, including after hand editing a TTL file.
-    subjects = list(loaded_spaces)
-    elements = {str(e.Uid): e for collection in (model.faceList, model.wallList,
-                model.glazingList, model.skylightList, model.shadingList) for e in collection}
-    for uid, element in elements.items():
-        subject = next(rdfGraph.subjects(rdfGraph.moosas.Uid, Literal(uid)), None)
-        if subject is not None:
-            subjects.append((subject, element))
-    for subject, item in subjects:
-        for key in rdfGraph.objects(subject, rdfGraph.moosas.hasSetting):
-            raw = next(rdfGraph.objects(subject, rdfGraph.moosas[str(key)]), None)
-            if raw is not None:
-                setting = 'zone_infiltration' if str(key) == 'zone_inflitration' else str(key)
-                item.settings[setting] = _literal_to_python(raw)
-        explicit = list(rdfGraph.objects(subject, rdfGraph.moosas.explicitSetting))
-        if explicit:
-            item.explicit_settings = set(map(str, explicit)) if hasattr(item, 'Uid') else list(map(str, explicit))
-        if hasattr(item, 'SHGC'):
-            if 'shgc' in item.settings:
-                item.SHGC = float(item.settings['shgc'])
-            if 'operable' in item.settings:
-                item.operable = float(item.settings['operable'])
+    apply_energy_metadata(model, str(metadata) if metadata is not None else None,
+                          include_settings=False)
 
     from .gbxml.energy import from_graph
     from_graph(model, rdfGraph)
     return model
-

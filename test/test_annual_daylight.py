@@ -9,9 +9,9 @@ import shapely
 from rdflib import URIRef, Literal
 
 from MoosasPy.model import MoosasModel
-from MoosasPy.model.io.rdf import MoosasRDF
+from MoosasPy.model.io.rdf import MoosasRDF, _decode_space_settings
 from MoosasPy.simulation.radiation.runner import (
-    AnnualDaylightRequest, RadianceRunner, _daylight_metrics,
+    AnnualDaylightRequest, RadianceCommandError, RadianceRunner, _daylight_metrics,
     _daylight_sensors, _read_daylight_wea, _read_radiance_matrix,
 )
 from MoosasPy.simulation.radiation.radiance import _visible_material, _get_sky
@@ -90,7 +90,55 @@ def test_matrix_rejects_truncated_or_wrong_dimension(tmp_path):
         _read_radiance_matrix(file,2,1)
 
 
-def test_ttl_edit_overrides_metadata_and_reaches_airflow(tmp_path):
+@pytest.mark.parametrize('missing', ['NROWS', 'NCOLS', 'NCOMP'])
+def test_matrix_requires_declared_dimensions(tmp_path, missing):
+    file = tmp_path / 'missing-header.mtx'
+    header = dict(NROWS=1, NCOLS=1, NCOMP=3, FORMAT='ascii')
+    del header[missing]
+    file.write_text('#?RADIANCE\n' + ''.join(f'{key}={value}\n' for key, value in header.items()) + '\n1 2 3\n')
+    with pytest.raises(ValueError, match='dimensions'):
+        _read_radiance_matrix(file, 1, 1)
+
+
+@pytest.mark.parametrize('format,dtype', [('ascii', None), ('float', np.float32), ('double', np.float64)])
+def test_matrix_reads_declared_rgb_formats(tmp_path, format, dtype):
+    file = tmp_path / 'valid.mtx'
+    header = f'#?RADIANCE\nNROWS=1\nNCOLS=2\nNCOMP=3\nFORMAT={format}\n\n'.encode('ascii')
+    values = np.arange(6, dtype=np.float32)
+    payload = b'0 1 2 3 4 5\n' if dtype is None else values.astype(dtype).tobytes()
+    file.write_bytes(header + payload)
+    np.testing.assert_array_equal(_read_radiance_matrix(file, 1, 2), values.reshape(1, 2, 3))
+
+
+def test_explicit_tool_directory_never_falls_back(tmp_path, monkeypatch):
+    import shutil
+    import os
+    alternate = tmp_path / ('gendaymtx.exe' if os.name == 'nt' else 'gendaymtx')
+    alternate.write_bytes(b'not a real executable')
+    monkeypatch.setattr(shutil, 'which', lambda name: str(alternate))
+    runner = RadianceRunner(SimpleNamespace(), executable_dir=tmp_path / 'missing')
+    with pytest.raises(RadianceCommandError, match='not found'):
+        runner._executable('gendaymtx')
+
+
+def test_unbundled_platform_requires_explicit_tools(tmp_path, monkeypatch):
+    import platform
+    monkeypatch.setattr(platform, 'machine', lambda: 'arm64')
+    with pytest.raises(ValueError, match='executable_dir'):
+        RadianceRunner(SimpleNamespace())
+    assert RadianceRunner(SimpleNamespace(), executable_dir=tmp_path).executable_dir == tmp_path
+
+
+def test_ttl_rejects_misspelled_infiltration_key():
+    graph = MoosasRDF()
+    subject = URIRef('urn:room')
+    graph.add((subject, graph.moosas.hasSetting, Literal('zone_inflitration')))
+    graph.add((subject, graph.moosas.zone_inflitration, Literal(.5)))
+    with pytest.raises(ValueError, match='use zone_infiltration'):
+        _decode_space_settings(graph, subject, SimpleNamespace(settings={}))
+
+
+def test_ttl_canonical_settings_reach_airflow_without_duplicate_snapshot(tmp_path):
     source=Path(__file__).parent/'caseFile/NBuilding.rdf'
     with contextlib.redirect_stdout((tmp_path/'load.log').open('w')):
         model=MoosasModel.load(source)
@@ -99,6 +147,13 @@ def test_ttl_edit_overrides_metadata_and_reaches_airflow(tmp_path):
                                airflow_element={'cd':.61}, numeric_string='001')
         target=tmp_path/'roundtrip.ttl';model.save(target)
         graph=MoosasRDF.load(target)
+        metadata_uri = URIRef('urn:moosas:energy-model')
+        metadata_key = URIRef('urn:moosas:energy-metadata')
+        metadata = json.loads(str(next(graph.objects(metadata_uri, metadata_key))))
+        for records in (metadata['spaces'], metadata['elements']):
+            assert all('settings' not in record and 'explicit_settings' not in record for record in records.values())
+        metadata['elements'][str(window.Uid)]['settings'] = {'visible_transmittance': .99}
+        graph.set((metadata_uri, metadata_key, Literal(json.dumps(metadata))))
         subject=next(graph.subjects(graph.moosas.Uid,Literal(str(window.Uid))))
         graph.set((subject,graph.moosas.visible_transmittance,Literal(.51)))
         graph.serialize(target,format='turtle')

@@ -94,16 +94,17 @@ class RadianceRunner(Runner):
         self.model = model
         self.sky = sky
         self.work_dir = Path(work_dir) if work_dir is not None else None
-        self.executable_dir = Path(executable_dir).resolve() if executable_dir is not None else Path(path.libDir) / "rad"
-        if executable_dir is None and platform.machine().lower() in ('x86_64', 'amd64') and (os.name == 'nt' or platform.system() == 'Linux'):
-            bundled = Path(path.libDir) / 'rad' / 'annual' / ('windows-x86_64' if os.name == 'nt' else 'linux-x86_64') / 'bin'
-            if bundled.is_dir():
-                self.executable_dir = bundled
+        if executable_dir is not None:
+            self.executable_dir = Path(executable_dir).resolve()
+        else:
+            if platform.machine().lower() not in ('x86_64', 'amd64') or platform.system() not in ('Windows', 'Linux'):
+                raise ValueError('No bundled Radiance tools for this platform; pass executable_dir.')
+            platform_dir = 'windows-x86_64' if os.name == 'nt' else 'linux-x86_64'
+            self.executable_dir = Path(path.libDir) / 'rad' / 'annual' / platform_dir / 'bin'
         if engine is None:
             env = dict(os.environ)
             env['PATH'] = str(self.executable_dir) + os.pathsep + env.get('PATH', '')
-            libraries = [str(self.executable_dir), str(self.executable_dir.parent / 'lib'), str(Path(path.libDir) / 'rad')]
-            env['RAYPATH'] = os.pathsep.join(['.', *libraries, env.get('RAYPATH', '')])
+            env['RAYPATH'] = os.pathsep.join(['.', str(self.executable_dir.parent / 'lib')])
             self.engine = SubprocessEngine(env=env)
 
     def run(self) -> RadianceDaylightResult:
@@ -174,6 +175,8 @@ class RadianceRunner(Runner):
         return floors
 
     def _compile_scene(self, rad_path: Path, octree_path: Path, run_dir: Path) -> RadianceCommandResult:
+        if self.sky is not None and self.sky.direct_normal_irradiance_w_m2 is None:
+            self._executable('gensky')
         command = (str(self._executable("oconv")), str(rad_path))
         with octree_path.open("wb") as octree_file:
             return self._run_command(command, run_dir, stdout=octree_file)
@@ -231,14 +234,10 @@ class RadianceRunner(Runner):
 
     def _executable(self, name: str) -> Path:
         executable_name = f"{name}.exe" if os.name == "nt" else name
-        candidates = [self.executable_dir / executable_name, Path(path.libDir) / 'weather' / executable_name]
-        found = shutil.which(executable_name)
-        if found:
-            candidates.append(Path(found))
-        for executable in candidates:
-            if executable.is_file():
-                return executable
-        raise RadianceCommandError((str(candidates[0]),), -1, '', 'Radiance executable was not found; install the annual Radiance tool set or pass executable_dir.')
+        executable = self.executable_dir / executable_name
+        if not executable.is_file():
+            raise RadianceCommandError((str(executable),), -1, '', 'Radiance executable was not found in executable_dir.')
+        return executable
 
     def run_annual(self, request: AnnualDaylightRequest) -> AnnualDaylightResult:
         """Compute fixed-state annual daylight using two-phase DDS correction."""
@@ -398,7 +397,10 @@ def _read_radiance_matrix(file, rows, columns):
             if '=' in text:
                 key, value = text.split('=', 1)
                 header[key] = value
-        if int(header.get('NROWS', rows)) != rows or int(header.get('NCOLS', columns)) != columns or int(header.get('NCOMP', 3)) != 3:
+        dimensions = ('NROWS', 'NCOLS', 'NCOMP')
+        if not all(key in header for key in dimensions):
+            raise ValueError(f'Missing Radiance matrix dimensions: {file}, {header}')
+        if tuple(int(header[key]) for key in dimensions) != (rows, columns, 3):
             raise ValueError(f'Unexpected Radiance matrix dimensions: {file}, {header}')
         if header.get('FORMAT') == 'ascii':
             data = np.fromstring(source.read().decode('ascii'), sep=' ', dtype=np.float32)
@@ -530,16 +532,13 @@ def _run_annual(runner, request):
         diffuse_lux = np.maximum(sky_lux - sun_lux, 0)
         del sky, sun
         total = np.lib.format.open_memmap(root / 'illuminance_total.npy', mode='w+', dtype='float32', shape=(n, 8760))
-        negative_min = 0.
         # Achromatic optics let us combine the photopic sky before transport;
         # the red/green channels above encode paths, not physical spectral bands.
         for first in range(0, n, 128):
             last = min(first + 128, n)
             full = coeff[first:last, :, 0]
             reflected = np.maximum(full - coeff[first:last, :, 1], 0)
-            block = direct[first:last] + full @ diffuse_lux + reflected @ sun_lux
-            negative_min = min(negative_min, float(block.min()))
-            total[first:last] = np.maximum(block, 0)
+            total[first:last] = direct[first:last] + full @ diffuse_lux + reflected @ sun_lux
         direct.flush()
         total.flush()
         points, summaries, masks = _daylight_metrics(total, direct, sensors, spaces, request)
@@ -553,8 +552,6 @@ def _run_annual(runner, request):
             warnings.append('Missing visible optical properties use declared defaults; legacy transparency/reflection and SHGC are not VLT.')
         if any(str(s.id) not in (request.occupied_by_space or {}) and 'daylight_occupied_mask' not in s.settings for s in spaces):
             warnings.append('Unspecified occupancy uses zone_work_start/end every day, without weekday/holiday inference.')
-        if negative_min < -1:
-            warnings.append(f'DDS stochastic subtraction produced negative illuminance (minimum {negative_min:.3f} lx); clipped to zero. Increase sampling for convergence.')
         def digest(file):
             return hashlib.sha256((root / file).read_bytes()).hexdigest()
         manifest = dict(schema_version=1, method='Radiance two-phase DDS with paired achromatic transport channels', metric_profile='fixed_state', shading_state='as_modelled',

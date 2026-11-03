@@ -10,22 +10,26 @@ def _json_value(value):
     raise TypeError(f'Unsupported energy metadata type: {type(value).__name__}')
 
 
-def encode_energy_metadata(model):
+def encode_energy_metadata(model, *, include_settings: bool = True):
     elements = {}
     spaces = {}
     for space in list(model.spaceList) + list(model.voidList):
-        spaces[str(space.id)] = dict(conditioned=space.conditioned,
-            explicit_settings=list(space.explicit_settings),
-            settings={k:v for k,v in space.settings.items() if not hasattr(v,'applyToIDF')})
+        record = dict(conditioned=space.conditioned)
+        if include_settings:
+            record.update(explicit_settings=list(space.explicit_settings),
+                settings={k:v for k,v in space.settings.items() if not hasattr(v,'applyToIDF')})
+        spaces[str(space.id)] = record
         for element in space.getAllFaces(to_dict=False):
-            elements[str(element.Uid)] = dict(settings=element.settings,
-                explicit_settings=sorted(element.explicit_settings),
-                owners=list(element.space), is_outer=bool(element.isOuter))
+            record = dict(owners=list(element.space), is_outer=bool(element.isOuter))
+            if include_settings:
+                record.update(settings=element.settings,
+                    explicit_settings=sorted(element.explicit_settings))
+            elements[str(element.Uid)] = record
     return json.dumps(dict(schema_version=1,energy_settings=getattr(model,'energy_settings',{}),
         schedules=model.schedule,spaces=spaces,elements=elements),ensure_ascii=False,allow_nan=False,default=_json_value)
 
 
-def apply_energy_metadata(model, value):
+def apply_energy_metadata(model, value, *, include_settings: bool = True):
     if not value:
         return
     data = json.loads(value)
@@ -37,14 +41,16 @@ def apply_energy_metadata(model, value):
     rebuild_schedule_index(model)
     for space in list(model.spaceList) + list(model.voidList):
         record = data.get('spaces',{}).get(str(space.id),{})
-        space.settings.update(record.get('settings',{}))
         space.conditioned = record.get('conditioned',space.conditioned)
-        space.explicit_settings = record.get('explicit_settings',space.explicit_settings)
+        if include_settings:
+            space.settings.update(record.get('settings',{}))
+            space.explicit_settings = record.get('explicit_settings',space.explicit_settings)
         for element in space.getAllFaces(to_dict=False):
             record = data.get('elements',{}).get(str(element.Uid),{})
-            if 'settings' in record:
-                element.settings = dict(record['settings'])
-            element.explicit_settings = set(record.get('explicit_settings',element.explicit_settings))
+            if include_settings:
+                if 'settings' in record:
+                    element.settings = dict(record['settings'])
+                element.explicit_settings = set(record.get('explicit_settings',element.explicit_settings))
             element.space = record.get('owners',element.space)
             element.isOuter = record.get('is_outer',element.isOuter)
     from .io.gbxml.energy import attach
