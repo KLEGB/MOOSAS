@@ -228,3 +228,7 @@ University.
 For collaboration: linbr@tsinghua.edu.cn
 
 For technical questions: junx026@gmail.com, liyihui23@mails.tsinghua.edu.cn
+
+Annual Radiance daylight (DA, UDI, area-weighted sDA and direct-sun ASE),
+including TTL optical/airflow properties and runnable NBuilding verification,
+is documented in [doc/annual_daylight.md](doc/annual_daylight.md).

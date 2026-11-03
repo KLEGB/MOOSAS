@@ -92,6 +92,8 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(
             set(radiation.__all__),
             {
+                "AnnualDaylightRequest",
+                "AnnualDaylightResult",
                 "DaylightFloorResult",
                 "RadianceCommandError",
                 "RadianceCommandResult",

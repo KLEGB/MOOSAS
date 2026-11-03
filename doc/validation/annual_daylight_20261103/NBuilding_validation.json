@@ -1,0 +1,44 @@
+{
+  "input_file": "user-provided NBuilding.rdf (see input_sha256)",
+  "spaces": 37,
+  "elements_checked": 275,
+  "airflow_zones": 37,
+  "airflow_paths": 136,
+  "energy_zones": 37,
+  "test_window": "gls_0_206",
+  "input_solar_transmittance": 0.42,
+  "input_vlt": 0.61,
+  "input_operable": 0.37,
+  "input_discharge_coefficient": 0.61,
+  "sensor_count": 7853,
+  "shape": [
+    7853,
+    8760
+  ],
+  "manifest": "original completed run manifest retained with the local results",
+  "preparation_seconds": 5.969534832000136,
+  "annual_seconds": 211.53190624499985,
+  "total_max_lux": 50315.43359375,
+  "direct_max_lux": 41278.640625,
+  "warnings": [
+    "Fixed optical/shading state; this is not a full LM-83 shading-operation assessment.",
+    "Missing visible optical properties use declared defaults; legacy transparency/reflection and SHGC are not VLT."
+  ],
+  "test_wall": "wall_0_132",
+  "input_wall_solar_reflectance": 0.31,
+  "input_wall_visible_reflectance": 0.52,
+  "input_sha256": "8321e695825c2a6a6276d0b6d245723defda858b8fd8118f08ff00aa274e74be",
+  "base_commit": "9a4562dfc17162362950b765aed88f464b81ab30",
+  "minimum_total_minus_direct_lux": 0.0,
+  "test_summary": {
+    "passed": 545,
+    "skipped": 8,
+    "warnings": 12,
+    "seconds": 371.06
+  },
+  "building_summary": {
+    "analysis_area_m2": 1792.82,
+    "sda": 0.859043294920851,
+    "ase": 0.4132735020805212
+  }
+}
