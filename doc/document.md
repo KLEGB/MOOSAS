@@ -142,8 +142,16 @@ The current transformation options are:
 | `attach_shading` | `False` | Retain unused faces as shading or thermal mass. |
 | `divided_zones` | `False` | Convexify complex zones. |
 | `simplify_boundary` | `False` | Simplify source boundaries before generation. |
-| `insert_core` | `False` | Generate offset perimeter/core thermal zones and AirBoundary partitions; automatically enables spatial division. No physical core is inserted. |
+| `insert_core` | `False` | Generate offset perimeter/core thermal zones with opaque core/perimeter interfaces; automatically enables spatial division. Other calculation partitions remain AirBoundary surfaces. |
 | `standardize` | `False` | Standardize the finalized model geometry. |
+
+With `insert_core=True`, boundaries between actual core regions and perimeter
+regions are opaque, paired interzone walls using the existing wall thermal
+settings. They do not use AirBoundary `SimpleMixing`. Convex subdivisions
+inside either region and zero-width centerlines from collapsed narrow cores
+remain air boundaries. This changes boundary physics, not zoning geometry or
+space-type recognition. Existing cached models and IDFs retain their old
+categories; regenerate from source geometry to apply this rule.
 
 Example with explicit processing choices:
 

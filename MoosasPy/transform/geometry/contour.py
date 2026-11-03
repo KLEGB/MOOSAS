@@ -665,7 +665,8 @@ def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -
         If True, enables convex subdivision of complex footprints.
         Air walls are added to represent internal divisions, and original edges are replaced with new constructed edges.
     insert_core : bool
-        Enable offset thermal zoning instead of plain convex subdivision.
+        Enable offset thermal zoning with opaque core/perimeter interfaces.
+        Other subdivisions and collapsed narrow-core centerlines remain air boundaries.
     
     Returns
     -------
@@ -719,6 +720,10 @@ def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -
                     continue
                 if insert_core:
                     perimeter, core, cuts = offset_partitions(footprint)
+                    core_boundary = shapely.buffer(
+                        shapely.boundary(shapely.union_all(core)),
+                        geom.POINT_PRECISION * 10,
+                    )
                     newEdges = (
                         _merge_tiny_partitions(perimeter, cuts)
                         + _merge_tiny_partitions(core, cuts)
@@ -742,15 +747,18 @@ def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -
                                     source_boundary,
                                     walls,
                                 )
-                                air_wall = MoosasWall.fromProjection(
+                                is_core_interface = insert_core and shapely.covered_by(
+                                    segment, core_boundary,
+                                )
+                                partition_wall = MoosasWall.fromProjection(
                                     segment,
                                     bottom=bldLevel,
                                     top=model.levelList[levelIdx + 1],
                                     model=model,
-                                    airBoundary=is_internal_partition,
+                                    airBoundary=is_internal_partition and not is_core_interface,
                                 )
-                                model.wallList = np.append(model.wallList, air_wall)
-                                walls.append(air_wall)
+                                model.wallList = np.append(model.wallList, partition_wall)
+                                walls.append(partition_wall)
                     newConstructEdges = []
                     for ed in newEdges:
                         try:

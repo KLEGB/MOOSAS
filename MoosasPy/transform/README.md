@@ -40,7 +40,7 @@ Hole-free splitting and OpenFOAM mesh triangulation are unchanged.
 
 `TransformOptions(insert_core=True)` now partitions each occupied footprint into
 offset perimeter/core thermal zones during space assembly, even when
-`divided_zones=False`. It no longer inserts a cube, physical core walls, slab
+`divided_zones=False`. It no longer inserts a cube, shaft walls, slab
 openings, or an unconditioned shaft. The old `inject_minimal_core` implementation
 has been removed; direct callers must migrate. Zone counts, IDs, and energy
 results can change. With `insert_core=False`, existing subdivision is unchanged.
@@ -51,7 +51,11 @@ Narrow offset branches/necks collapse to original-length centerlines, never
 extended to the exterior. These are zero-width hole constraints, not invalid
 zero-area polygon rings. Visible auxiliary edges open the constraints into real
 regions before the existing convex splitter runs. Every centerline interval must
-border two faces; no face may cross it. New internal walls are AirBoundary walls.
+border two faces; no face may cross it. Actual core/perimeter interfaces are
+opaque interzone walls using existing wall thermal settings, with no AirBoundary
+mixing. Calculation subdivisions within core or perimeter regions, and collapsed
+narrow-core centerlines, remain AirBoundary walls. Existing cached models and
+IDFs must be regenerated from source geometry to adopt the opaque-interface rule.
 
 The medial axis uses 0.1m boundary samples, 0.05m line simplification, 5mm offset
 boundary cleanup, and a 0.2mm width-threshold tolerance. Empty eroded cores are
