@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+from .thermal_templates import validate_template_snapshot
+
 
 def _json_value(value):
     if hasattr(value,'tolist'):
@@ -42,6 +44,7 @@ def apply_energy_metadata(model, value, *, include_settings: bool = True):
         space.conditioned = record.get('conditioned',space.conditioned)
         if include_settings:
             space.settings.update(record.get('settings',{}))
+            validate_template_snapshot(space.settings)
             space.explicit_settings = record.get('explicit_settings',space.explicit_settings)
         for element in space.getAllFaces(to_dict=False):
             record = data.get('elements',{}).get(str(element.Uid),{})

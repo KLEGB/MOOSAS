@@ -371,19 +371,16 @@ def _writeIDF_default(model: MoosasModel, outputPath: str, idfTemplatePath=None,
             if spaceId is not None:
                 print(f"\rIDF: encoding walls: {wi+1}/{len(moElements['MoosasWall'])}", end='')
                 space = idfSpaceById[spaceId]
-                # Element settings take precedence over the derived zone averages.
-                wallU = wall.settings.get('u_value', space.settings['zone_wallU'])
+                wallU = wall.U_Value
                 glazing = wall.glazingElement[0] if wall.glazingElement else None
-                winU = glazing.settings.get('u_value', space.settings['zone_winU']) if glazing else space.settings['zone_winU']
-                SHGC = glazing.settings.get('shgc', space.settings['zone_win_SHGC']) if glazing else space.settings['zone_win_SHGC']
                 wallConstruction = zTemplate.getConstruction('opaque', wallU)
-                windowConstruction = zTemplate.getConstruction('window', winU, SHGC)
+                windowConstruction = zTemplate.getConstruction('window', glazing.U_Value, glazing.SHGC) if glazing else None
                 if wall.category == 2:
                     input.createThermalSurface(idf, wall, 'Wall', "Moosas Air Boundary",
                                                      None,encodeWindow=False)
                 else:
                     input.createThermalSurface(idf, wall, 'Wall', wallConstruction.params['Name'],
-                                                     windowConstruction.params['Name'])
+                                                     windowConstruction.params['Name'] if windowConstruction else None)
         except IndexError as e:
             print(f"\n  Warning: Wall {wi} (UID: {wall.Uid}) encoding failed - list index error with spaces: {wall.space} - {str(e)}")
         except KeyError as e:
@@ -401,18 +398,16 @@ def _writeIDF_default(model: MoosasModel, outputPath: str, idfTemplatePath=None,
                 space = idfSpaceById[spaceId]
                 if space.ceiling and face in space.ceiling.face:
                     faceType = 'Roof' if len(face.space) == 1 else 'Ceiling'
-                wallU = face.settings.get('u_value', space.settings['zone_wallU'])
+                wallU = face.U_Value
                 glazing = face.glazingElement[0] if face.glazingElement else None
-                winU = glazing.settings.get('u_value', space.settings['zone_winU']) if glazing else space.settings['zone_winU']
-                SHGC = glazing.settings.get('shgc', space.settings['zone_win_SHGC']) if glazing else space.settings['zone_win_SHGC']
                 wallConstruction = zTemplate.getConstruction('opaque', wallU)
-                windowConstruction = zTemplate.getConstruction('window', winU, SHGC)
+                windowConstruction = zTemplate.getConstruction('window', glazing.U_Value, glazing.SHGC) if glazing else None
                 if face.category == 2:
                     input.createThermalSurface(idf, face, faceType, "Moosas Air Boundary",
                                                      None,encodeWindow=False)
                 else:
                     input.createThermalSurface(idf, face, faceType, wallConstruction.params['Name'],
-                                                     windowConstruction.params['Name'])
+                                                     windowConstruction.params['Name'] if windowConstruction else None)
         except IndexError as e:
             print(f"\n  Warning: Face {fi} encoding failed - invalid space list: {face.space} - {e}")
         except KeyError as e:

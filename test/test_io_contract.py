@@ -131,6 +131,41 @@ def _single_room_model(tmp_path):
     return model
 
 
+def test_new_spaces_do_not_select_a_national_standard(tmp_path):
+    model = _single_room_model(tmp_path)
+    space = model.spaceList[0]
+    assert space.settings['zone_template'] is None
+    assert '_thermal_template' not in space.settings
+    assert 'zone_ppsm' not in space.settings
+    with pytest.raises(ValueError, match='complete namespaced id'):
+        space.applySettings('RESIDENTIAL')
+
+
+@pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
+def test_unbundled_standard_snapshot_round_trip(tmp_path, suffix):
+    from copy import deepcopy
+    from MoosasPy.model.thermal_templates import apply_thermal_template, template_program
+
+    model = _single_room_model(tmp_path)
+    record = deepcopy(model.buildingTemplate['CN/GB55015-2021/public_A_cold/OFFICE'])
+    # This synthetic standard is deliberately absent from the bundled catalog.
+    template_id = 'ZZ/TEST-2026/climate-1/OFFICE'
+    record['standard'] = 'ZZ/TEST-2026'
+    record['_thermal_template']['id'] = template_id
+    record['_thermal_template']['standard'] = dict(country='ZZ', id='TEST-2026', title='Synthetic')
+    space = model.spaceList[0]
+    apply_thermal_template(space, record, template_id)
+    target = tmp_path / ('standard-snapshot' + suffix)
+    model.save(target)
+    restored = MoosasModel.load(target)
+    restored_space = next(s for s in restored.spaceList if s.id == space.id)
+    assert restored_space.settings['_thermal_template'] == space.settings['_thermal_template']
+    assert restored_space.settings['zone_template'] == template_id
+    np.testing.assert_array_equal(
+        template_program(restored_space.settings, 'zone_ppsm', .1),
+        template_program(space.settings, 'zone_ppsm', .1))
+
+
 @pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
 def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
     model = _single_room_model(tmp_path)

@@ -1,0 +1,7 @@
+{
+  "schema": "moosas.thermal-library",
+  "version": 2,
+  "standards": [
+    "CN/GB55015-2021"
+  ]
+}

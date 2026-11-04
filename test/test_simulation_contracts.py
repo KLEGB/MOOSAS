@@ -279,7 +279,7 @@ class SimulationContractTests(unittest.TestCase):
     def test_energy_airflow_coupler_resolves_gains_from_template_profiles(self):
         from MoosasPy.model.thermal_templates import building_templates
 
-        record = building_templates()["public_A_cold_GB55015-2021_OFFICE"]
+        record = building_templates()["CN/GB55015-2021/public_A_cold/OFFICE"]
         settings = dict(record)
         space = SimpleNamespace(id="z1", settings=settings)
         coupler = object.__new__(EnergyAirflowCoupler)

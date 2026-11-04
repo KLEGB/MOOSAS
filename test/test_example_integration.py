@@ -128,7 +128,11 @@ class ExampleIntegrationTests(unittest.TestCase):
             Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),
         )
 
-        result = EnergyRunner(model=self.model, weather=weather).run()
+        result = EnergyRunner(
+            model=self.model,
+            weather=weather,
+            template_id="CN/GB55015-2021/residential_hot_summer_cold_winter_A/RESIDENTIAL",
+        ).run()
 
         self.assertEqual(len(result.commands), 1)
         self.assertEqual(result.commands[0].returncode, 0)

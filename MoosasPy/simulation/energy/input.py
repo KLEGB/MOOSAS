@@ -10,7 +10,10 @@ import math
 import numpy as np
 import shapely
 
-from ...model.thermal_templates import building_templates, resolve_surface_template, merge_surface_template, template_program
+from ...model.thermal_templates import (
+    building_templates, resolve_surface_template, merge_surface_template,
+    template_program, validate_template_snapshot,
+)
 from ...transform.geometry.geos import Projection, Vector
 
 
@@ -727,10 +730,8 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
             settings.update({k:v for k,v in template_records[template_id].items() if k not in explicit})
             settings['zone_template'] = template_id
         settings.update(zone_overrides.get(str(space.id),{}))
+        validate_template_snapshot(settings)
         profile = settings.get('_thermal_template')
-        if profile and settings.get('zone_template') not in {profile['id'],profile.get('alias')}:
-            settings.pop('_thermal_template')
-            profile = None
         context = {**(profile or {}).get('context',{}), **(template_context or {})}
         if profile:
             if facade_ratios is None:
@@ -742,7 +743,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         def templated(element, values, role, boundary, normal, wwr, override_ids=()):
             if profile and role=='window':
                 facade_key = tuple(np.round(normal,6))
-                if settings.get('type') == 'RESIDENTIAL':
+                if profile['wwr_scope'] == 'zone':
                     wwr = facade_ratios[1].get((str(space.id),facade_key),wwr)
                 else:
                     wwr = facade_ratios[0].get(facade_key,wwr)

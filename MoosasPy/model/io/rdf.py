@@ -8,6 +8,7 @@ from rdflib import Graph, Namespace, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, GEO, BRICK, WGS, XSD
 
 from ..model import *
+from ..thermal_templates import validate_template_snapshot
 from ...utils import np, shapely, mixItemListToList, mixItemListToObject, searchBy, generate_code, path
 from ...utils.constant import geom
 
@@ -1335,6 +1336,7 @@ def _decode_space_settings(rdfGraph: MoosasRDF, spaceUri, spc: MoosasSpace):
             raw_value = _first_or_none(rdfGraph.getObject(spaceUri, Literal(key)))
         spc.settings[str(key)] = _literal_to_python(raw_value) if canonical else _decode_space_setting_value(raw_value)
     spc.explicit_settings = [str(k) for k in rdfGraph.objects(spaceUri, rdfGraph.moosas.explicitSetting)]
+    validate_template_snapshot(spc.settings)
 
 
 # Editable construction metadata.  Volumetric heat capacity is stored in SI

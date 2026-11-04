@@ -1,6 +1,6 @@
 {
   "schema": "moosas.thermal-templates",
-  "version": 1,
+  "version": 2,
   "standard": {
     "id": "GB55015-2021",
     "title": "建筑节能与可再生能源利用通用规范",
@@ -10,7 +10,8 @@
     "pages": "Printed pages 4–17: envelope tables; 62–64: Appendix B definitions; 69–77: reference operation",
     "scope": "Normative limits and selected reference conditions only. This library is a simulation scenario, not a building compliance certificate. U includes reference surface films and structural thermal bridges; materials are equivalent homogenized assumptions. Partition/unheated-basement limits are retained for future boundary extensions and are not applied to adiabatic boundaries; entrance doors and balcony panels are outside this adapter scope.",
     "alternate_pdf_url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/qtwj/202204/W020220412578195558564.pdf",
-    "publication_url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/qtwj/202204/t20220412_2674410.html"
+    "publication_url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/qtwj/202204/t20220412_2674410.html",
+    "country": "CN"
   },
   "assumptions": {
     "wall": {
@@ -65,14 +66,34 @@
         0.3,
         0.45
       ],
-      "column": "storeys",
       "skylight_u": 1.4,
       "ground_insulation_r": 2.0,
       "underground_wall_insulation_r": 2.0,
-      "north_sector_degrees": 60,
-      "shgc_directions": "EW_S_N",
       "unheated_basement_ceiling_u": 0.35,
-      "unheated_partition_u": 1.2
+      "unheated_partition_u": 1.2,
+      "column_selector": {
+        "parameter": "storeys",
+        "threshold": 3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_severe_cold_B": {
       "table": "3.1.8-2; 3.1.9-1",
@@ -99,14 +120,34 @@
         0.3,
         0.45
       ],
-      "column": "storeys",
       "skylight_u": 1.4,
       "ground_insulation_r": 1.8,
       "underground_wall_insulation_r": 2.0,
-      "north_sector_degrees": 60,
-      "shgc_directions": "EW_S_N",
       "unheated_basement_ceiling_u": 0.4,
-      "unheated_partition_u": 1.2
+      "unheated_partition_u": 1.2,
+      "column_selector": {
+        "parameter": "storeys",
+        "threshold": 3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_severe_cold_C": {
       "table": "3.1.8-3; 3.1.9-1",
@@ -133,14 +174,34 @@
         0.3,
         0.45
       ],
-      "column": "storeys",
       "skylight_u": 1.6,
       "ground_insulation_r": 1.8,
       "underground_wall_insulation_r": 2.0,
-      "north_sector_degrees": 60,
-      "shgc_directions": "EW_S_N",
       "unheated_basement_ceiling_u": 0.45,
-      "unheated_partition_u": 1.5
+      "unheated_partition_u": 1.5,
+      "column_selector": {
+        "parameter": "storeys",
+        "threshold": 3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_cold_A": {
       "table": "3.1.8-4; 3.1.9-2",
@@ -167,14 +228,34 @@
         0.3,
         0.5
       ],
-      "column": "storeys",
       "skylight_u": 1.8,
       "ground_insulation_r": 1.6,
       "underground_wall_insulation_r": 1.8,
-      "north_sector_degrees": 60,
-      "shgc_directions": "EW_S_N",
       "unheated_basement_ceiling_u": 0.5,
-      "unheated_partition_u": 1.5
+      "unheated_partition_u": 1.5,
+      "column_selector": {
+        "parameter": "storeys",
+        "threshold": 3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_cold_B": {
       "table": "3.1.8-5; 3.1.9-2",
@@ -201,12 +282,9 @@
         0.3,
         0.5
       ],
-      "column": "storeys",
       "skylight_u": 1.8,
       "ground_insulation_r": 1.5,
       "underground_wall_insulation_r": 1.6,
-      "north_sector_degrees": 60,
-      "shgc_directions": "EW_S_N",
       "window_shgc": [
         [
           0.55,
@@ -221,7 +299,30 @@
       ],
       "skylight_shgc": 0.45,
       "unheated_basement_ceiling_u": 0.5,
-      "unheated_partition_u": 1.5
+      "unheated_partition_u": 1.5,
+      "column_selector": {
+        "parameter": "storeys",
+        "threshold": 3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_hot_summer_cold_winter_A": {
       "table": "3.1.8-6; 3.1.9-3",
@@ -241,12 +342,9 @@
         0.4,
         0.6
       ],
-      "column": "inertia",
       "skylight_u": 2.8,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
-      "north_sector_degrees": 30,
-      "shgc_directions": "EW_S_N",
       "window_shgc": [
         null,
         [
@@ -267,7 +365,30 @@
         0.5
       ],
       "internal_partition_u": 1.5,
-      "internal_floor_u": 1.8
+      "internal_floor_u": 1.8,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_hot_summer_cold_winter_B": {
       "table": "3.1.8-7; 3.1.9-3",
@@ -287,12 +408,9 @@
         0.4,
         0.6
       ],
-      "column": "inertia",
       "skylight_u": 2.8,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
-      "north_sector_degrees": 30,
-      "shgc_directions": "EW_S_N",
       "window_shgc": [
         null,
         [
@@ -313,7 +431,30 @@
         0.5
       ],
       "internal_partition_u": 1.5,
-      "internal_floor_u": 1.8
+      "internal_floor_u": 1.8,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_hot_summer_warm_winter_A": {
       "table": "3.1.8-8; 3.1.9-4",
@@ -333,12 +474,9 @@
         0.35,
         0.4
       ],
-      "column": "inertia",
       "skylight_u": 3.0,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
-      "north_sector_degrees": 30,
-      "shgc_directions": "W_ES_N",
       "window_shgc": [
         [
           0.35,
@@ -356,7 +494,28 @@
           0.35
         ]
       ],
-      "skylight_shgc": 0.2
+      "skylight_shgc": 0.2,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 2
+        },
+        {
+          "start": 210,
+          "end": 330,
+          "include_start": false,
+          "include_end": false,
+          "index": 0
+        }
+      ],
+      "shgc_default_index": 1
     },
     "residential_hot_summer_warm_winter_B": {
       "table": "3.1.8-9; 3.1.9-4",
@@ -376,12 +535,9 @@
         0.35,
         0.4
       ],
-      "column": "inertia",
       "skylight_u": 3.5,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
-      "north_sector_degrees": 30,
-      "shgc_directions": "W_ES_N",
       "window_shgc": [
         [
           0.3,
@@ -399,7 +555,28 @@
           0.3
         ]
       ],
-      "skylight_shgc": 0.2
+      "skylight_shgc": 0.2,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 2
+        },
+        {
+          "start": 210,
+          "end": 330,
+          "include_start": false,
+          "include_end": false,
+          "index": 0
+        }
+      ],
+      "shgc_default_index": 1
     },
     "residential_mild_A": {
       "table": "3.1.8-10; 3.1.9-5",
@@ -419,12 +596,9 @@
         0.4,
         0.5
       ],
-      "column": "inertia",
       "skylight_u": 2.8,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
-      "north_sector_degrees": 30,
-      "shgc_directions": "EW_S_N",
       "window_shgc": [
         null,
         [
@@ -446,7 +620,30 @@
       ],
       "skylight_winter_shgc_min": 0.5,
       "internal_partition_u": 1.5,
-      "internal_floor_u": 1.8
+      "internal_floor_u": 1.8,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "residential_mild_B": {
       "table": "3.1.8-11; 3.1.9-5",
@@ -459,12 +656,9 @@
       "wwr_bins": [
         1.0
       ],
-      "column": "inertia",
       "skylight_u": null,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
-      "north_sector_degrees": 30,
-      "shgc_directions": "EW_S_N",
       "window_shgc": [
         [
           0.4,
@@ -477,7 +671,30 @@
         null
       ],
       "applicability": "Window U applies to east/west only; using it for all directions is a conservative scenario assumption.",
-      "skylight_winter_shgc_min": 0.5
+      "skylight_winter_shgc_min": 0.5,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 2,
+          "winter_shgc": false
+        },
+        {
+          "start": 150,
+          "end": 210,
+          "include_start": true,
+          "include_end": true,
+          "index": 1,
+          "winter_shgc": false
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_A_severe_cold_AB": {
       "table": "3.1.10-1",
@@ -537,18 +754,29 @@
         0.8,
         1.0
       ],
-      "column": "shape_factor",
       "skylight_u": 1.8,
       "skylight_shgc": null,
       "window_shgc": null,
-      "shgc_directions": "ESW_N",
-      "north_sector_degrees": 60,
       "ground_insulation_r": 1.1,
       "underground_wall_insulation_r": 1.5,
       "maximum_shape_factor": 0.5,
       "maximum_skylight_ratio": 0.2,
       "unheated_basement_ceiling_u": 0.5,
-      "unheated_stair_partition_u": 0.8
+      "unheated_stair_partition_u": 0.8,
+      "column_selector": {
+        "parameter": "shape_factor",
+        "threshold": 0.3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 1
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_A_severe_cold_C": {
       "table": "3.1.10-2",
@@ -608,18 +836,29 @@
         0.8,
         1.0
       ],
-      "column": "shape_factor",
       "skylight_u": 2.3,
       "skylight_shgc": null,
       "window_shgc": null,
-      "shgc_directions": "ESW_N",
-      "north_sector_degrees": 60,
       "ground_insulation_r": 1.1,
       "underground_wall_insulation_r": 1.5,
       "maximum_shape_factor": 0.5,
       "maximum_skylight_ratio": 0.2,
       "unheated_basement_ceiling_u": 0.7,
-      "unheated_stair_partition_u": 1.0
+      "unheated_stair_partition_u": 1.0,
+      "column_selector": {
+        "parameter": "shape_factor",
+        "threshold": 0.3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 1
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_A_cold": {
       "table": "3.1.10-3",
@@ -679,7 +918,6 @@
         0.8,
         1.0
       ],
-      "column": "shape_factor",
       "skylight_u": 2.4,
       "skylight_shgc": 0.35,
       "window_shgc": [
@@ -716,14 +954,26 @@
           0.4
         ]
       ],
-      "shgc_directions": "ESW_N",
-      "north_sector_degrees": 60,
       "ground_insulation_r": 0.6,
       "underground_wall_insulation_r": 0.9,
       "maximum_shape_factor": 0.5,
       "maximum_skylight_ratio": 0.2,
       "unheated_basement_ceiling_u": 1.0,
-      "unheated_stair_partition_u": 1.2
+      "unheated_stair_partition_u": 1.2,
+      "column_selector": {
+        "parameter": "shape_factor",
+        "threshold": 0.3
+      },
+      "shgc_sectors": [
+        {
+          "start": 300,
+          "end": 60,
+          "include_start": false,
+          "include_end": false,
+          "index": 1
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_A_hot_summer_cold_winter": {
       "table": "3.1.10-4",
@@ -753,7 +1003,6 @@
         0.8,
         1.0
       ],
-      "column": "inertia",
       "skylight_u": 2.0,
       "skylight_shgc": 0.3,
       "window_shgc": [
@@ -790,12 +1039,24 @@
           0.2
         ]
       ],
-      "shgc_directions": "ESW_N",
-      "north_sector_degrees": 30,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
       "maximum_shape_factor": null,
-      "maximum_skylight_ratio": 0.2
+      "maximum_skylight_ratio": 0.2,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 1
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_A_hot_summer_warm_winter": {
       "table": "3.1.10-5",
@@ -825,7 +1086,6 @@
         0.8,
         1.0
       ],
-      "column": "inertia",
       "skylight_u": 2.5,
       "skylight_shgc": 0.25,
       "window_shgc": [
@@ -862,12 +1122,24 @@
           0.18
         ]
       ],
-      "shgc_directions": "ESW_N",
-      "north_sector_degrees": 30,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
       "maximum_shape_factor": null,
-      "maximum_skylight_ratio": 0.2
+      "maximum_skylight_ratio": 0.2,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 1
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_A_mild_A": {
       "table": "3.1.10-6",
@@ -900,7 +1172,6 @@
         0.8,
         1.0
       ],
-      "column": "inertia",
       "skylight_u": 3.0,
       "skylight_shgc": 0.3,
       "window_shgc": [
@@ -937,12 +1208,24 @@
           0.2
         ]
       ],
-      "shgc_directions": "ESW_N",
-      "north_sector_degrees": 30,
       "ground_insulation_r": null,
       "underground_wall_insulation_r": null,
       "maximum_shape_factor": null,
-      "maximum_skylight_ratio": 0.2
+      "maximum_skylight_ratio": 0.2,
+      "column_selector": {
+        "parameter": "thermal_inertia_D",
+        "threshold": 2.5
+      },
+      "shgc_sectors": [
+        {
+          "start": 330,
+          "end": 30,
+          "include_start": false,
+          "include_end": false,
+          "index": 1
+        }
+      ],
+      "shgc_default_index": 0
     },
     "public_B_severe_cold_AB": {
       "table": "3.1.11-1; 3.1.11-2",
@@ -1047,5 +1330,14 @@
     "zone_infiltration": "1/h",
     "temperature": "degC",
     "profiles": "dimensionless 0..1"
-  }
+  },
+  "unit_system": "SI",
+  "projection": "prescriptive-envelope-v1",
+  "building_types": [
+    "residential.json",
+    "office.json",
+    "hotel.json",
+    "commercial.json",
+    "school.json"
+  ]
 }

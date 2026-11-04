@@ -299,6 +299,7 @@ def test_divided_zone_model_runs_energy_simulation():
 
     result = EnergyRunner(
         model=model,
+        template_id="CN/GB55015-2021/residential_hot_summer_cold_winter_A/RESIDENTIAL",
         weather=read_weather_csv(
             BEIJING_WEATHER,
             Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),

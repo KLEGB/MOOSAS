@@ -2908,7 +2908,6 @@ class MoosasSpace(object):
 
             "zone_template": None
         }
-        self.applySettings('residential_hot_summer_cold_winter_A_GB55015-2021_RESIDENTIAL')
 
 
     @classmethod
@@ -3335,8 +3334,8 @@ class MoosasSpace(object):
         Parameters
         ----------
         buildingTemplateHint : str or dict
-            The hint used to locate the appropriate building template. If a string, 
-            it can be an exact key or a regex pattern matching a key in 
+            The identifier used to locate the appropriate building template. A string
+            must be an exact key in
             `self.parent.buildingTemplate`. If a dictionary, it is treated as 
             the template itself, and the corresponding key is inferred.
         
@@ -3350,13 +3349,9 @@ class MoosasSpace(object):
         if not isinstance(buildingTemplateHint, dict):
             if not isinstance(buildingTemplateHint, str):
                 raise Exception(f'Key Error: template key error {buildingTemplateHint}')
-            if buildingTemplateHint in self.parent.buildingTemplate:
-                template = self.parent.buildingTemplate[buildingTemplateHint]
-            else:
-                for hint in self.parent.buildingTemplate:
-                    if re.search(buildingTemplateHint, hint) is not None:
-                        template = self.parent.buildingTemplate[hint]
-                        buildingTemplateHint = hint
+            if buildingTemplateHint not in self.parent.buildingTemplate:
+                raise ValueError(f'Unknown building template {buildingTemplateHint!r}; use a complete namespaced id')
+            template = self.parent.buildingTemplate[buildingTemplateHint]
         else:
             template = buildingTemplateHint
             buildingTemplateHint = list(self.parent.buildingTemplate.values()).index(template)

@@ -409,20 +409,22 @@ templates can still set the per-person rate explicitly.
 
 ### Apply Thermal Settings
 
-Each `MoosasSpace` receives a default residential template during model
-construction. Apply another packaged or user-provided template with
-`space.applySettings()`:
+New spaces do not select a national standard or thermal template. Select a
+country, standard edition, envelope/climate, and building type explicitly:
 
 ```python
-for space in model.spaceList:
-    space.applySettings("climatezone3_GB/T51350-2019_RESIDENTIAL")
+from MoosasPy.model import apply_building_template
+
+apply_building_template(model, "CN/GB55015-2021/public_A_cold/OFFICE")
 
 model.spaceList[0].settings["zone_equipment"] = 8.8
 ```
 
-The argument can be an exact template key, a regular-expression hint matching
-a key in `model.buildingTemplate`, or a template dictionary already present in
-that mapping. Applying a template also updates face U-values and glazing SHGC.
+`space.applySettings()` also accepts a complete template ID or a record already
+in `model.buildingTemplate`; regex hints are not supported. Structured templates
+store a portable snapshot and preserve explicit constructions. Without a selected
+template, source parameters and engineering defaults do not imply compliance
+with any national standard.
 
 Important energy-setting fields include:
 
@@ -440,12 +442,44 @@ Important energy-setting fields include:
 | `zone_infiltration`, `zone_nightACH` | Infiltration and night ventilation rates. |
 | `zone_template` | Applied template identifier. |
 
-Building templates are stored under `MoosasPy/db/template/`: `common.json`
-holds the standard metadata, engineering assumptions, and envelope tables,
-and one file per building type (`office.json`, `residential.json`,
-`commercial.json`, `school.json`, `hotel.json`) holds that type's reference
-operation values and dimensionless weekly profiles. Template ids are
-`<envelope>_<standard id>_<operation id>`.
+Building templates use a version 2 catalog under `MoosasPy/db/template/`:
+
+```text
+template/
+  library.json
+  CN/
+    GB55015-2021/
+      common.json
+      office.json
+      residential.json
+      commercial.json
+      school.json
+      hotel.json
+```
+
+`library.json` explicitly lists country/standard-edition packages; it has no
+default selection. Within each package, `common.json` owns standard provenance,
+SI units, engineering assumptions, envelope tables, the projection contract,
+and an explicit `building_types` file list. Type files own operation values,
+per-envelope `operation_overrides`, `wwr_scope` (`zone` or `building`), and
+dimensionless day profiles. Their seven `operation.week` references are
+Monday-first; weekend days are not hardcoded globally. Template IDs are
+`COUNTRY/STANDARD-EDITION/ENVELOPE/BUILDING-TYPE`.
+
+To add a standard edition, add its package and register its namespace in
+`library.json`. Use its own climate identifiers and source evidence; the loader
+does not infer climate zones or borrow another country's assumptions. Normalize
+values to the supported SI `prescriptive-envelope-v1` projection contract.
+Conditional two-column values declare a `column_selector` parameter and
+threshold; directional glazing declares azimuth sectors explicitly. Unsupported
+projection contracts, rules, units, duplicate IDs, or broken references fail
+explicitly. Different standards need not share building-type names.
+
+`template_path` now means a catalog directory containing `library.json`, not a
+single JSON file or a standard-package directory. Version 1 resources, old
+unnamespaced IDs, and old template snapshots are not automatically migrated.
+Rebuild affected models from source and explicitly apply a namespaced template.
+Version 2 snapshots round-trip through RDF/XML/JSON without the source catalog.
 
 ### Weather Data
 

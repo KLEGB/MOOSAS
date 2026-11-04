@@ -1,6 +1,6 @@
 {
   "schema": "moosas.thermal-templates",
-  "version": 1,
+  "version": 2,
   "operation_id": "SCHOOL",
   "operation": {
     "zone_ppsm": 0.16666666666666666,
@@ -235,7 +235,16 @@
       }
     },
     "reference": "Appendix C: C.0.6-1,3..7,9,11,12; C.0.7-2",
-    "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value."
+    "assumptions": "Monday-first typical week; no statutory holidays or setpoint ramps. Residential uses living-room profiles as a representative zone, without bedroom weighting. Public background infiltration 0.5 ACH and people sensible heat 75 W/person are engineering assumptions. Heating COP 2.6 is an assumed heat-pump scenario, not a national all-climate requirement. Cooling COP is a reference conversion, not a certified product value.",
+    "week": [
+      "weekday",
+      "weekday",
+      "weekday",
+      "weekday",
+      "weekday",
+      "weekend",
+      "weekend"
+    ]
   },
   "envelopes": [
     "public_A_severe_cold_AB",
@@ -249,5 +258,6 @@
     "public_B_cold",
     "public_B_hot_summer_cold_winter",
     "public_B_hot_summer_warm_winter"
-  ]
+  ],
+  "wwr_scope": "building"
 }
