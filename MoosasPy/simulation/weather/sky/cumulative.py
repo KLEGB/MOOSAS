@@ -32,7 +32,7 @@ class CumulativeSky:
     @property
     def positions(self):
         if self._positions is None:
-            position_path = os.path.join(path.libDir, "weather", "sun_position.csv")
+            position_path = os.path.join(path.dataBaseDir, "radiation", "sun_position.csv")
             with open(position_path, encoding="utf-8") as position_file:
                 self._positions = [
                     Vector(np.array(line.split(","), dtype=float))

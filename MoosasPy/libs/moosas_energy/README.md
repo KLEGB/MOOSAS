@@ -1,7 +1,9 @@
-# CETUS 能耗模块与热工模板
+# MOOSAS Energy 能耗模块与热工模板
 
 本文件统一说明能耗接口、CES3 v2 二进制协议、热工模板与验收方式。
 代码及资源路径均相对于仓库根目录。
+`MoosasEnergy` 为原 CETUS 引擎的打包名称；本次仅重命名文件，
+不改变二进制内容、CES3 协议或计算算法。
 
 ## 模块位置
 
@@ -13,17 +15,17 @@
 | `MoosasPy/model/thermal_templates.py` | 模型共享的模板读取、校验与应用 |
 | `MoosasPy/model/energy_metadata.py` | RDF/XML/JSON 模型持久化共享的能耗元数据 |
 | `MoosasPy/db/building_template.json` | 热工模板数据 |
-| `MoosasPy/libs/energy/` | Windows/Linux 引擎可执行文件及本说明 |
+| `MoosasPy/libs/moosas_energy/` | Windows/Linux 引擎可执行文件（平台目录下的 `bin/`）及本说明 |
 
 公开接口继续从 `MoosasPy.simulation.energy` 导入。内部的 `requests.py`
 并入 `input.py`，`protocol.py` 并入 `runner.py`；直接使用内部模块的调用方
 需同步修改导入。gbXML 转换接口仍从 `MoosasPy.model.io.gbxml` 导入，
 命令行入口仍为 `python -m MoosasPy.model.io.gbxml`。
-通用 `simulation/engine.py` 提供进程执行注入，不包含 CETUS 协议逻辑。
+通用 `simulation/engine.py` 提供进程执行注入，不包含能耗协议逻辑。
 
-## CETUS surface energy contract
+## MOOSAS Energy surface energy contract
 
-`EnergyRunner` runs a persistent precompiled `CetusSurfaceEnergy --binary`
+`EnergyRunner` runs a persistent precompiled `MoosasEnergy --binary`
 process. Inputs are `EnergyRequest`, not legacy CSV rows or CLI argument arrays.
 Every selected space is an independent single thermal zone. Conductive exchange
 between zones is adiabatic; inter-zone airflow is not part of this calculation.
@@ -60,7 +62,7 @@ surface records the source of its parameters in `sources`.
 
 The default thermal library is `db/building_template.json`. Select a structured
 profile with `template_id` and an optional `template_path`; the Python adapter
-validates and resolves it before registering numeric models with CETUS. Use
+validates and resolves it before registering numeric models with MOOSAS Energy. Use
 `template_context` for known storeys, shape factor or inertia index.
 `template_overrides_model=True` creates a template scenario without mutating the
 model; runtime overrides still win. Each surface carries template ID, selected
@@ -158,7 +160,8 @@ Opcode 7 evaluates the immutable old state. The `<QIIII>` request selects step,
 response level, return-state flag, aggregation, and forcing mask. Levels 0/1/2
 retain CES3 coupling semantics; level 3 returns the 13 thermal summary fields
 without surface detail. Opcode 4 ends a step. Error opcode 65535 carries UTF-8
-diagnostics. CES3 v1 remains supported by CETUS for its existing callers.
+diagnostics. The bundled engine retains upstream CES3 v1 support; this Python
+adapter uses CES3 v2 only.
 
 ### Source-alignment extensions
 
@@ -187,20 +190,22 @@ print(result.data["total"])
 
 The bundled engine is selected by OS. `executable_path` or
 `MOOSAS_ENERGY_EXECUTABLE` can select another prebuilt CES3 v2 executable.
-Build CETUS explicitly with `python -m test.build_energy --moosas-dir <MoosasPy>`
-in its repository. The codec in `MoosasPy/simulation/energy/runner.py` must preserve wire
+The upstream engine build command is `python -m test.build_energy --moosas-dir <MoosasPy>`
+in its source repository, not this repository. Deploy its output as
+`MoosasEnergy` (`MoosasEnergy.exe` on Windows). The codec in
+`MoosasPy/simulation/energy/runner.py` must preserve wire
 compatibility with the reference `ENERGY/surface_v2.py`; file identity is not required.
 
 From the MoosasPy repository run:
 
 ```
-python -m pytest test/test_cetus_energy.py test/test_energy_engine.py -q
-python test/accept_cetus_energy.py --hours 8760 --preheat 4
+python -m pytest test/test_native_resources.py -q
+python -m pytest test/test_example_integration.py -k energy_engine -q
 ```
 
-Acceptance outputs in `test/output/cetus_energy/` contain the source model path,
-resolved boundaries/default sources, actual engine command, hourly typed numeric
-arrays, checkpoint and annual summary. They are generated artifacts, not templates.
+The energy integration test checks the packaged executable against the full-year
+geometry fixture and validates all 70 zones, monthly totals and reference loads.
+Simulation outputs belong in caller-owned workspaces, not this tool directory.
 
 ## 热工 JSON 模板（版本 1）
 
@@ -214,7 +219,7 @@ arrays, checkpoint and annual summary. They are generated artifacts, not templat
 
 `roof_u`、`wall_u`、`exposed_floor_u` 和 `window_u` 单位均为 W/(m²·K)。条件数组的两列由 `column` 定义：`storeys` 为不超过 3 层/超过 3 层，`shape_factor` 为不超过 0.30/超过 0.30，`inertia` 为 D 不超过 2.5/超过 2.5。窗数组先按 `wwr_bins` 选择行，再选择列。`null` 表示本表未规定，不表示零。
 
-SHGC 是整体太阳得热系数限值，独立于传给 CETUS 的太阳透射率。窗的方向分列保留在 `shgc_directions` 中；外法线 +Y 为北，计算时应用 `EnergyDefaults.north_angle_degrees`。住宅窗墙比按房间同朝向合计，公共建筑按全模型同朝向合计，选择房间子集不会改变该比值。地下部分和绝热部分不计入外立面窗墙比。
+SHGC 是整体太阳得热系数限值，独立于传给 MOOSAS Energy 的太阳透射率。窗的方向分列保留在 `shgc_directions` 中；外法线 +Y 为北，计算时应用 `EnergyDefaults.north_angle_degrees`。住宅窗墙比按房间同朝向合计，公共建筑按全模型同朝向合计，选择房间子集不会改变该比值。地下部分和绝热部分不计入外立面窗墙比。
 
 模板资源入口为 JSON，模板名称即 `templates` 中的结构化名称。新建空间默认使用夏热冬冷 A 区住宅（`residential_hot_summer_cold_winter_A_GB55015-2021_RESIDENTIAL`），实际项目应显式选择适用模板。
 
@@ -250,7 +255,7 @@ result = EnergyRunner(
 
 - 规范规定的是性能限值，不提供完整材料层。模板按限值建立等效构件；热容量、发射率、吸收率及接地基层热阻等来自 `assumptions`，并非规范规定值。墙/楼板热容量为完整构件值；相邻房间各分配半厚度，在中面绝热，保留室内蓄热。
 - 接地表中的 R 是**保温材料层热阻下限**，不直接充当完整构件热阻。计算加入假设的基层 R；周边地面保温下限用于整个地板是已声明的简化场景。没有给定限值的构件使用单独的假设 R。
-- 空气到空气 U 值扣除参考表面热阻后传给 CETUS，避免重复计入表面换热。等效 U 包含结构性热桥影响；模型不生成实际热桥节点。
+- 空气到空气 U 值扣除参考表面热阻后传给 MOOSAS Energy，避免重复计入表面换热。等效 U 包含结构性热桥影响；模型不生成实际热桥节点。
 - 夏季等效玻璃采用假设吸收率 0.1，`tau=max(SHGC上限-0.1,0)`，`rho=1-SHGC上限`，使 `tau+alpha` 不超过上限。该模型不代表具体玻璃产品，也不证明冬季 SHGC 下限成立。冬季要求单独记录并给出提示；真实项目可用产品光学参数及逐时遮阳辐照覆盖。
 - 运行参数选取附录 C 的参考照明、设备、人员、新风和部分日程。JSON 中的日程是 0～1 系数，Python 侧显式乘以强度转为逐时绝对值；既有命名日程仍按绝对值解释。使用周一开始的典型周，未实现法定节假日、温控升降温过渡及住宅卧室/起居室加权。住宅采用起居室作为代表单区，冷热设定为 18/26℃。
 - 人员显热 75 W/人、公共建筑背景渗透 0.5 ACH、热泵制热 COP 2.6 是工程场景假设。制冷 COP 使用参考折算值，不代表选型设备效率；严寒 A/B/C、寒冷 A 住宅统一采用 3.6 是扩展假设，规范表 C.0.7-2 的住宅 3.6 参考值适用范围须另行核对。住宅规范参考换气次数按寒冷地区 0.5、其他地区 1.0 ACH 取值，不重复添加人均新风。
@@ -259,11 +264,10 @@ result = EnergyRunner(
 
 ### 实际导入链路与验收
 
-导入链路为 **JSON → MoosasPy 模板校验与参数解析 → CES3 v2 数值二进制 → CETUS Energy**。Go 引擎接收解析后的构件与运行参数，不直接读取这份模板库；没有恢复旧 i/o 协议。
+导入链路为 **JSON → MoosasPy 模板校验与参数解析 → CES3 v2 数值二进制 → MOOSAS Energy**。Go 引擎接收解析后的构件与运行参数，不直接读取这份模板库；没有恢复旧 i/o 协议。
 
 ```powershell
-python -B -m pytest test/test_thermal_templates.py -q
-python -B test/accept_cetus_energy.py --template public_A_cold_GB55015-2021_OFFICE --template-overrides-model --output-dir test/output/cetus_thermal_templates --hours 8760
+python -B -m pytest test/test_example_integration.py -k energy_engine -q
 ```
 
-验收脚本保存 JSON 库与引擎哈希、逐表面解析值、边界表、逐时能耗和最终状态。测试覆盖所有 55 个模板的实际二进制注册和计算、自定义 JSON 数值修改、运行覆盖、典型周强度换算，以及三种模型格式的往返。
+能耗集成测试检查默认场景的全年计算，不等同于对所有 55 个模板逐一执行二进制验收。

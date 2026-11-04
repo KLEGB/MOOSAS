@@ -598,9 +598,18 @@ the Python modules:
 
 - `db/`: building templates, schedules, weather records, material data, the
   EnergyPlus 26.1 IDD, and the default IDF template.
-- `libs/rad/`: the Moosas radiation engine and Radiance executables/resources.
-- `libs/vent/`: AFN tools and platform-specific CONTAM distributions.
-- `libs/weather/`: EPW-to-WEA and cumulative-sky executables/resources.
+- `libs/radiance/`: one Radiance installation shared by daylight and weather.
+- `libs/contam/`: CONTAM distributions and the simread response template.
+- `libs/moosas_rad/`, `libs/moosas_afn/`, `libs/moosas_energy/`: independent
+  native engines. Executables are under `<platform>/bin/`; Radiance function
+  files are under `<platform>/lib/`.
+- `db/radiation/`, `db/airflow/`: solar directions and the pressure model.
+
+Go source and build scripts live directly in `libs/moosas_rad/` and
+`libs/moosas_afn/` alongside their runtimes and are included in distributions.
+Runtime inputs and outputs
+belong in simulation workspaces, never in `libs/`. Old resource paths were
+removed without compatibility aliases; external scripts must use the new layout.
 
 The Python distribution includes these resources through `pyproject.toml` and
 `MANIFEST.in`.

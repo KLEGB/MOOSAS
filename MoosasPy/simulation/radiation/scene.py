@@ -3,7 +3,7 @@ from ...model import MoosasModel
 from ...transform.geometry.element import MoosasElement, MoosasSpace
 from ...transform.geometry.geos import Projection, Vector
 from ...transform.geometry.grid import MoosasGrid
-from ...utils import np, shapely, path, os,mixItemListToList
+from ...utils import np, shapely, mixItemListToList
 from datetime import datetime
 
 
@@ -45,8 +45,8 @@ def _generate_radiance_geometry(roof, floor, others):
     return geoStr
 
 
-def _model_to_radiance(model: MoosasModel, date: datetime, sky_type, lat, lon, diffuse_illuminance=10000,
-                       rad_path=rf"{path.libDir}\rad\model.rad", utc_offset_hours=0):
+def _model_to_radiance(model: MoosasModel, date: datetime, sky_type, lat, lon, diffuse_illuminance: float = 10000,
+                       *, rad_path: str, utc_offset_hours: float = 0):
     """
     Convert a MoosasModel to a Radiance input file (.rad) string and write it to disk.
     
@@ -64,8 +64,8 @@ def _model_to_radiance(model: MoosasModel, date: datetime, sky_type, lat, lon, d
         Longitude of the site in degrees, used for solar position calculation.
     diff : int, optional
         Diffuse solar irradiance value (in W/m虏). Default is 10000.
-    radPath : str, optional
-        File path where the generated .rad file will be saved. Default is a path within `path.libDir`.
+    rad_path : str
+        Explicit output path owned by the caller's simulation workspace.
     
     Returns
     -------
@@ -114,7 +114,7 @@ def _triangulate_opaque(moFace:MoosasElement)->list[shapely.Geometry]:
     baseBrep = [proj.toWorld(tri) for tri in shapely.get_parts(baseBrep)]
     return baseBrep
 def _space_to_radiance(space: MoosasSpace, date: datetime, sky_type, lat, lon, diffuse_illuminance=10000,
-                       rad_path=rf"{path.libDir}\rad\model.rad"):
+                       *, rad_path: str):
     """
     Generate a Radiance input file string and write it to disk based on the provided space geometry and environmental conditions.
     
@@ -132,8 +132,8 @@ def _space_to_radiance(space: MoosasSpace, date: datetime, sky_type, lat, lon, d
         Longitude of the location, used in sky calculation.
     diff : int, optional
         Diffuse solar radiation value (in Wh/m虏), default is 10000.
-    radPath : str, optional
-        File path where the Radiance script will be saved. Defaults to a path in `path.libDir`.
+    rad_path : str
+        Explicit output path owned by the caller's simulation workspace.
     
     Returns
     -------
@@ -161,7 +161,7 @@ def _space_to_radiance(space: MoosasSpace, date: datetime, sky_type, lat, lon, d
     return radStr
 
 
-def _write_grid(element: MoosasElement, grid_path=rf"{path.libDir}\rad\grid.input", normal=None, append=True):
+def _write_grid(element: MoosasElement, grid_path: str, normal=None, append=True):
     """
     Write grid points and their normal vectors to a file.
     
@@ -169,8 +169,8 @@ def _write_grid(element: MoosasElement, grid_path=rf"{path.libDir}\rad\grid.inpu
     ----------
     element : MoosasElement
         The element used to generate the grid.
-    gridPath : str, optional
-        Path to the output file where grid data will be written. Default is constructed using `path.libDir`.
+    grid_path : str
+        Explicit output path owned by the caller's simulation workspace.
     normal : array-like or Vector, optional
         Normal vector to be written with each point; if None, uses the grid's default normal. Default is None.
     append : bool, optional

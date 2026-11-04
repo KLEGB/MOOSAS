@@ -18,6 +18,7 @@ from MoosasPy.model.io.xml import build_xml
 from MoosasPy.transform.stages.splitting import split_wall_intersections
 from MoosasPy.transform.stages.validation import validate_model
 from MoosasPy.utils import np
+from MoosasPy.utils.tools import native_platform, path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +132,11 @@ class ExampleIntegrationTests(unittest.TestCase):
 
         self.assertEqual(len(result.commands), 1)
         self.assertEqual(result.commands[0].returncode, 0)
+        platform_dir, suffix = native_platform()
+        self.assertEqual(
+            Path(result.commands[0].command[0]),
+            Path(path.libDir) / "moosas_energy" / platform_dir / "bin" / f"MoosasEnergy{suffix}",
+        )
         self.assertEqual(len(result.data["spaces"]), 70)
         self.assertEqual(len(result.data["months"]), 12)
 

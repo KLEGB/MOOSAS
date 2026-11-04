@@ -44,19 +44,55 @@ jobs:
           from zipfile import ZipFile
 
           executables = (
-              "MoosasPy/libs/rad/MoosasRad",
-              "MoosasPy/libs/rad/gensky",
-              "MoosasPy/libs/rad/oconv",
-              "MoosasPy/libs/rad/rcalc",
-              "MoosasPy/libs/rad/rtrace",
-              "MoosasPy/libs/vent/MoosasAFN",
-              "MoosasPy/libs/vent/contam/linux-x86_64/contamx3",
-              "MoosasPy/libs/vent/contam/linux-x86_64/simread",
-              "MoosasPy/libs/weather/epw2wea",
-              "MoosasPy/libs/weather/gendaymtx",
+              "MoosasPy/libs/moosas_rad/linux-x86_64/bin/MoosasRad",
+              "MoosasPy/libs/moosas_afn/linux-x86_64/bin/MoosasAFN",
+              "MoosasPy/libs/moosas_energy/linux-x86_64/bin/MoosasEnergy",
+              "MoosasPy/libs/contam/linux-x86_64/bin/contamx3",
+              "MoosasPy/libs/contam/linux-x86_64/bin/simread",
+              *(f"MoosasPy/libs/radiance/linux-x86_64/bin/{name}" for name in
+                ("epw2wea", "gendaylit", "gendaymtx", "gensky", "oconv", "rcontrib", "rfluxmtx", "rtrace")),
           )
           wheel = next(Path("dist").glob("*.whl"))
           with ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+              required = {
+                  *executables,
+                  "MoosasPy/db/radiation/sun_position.csv",
+                  "MoosasPy/db/airflow/xgb.json",
+                  "MoosasPy/libs/radiance/LICENSE.txt",
+                  "MoosasPy/libs/moosas_rad/MoosasRad.go",
+                  "MoosasPy/libs/moosas_rad/MoosasBVH.go",
+                  "MoosasPy/libs/moosas_rad/build.sh",
+                  "MoosasPy/libs/moosas_afn/MoosasAFN.go",
+                  "MoosasPy/libs/moosas_afn/build.sh",
+              }
+              for platform in ("linux-x86_64", "windows-x86_64"):
+                  required.update(
+                      f"MoosasPy/libs/radiance/{platform}/lib/{name}"
+                      for name in ("perezlum.cal", "rayinit.cal", "reinhartb.cal", "skybright.cal")
+                  )
+                  suffix = ".exe" if platform.startswith("windows") else ""
+                  required.update(
+                      f"MoosasPy/libs/radiance/{platform}/bin/{name}{suffix}"
+                      for name in ("epw2wea", "gendaylit", "gendaymtx", "gensky", "oconv", "rcontrib", "rfluxmtx", "rtrace")
+                  )
+                  for tool, programs in (
+                      ("moosas_rad", ("MoosasRad",)),
+                      ("moosas_afn", ("MoosasAFN",)),
+                      ("moosas_energy", ("MoosasEnergy",)),
+                      ("contam", ("contamx3", "simread")),
+                  ):
+                      required.update(f"MoosasPy/libs/{tool}/{platform}/bin/{name}{suffix}" for name in programs)
+              required.add("MoosasPy/libs/radiance/windows-x86_64/bin/vcruntime140.dll")
+              required.add("MoosasPy/libs/contam/response.txt")
+              missing = required - names
+              if missing:
+                  raise SystemExit("Wheel is missing native resources: " + ", ".join(sorted(missing)))
+              obsolete = ("MoosasPy/libs/rad/", "MoosasPy/libs/vent/",
+                          "MoosasPy/libs/weather/", "MoosasPy/libs/energy/",
+                          "MoosasPy/libs/cetus_energy/", "native/")
+              if any(name.startswith(obsolete) or name.endswith((".bat", ".prj", ".rad", ".input")) for name in names):
+                  raise SystemExit("Wheel contains obsolete paths or simulation artifacts")
               missing_permissions = [
                   name for name in executables
                   if archive.getinfo(name).external_attr >> 16 & 0o111 == 0

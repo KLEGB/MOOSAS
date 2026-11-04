@@ -150,6 +150,8 @@ actual commands, grid settings, time convention and metric thresholds.
 ## Native tool selection
 
 The default runtime is the bundled Windows/Linux x86-64 Radiance installation.
+It lives in `MoosasPy/libs/radiance/<platform>/bin`, with function files in the
+adjacent `lib` directory, shared with the weather toolchain.
 Other platforms must supply a complete installation through `executable_dir`.
 Every executable is resolved only in the selected directory; missing tools fail
 explicitly instead of using the old weather tools or a system PATH installation.

@@ -6,22 +6,18 @@ import argparse
 import csv
 from dataclasses import dataclass
 import os
-import platform
 import tempfile
 
 import numpy as np
 
-from ...utils.tools import path
+from ...utils.tools import path, native_platform
 from ..contracts import Location
 from ..runner import Runner
 from .data import WeatherData
 from .sky.cumulative import CumulativeSky, build_cumulative_skies
 
 
-_EXECUTABLE_SUFFIX = ".exe" if platform.system().lower() == "windows" else ""
-EPW2WEA_EXECUTABLE = os.path.join(path.libDir, "weather", f"epw2wea{_EXECUTABLE_SUFFIX}")
-GENDAYMTX_EXECUTABLE = os.path.join(path.libDir, "weather", f"gendaymtx{_EXECUTABLE_SUFFIX}")
-SUN_POSITION_FILE = os.path.join(path.libDir, "weather", "sun_position.csv")
+SUN_POSITION_FILE = os.path.join(path.dataBaseDir, "radiation", "sun_position.csv")
 
 TREGENZA_COEFFICIENTS = np.array(
     [0.0435449227, 0.0416418006, 0.0473984151, 0.0406730411,
@@ -196,9 +192,9 @@ def convert_epw_to_wea(
     """Run the packaged epw2wea executable with an explicit output path."""
     output_path = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    Runner(timeout_seconds=timeout_seconds).run_command(
-        [EPW2WEA_EXECUTABLE, os.path.abspath(epw_file), output_path]
-    )
+    platform_dir, suffix = native_platform()
+    executable = os.path.join(path.libDir, "radiance", platform_dir, "bin", f"epw2wea{suffix}")
+    Runner(timeout_seconds=timeout_seconds).run_command([executable, os.path.abspath(epw_file), output_path])
     if not os.path.isfile(output_path):
         raise FileNotFoundError(f"epw2wea did not create: {output_path}")
     return output_path
@@ -211,11 +207,13 @@ def generate_cumulative_sky(
     timeout_seconds: float = 300.0,
 ) -> np.ndarray:
     """Generate a 145-by-8760 Tregenza sky matrix from a WEA file."""
+    platform_dir, suffix = native_platform()
+    executable = os.path.join(path.libDir, "radiance", platform_dir, "bin", f"gendaymtx{suffix}")
     with tempfile.TemporaryDirectory(prefix="moosas-cumsky-", dir=work_dir) as temporary_dir:
         matrix_output = os.path.join(temporary_dir, "sky.mtx")
         with open(matrix_output, "w", encoding="utf-8") as output_file:
             Runner(timeout_seconds=timeout_seconds).run_command(
-                [GENDAYMTX_EXECUTABLE, "-m", "1", "-O1", os.path.abspath(wea_file)],
+                [executable, "-m", "1", "-O1", os.path.abspath(wea_file)],
                 stdout=output_file,
             )
         rgb_rows = []

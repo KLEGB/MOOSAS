@@ -8,15 +8,13 @@ from ...transform.geometry.element import MoosasSpace, MoosasSkylight, MoosasGla
 from ...transform.geometry.geos import Ray, Vector
 from ...utils import np, os, Iterable
 from ...utils import path
+from ...utils.tools import native_platform
 from ...utils.constant import rad
 from ..runner import Runner
 
 
-RAD_EXE_SUFFIX = ".exe" if os.name == "nt" else ""
-
-
 def _default_sky_positions():
-    sky_path = os.path.join(path.libDir, "weather", "sun_position.csv")
+    sky_path = os.path.join(path.dataBaseDir, "radiation", "sun_position.csv")
     with open(sky_path, encoding="utf-8") as sky_file:
         return [
             Vector(np.array(line.split(","), dtype=float))
@@ -366,8 +364,9 @@ def ray_test(rays: Iterable[Ray], model=None, geo_path: str = None,
         with open(ray_path, 'w') as f:
             f.write('\n'.join(lines) + '\n')
 
+        platform_dir, suffix = native_platform()
         command = [
-            os.path.join(path.libDir, 'rad', f'MoosasRad{RAD_EXE_SUFFIX}'),
+            os.path.join(path.libDir, 'moosas_rad', platform_dir, 'bin', f'MoosasRad{suffix}'),
             '-g', geo_path,
             '-o', result_path,
             ray_path

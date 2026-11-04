@@ -1,10 +1,9 @@
-"""CETUS CES3 v2 codec, persistent executable session and energy results."""
+"""MOOSAS Energy CES3 v2 codec, persistent executable session and energy results."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 import os
-import platform
 import queue
 import struct
 import subprocess
@@ -12,6 +11,7 @@ import threading
 
 import numpy as np
 
+from ...utils.tools import path, native_platform
 from ..contracts import SimulationResult
 from ..engine import SubprocessEngine
 from ..runner import CommandResult
@@ -345,11 +345,13 @@ class EnergyRunner:
         if energy_input is not None and not isinstance(energy_input,EnergyRequest):
             raise TypeError('energy_input must be EnergyRequest; CSV/CLI zone dictionaries are no longer supported')
         self.request = energy_input if energy_input is not None else build_energy_input(model,weather,**input_options)
-        suffix = '.exe' if platform.system()=='Windows' else ''
-        packaged = Path(__file__).resolve().parents[2]/'libs'/'energy'/f'CetusSurfaceEnergy{suffix}'
-        self.executable = Path(executable_path or os.environ.get('MOOSAS_ENERGY_EXECUTABLE',packaged)).resolve()
+        selected = executable_path or os.environ.get('MOOSAS_ENERGY_EXECUTABLE')
+        if selected is None:
+            platform_dir, suffix = native_platform()
+            selected = Path(path.libDir)/'moosas_energy'/platform_dir/'bin'/f'MoosasEnergy{suffix}'
+        self.executable = Path(selected).resolve()
         if not self.executable.is_file():
-            raise FileNotFoundError(f'CETUS CES3 v2 executable missing: {self.executable}')
+            raise FileNotFoundError(f'MOOSAS Energy CES3 v2 executable missing: {self.executable}')
         if os.name!='nt' and not os.access(self.executable,os.X_OK):
             self.executable.chmod(self.executable.stat().st_mode | 0o111)
         self.engine = engine or SubprocessEngine()

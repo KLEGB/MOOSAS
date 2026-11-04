@@ -5,6 +5,10 @@ MoosasPy bundles the ContamX 3.4.0.3 solver and `simread` result reader for:
 - Windows x86-64
 - Linux x86-64, built by NIST for Debian 12.12
 
+Each platform stores executables under `<platform>/bin`; `response.txt` is the
+shared simread input template. Project and result files are generated only in
+simulation workspaces.
+
 The binaries come from the official NIST CONTAM downloads. CONTAM is public-domain
 software developed by employees of the United States National Institute of Standards
 and Technology.

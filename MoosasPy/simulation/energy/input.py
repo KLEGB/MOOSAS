@@ -1,4 +1,4 @@
-"""SI input contracts and model-to-surface resolution for CETUS energy."""
+"""SI input contracts and model-to-surface resolution for MOOSAS Energy."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
@@ -691,7 +691,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     if int(start_hour)!=start_hour or int(hours)!=hours or hours<=0 or start_hour<0 or start_hour+hours>8760:
         raise ValueError('start_hour/hours must define a nonempty window within 0..8759')
     if require_radiation and not irradiance_by_surface:
-        raise ValueError('CETUS requires hourly incident irradiance_by_surface; seasonal zone radiation cannot be reused')
+        raise ValueError('MOOSAS Energy requires hourly incident irradiance_by_surface; seasonal zone radiation cannot be reused')
     config = getattr(model,'energy_settings',{})
     surface_overrides = {**config.get('surface_overrides',{}), **(surface_overrides or {})}
     zone_overrides = {**config.get('zone_overrides',{}), **(zone_overrides or {})}

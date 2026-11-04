@@ -2,21 +2,19 @@
 
 from dataclasses import dataclass
 import os
-import platform
 import re
 import shutil
-import sys
 
 import numpy as np
 
 from ...model import MoosasModel
-from ...utils.tools import path
+from ...utils.tools import path, native_platform
 from ..contracts import SimulationResult
 from ..engine import NativeEngine
 from ..runner import Runner
 from ..workspace import SimulationWorkspace, WorkspaceReport
 from .network import (
-    VENT_EXE_SUFFIX, AfnPath, AfnZone, buildNetworkFile, getZoneAndPath,
+    AfnPath, AfnZone, buildNetworkFile, getZoneAndPath,
     cleanseNetwork, applyWindPressure,
 )
 from ...transform.geometry.geos import Vector
@@ -29,19 +27,6 @@ from .parser import (
     read_topology,
     write_file,
 )
-
-
-def _contam_platform(system=None, machine=None):
-    """Return the bundled CONTAM directory and executable suffix for this host."""
-    system = system or sys.platform
-    machine = (machine or platform.machine()).lower()
-    if machine not in {"amd64", "x86_64"}:
-        raise OSError(f"Bundled CONTAM tools do not support architecture: {machine}")
-    if system == "win32":
-        return "windows-x86_64", ".exe"
-    if system.startswith("linux"):
-        return "linux-x86_64", ""
-    raise OSError(f"Bundled CONTAM tools do not support platform: {system}")
 
 
 @dataclass(frozen=True)
@@ -64,9 +49,9 @@ class VentPaths:
     @classmethod
     def from_workspace(cls, workspace):
         workspace = os.path.abspath(workspace)
-        platform_dir, executable_suffix = _contam_platform()
-        contam_root = os.path.join(path.libDir, "vent", "contam")
-        bundled_dir = os.path.join(contam_root, platform_dir)
+        platform_dir, executable_suffix = native_platform()
+        contam_root = os.path.join(path.libDir, "contam")
+        bundled_dir = os.path.join(contam_root, platform_dir, "bin")
         contam_dir = os.path.join(workspace, "contam")
         project_dir = os.path.join(workspace, "project")
         result_dir = os.path.join(workspace, "result")
@@ -215,8 +200,9 @@ class AirflowRunner(Runner):
             zoneList=zones,
             networkFilePath=network_file,
         )
+        platform_dir, suffix = native_platform()
         afn_result = self.run_command((
-            os.path.join(path.libDir, "vent", f"MoosasAFN{VENT_EXE_SUFFIX}"),
+            os.path.join(path.libDir, "moosas_afn", platform_dir, "bin", f"MoosasAFN{suffix}"),
             "-p", "model",
             "-d", self.paths.project_dir,
             "-t", str(self.outdoor_temperature),

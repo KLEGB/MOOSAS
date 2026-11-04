@@ -3,6 +3,7 @@ import string
 import random
 import shutil
 import tempfile
+import platform
 from .support import os, sys, np, json
 from .error import FileError
 
@@ -71,6 +72,19 @@ class MoosasPath(object):
 
 
 path = MoosasPath(os.path.dirname(os.path.dirname(__file__)))
+
+
+def native_platform(system: str | None = None, machine: str | None = None) -> tuple[str, str]:
+    """Return the packaged native platform directory and executable suffix."""
+    system = system or sys.platform
+    machine = (machine or platform.machine()).lower()
+    if machine not in {"amd64", "x86_64"}:
+        raise OSError(f"Bundled native tools do not support architecture: {machine}; provide an executable override.")
+    if system == "win32":
+        return "windows-x86_64", ".exe"
+    if system.startswith("linux"):
+        return "linux-x86_64", ""
+    raise OSError(f"Bundled native tools do not support platform: {system}; provide an executable override.")
 
 
 def mixItemListToObject(*itemOrList: list | object) -> np.ndarray | object:

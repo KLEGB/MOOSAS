@@ -11,11 +11,10 @@ import tempfile
 from ...transform.geometry.element import *
 from ...transform.geometry.geos import Vector
 from ...utils.constant import geom
-from ...utils.tools import path, generate_code, parseFile
+from ...utils.tools import path, generate_code, parseFile, native_platform
 from ..runner import Runner
 
 
-VENT_EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 NETWORK_SCHEMA_VERSION = 1
 SUMMER_RADIATION_PERIOD_HOURS = 5832 - 3624
 
@@ -1449,7 +1448,8 @@ def buildPrj(model=None, pathList: list[AfnPath] = None, zoneList: list[AfnZone]
         prjName = os.path.basename(prjFilePath)[:-4]
         prjDirectory = os.path.dirname(prjFilePath)
 
-    command = [os.path.join(path.libDir, 'vent', f'MoosasAFN{VENT_EXE_SUFFIX}')]
+    platform_dir, suffix = native_platform()
+    command = [os.path.join(path.libDir, 'moosas_afn', platform_dir, 'bin', f'MoosasAFN{suffix}')]
     command += ['-p', prjName]
     command += ['-d', prjDirectory]
     command += ['-t', str(t0)]

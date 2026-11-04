@@ -23,8 +23,11 @@ test -s "$stage/MoosasRad.exe"
 for program in MoosasRad MoosasRad.exe; do
   go version -m "$stage/$program"
 done
-for program in MoosasRad MoosasRad.exe; do
-  mv -f "$stage/$program" "$destination/$program"
-  chmod 755 "$destination/$program"
+for target in linux windows; do
+  suffix=""
+  [[ "$target" == windows ]] && suffix=".exe"
+  mkdir -p "$destination/$target-x86_64/bin"
+  mv -f "$stage/MoosasRad$suffix" "$destination/$target-x86_64/bin/MoosasRad$suffix"
+  chmod 755 "$destination/$target-x86_64/bin/MoosasRad$suffix"
 done
 echo "Built linux/amd64 and windows/amd64 MoosasRad binaries ($mode: $destination)."

@@ -121,8 +121,10 @@ def test_leakage_path_connects_zone_to_ambient():
 
 
 def test_moosas_afn_binary_generates_prj_from_json():
-    executable_name = "MoosasAFN.exe" if os.name == "nt" else "MoosasAFN"
-    executable = Path(__file__).parents[1] / "MoosasPy" / "libs" / "vent" / executable_name
+    from MoosasPy.utils.tools import native_platform
+    platform_dir, suffix = native_platform()
+    executable = (Path(__file__).parents[1] / "MoosasPy" / "libs" / "moosas_afn"
+                  / platform_dir / "bin" / f"MoosasAFN{suffix}")
     payload = {
         "schemaVersion": NETWORK_SCHEMA_VERSION,
         "levels": [{"nr": 1, "refht": 0.0, "delht": 3.0, "name": "<1>"}],

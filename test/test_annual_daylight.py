@@ -124,7 +124,7 @@ def test_explicit_tool_directory_never_falls_back(tmp_path, monkeypatch):
 def test_unbundled_platform_requires_explicit_tools(tmp_path, monkeypatch):
     import platform
     monkeypatch.setattr(platform, 'machine', lambda: 'arm64')
-    with pytest.raises(ValueError, match='executable_dir'):
+    with pytest.raises(OSError, match='executable override'):
         RadianceRunner(SimpleNamespace())
     assert RadianceRunner(SimpleNamespace(), executable_dir=tmp_path).executable_dir == tmp_path
 

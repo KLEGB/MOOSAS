@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import os
-import platform
 import shutil
 import csv
 import json
@@ -15,6 +14,7 @@ import numpy as np
 from typing import TYPE_CHECKING, TextIO
 
 from ...utils import path
+from ...utils.tools import native_platform
 from ..contracts import Location, SimulationResult
 from ..engine import NativeEngine, SubprocessEngine
 from ..runner import CommandError, CommandResult, CommandTimeoutError, Runner
@@ -97,10 +97,8 @@ class RadianceRunner(Runner):
         if executable_dir is not None:
             self.executable_dir = Path(executable_dir).resolve()
         else:
-            if platform.machine().lower() not in ('x86_64', 'amd64') or platform.system() not in ('Windows', 'Linux'):
-                raise ValueError('No bundled Radiance tools for this platform; pass executable_dir.')
-            platform_dir = 'windows-x86_64' if os.name == 'nt' else 'linux-x86_64'
-            self.executable_dir = Path(path.libDir) / 'rad' / 'annual' / platform_dir / 'bin'
+            platform_dir, _ = native_platform()
+            self.executable_dir = Path(path.libDir) / 'radiance' / platform_dir / 'bin'
         if engine is None:
             env = dict(os.environ)
             env['PATH'] = str(self.executable_dir) + os.pathsep + env.get('PATH', '')
@@ -159,7 +157,7 @@ class RadianceRunner(Runner):
                 self.sky.location.latitude,
                 self.sky.location.longitude,
                 self.sky.diffuse_illuminance,
-                str(rad_path),
+                rad_path=str(rad_path),
                 utc_offset_hours=self.sky.utc_offset_hours,
             )
         floors = []

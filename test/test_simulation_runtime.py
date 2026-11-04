@@ -14,7 +14,6 @@ from MoosasPy.simulation.airflow.runner import (
     AirflowResult,
     AirflowRunner,
     VentPaths,
-    _contam_platform,
 )
 from MoosasPy.simulation.engine import NativeExecution
 from MoosasPy.simulation.radiation.calculation import (
@@ -35,6 +34,7 @@ from MoosasPy.simulation.weather import Location
 from MoosasPy.simulation.weather.epw import convert_epw_to_wea
 from MoosasPy.transform.geometry.geos import Ray, Vector
 from MoosasPy.utils.constant import rad
+from MoosasPy.utils.tools import native_platform
 
 
 class RecordingEngine:
@@ -141,15 +141,15 @@ class RunnerTests(unittest.TestCase):
 
 
 class SimulationWorkspaceTests(unittest.TestCase):
-    def test_contam_platform_selects_supported_x86_64_binaries(self):
-        self.assertEqual(_contam_platform("win32", "AMD64"), ("windows-x86_64", ".exe"))
-        self.assertEqual(_contam_platform("linux", "x86_64"), ("linux-x86_64", ""))
+    def test_native_platform_selects_supported_x86_64_binaries(self):
+        self.assertEqual(native_platform("win32", "AMD64"), ("windows-x86_64", ".exe"))
+        self.assertEqual(native_platform("linux", "x86_64"), ("linux-x86_64", ""))
 
-    def test_contam_platform_rejects_unsupported_hosts(self):
+    def test_native_platform_rejects_unsupported_hosts(self):
         with self.assertRaisesRegex(OSError, "architecture"):
-            _contam_platform("linux", "aarch64")
+            native_platform("linux", "aarch64")
         with self.assertRaisesRegex(OSError, "platform"):
-            _contam_platform("darwin", "x86_64")
+            native_platform("darwin", "x86_64")
 
     def test_weather_conversion_uses_explicit_output_path(self):
         def run_command(command, **_kwargs):

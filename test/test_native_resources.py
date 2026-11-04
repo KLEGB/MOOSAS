@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import inspect
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from eppy.modeleditor import IDF
 import pytest
+import numpy as np
 
 from MoosasPy.model.io.idf.version import (
     ENERGYPLUS_VERSION,
@@ -19,6 +21,104 @@ from MoosasPy.model.io.idf.version import (
 )
 from MoosasPy.simulation.airflow import create_openfoam_workspace
 from MoosasPy.simulation.weather import write_epw_csv
+from MoosasPy.utils.tools import path, native_platform
+
+
+@pytest.mark.parametrize("platform_dir,suffix", [("linux-x86_64", ""), ("windows-x86_64", ".exe")])
+def test_native_runtimes_have_one_platform_layout(platform_dir, suffix):
+    root = Path(path.libDir)
+    tools = {
+        "radiance": ("epw2wea", "gendaylit", "gendaymtx", "gensky", "oconv", "rcontrib", "rfluxmtx", "rtrace"),
+        "contam": ("contamx3", "simread"),
+        "moosas_rad": ("MoosasRad",),
+        "moosas_afn": ("MoosasAFN",),
+        "moosas_energy": ("MoosasEnergy",),
+    }
+    for tool, programs in tools.items():
+        for program in programs:
+            file = root / tool / platform_dir / "bin" / (program + suffix)
+            assert file.is_file(), file
+            with file.open("rb") as stream:
+                magic = stream.read(20)
+            if suffix:
+                assert magic[:2] == b"MZ"
+            else:
+                assert magic[:5] == b"\x7fELF\x02"
+                assert int.from_bytes(magic[18:20], "little") == 62
+    for file in ("perezlum.cal", "rayinit.cal", "reinhartb.cal", "skybright.cal"):
+        assert (root / "radiance" / platform_dir / "lib" / file).is_file()
+    assert (root / "contam" / "response.txt").is_file()
+    if suffix:
+        assert (root / "radiance" / platform_dir / "bin" / "vcruntime140.dll").is_file()
+
+
+def test_native_runtime_tree_excludes_outputs_and_old_paths():
+    root = Path(path.libDir)
+    assert {file.name for file in root.iterdir()} == {
+        "README.md", "radiance", "contam", "moosas_rad", "moosas_afn", "moosas_energy",
+    }
+    for file in root.rglob("*"):
+        if file.is_file():
+            assert file.suffix not in {".bat", ".prj", ".rad", ".input", ".csv", ".json"}, file
+    assert (Path(path.dataBaseDir) / "radiation" / "sun_position.csv").is_file()
+    assert (Path(path.dataBaseDir) / "airflow" / "xgb.json").is_file()
+
+
+def test_scene_writers_require_workspace_output_paths():
+    from MoosasPy.simulation.radiation.scene import _model_to_radiance, _space_to_radiance, _write_grid
+
+    for function, parameter in ((_model_to_radiance, "rad_path"),
+                                (_space_to_radiance, "rad_path"), (_write_grid, "grid_path")):
+        assert inspect.signature(function).parameters[parameter].default is inspect.Parameter.empty
+
+
+def test_radiance_and_weather_share_one_tool_installation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from MoosasPy.simulation.radiation import RadianceRunner
+    from MoosasPy.simulation.weather import convert_epw_to_wea, generate_cumulative_sky
+    from MoosasPy.simulation.weather.data import WeatherData
+    from MoosasPy.simulation.runner import Runner
+
+    commands = []
+    def run_command(self, command, **options):
+        commands.append(command)
+        if options.get("stdout") is not None:
+            options["stdout"].write("1 1 1\n" * 146)
+        else:
+            Path(command[-1]).write_text("wea")
+
+    monkeypatch.setattr(Runner, "run_command", run_command)
+    monkeypatch.setattr(WeatherData, "HOURS_PER_YEAR", 1)
+    wea = convert_epw_to_wea("test.epw", str(tmp_path / "weather.wea"))
+    generate_cumulative_sky(wea)
+    runner = RadianceRunner(SimpleNamespace())
+    _, suffix = native_platform()
+    assert Path(commands[0][0]) == runner.executable_dir / f"epw2wea{suffix}"
+    assert Path(commands[1][0]) == runner._executable("gendaymtx")
+
+
+def test_relocated_sky_directions_and_pressure_model_are_usable():
+    from MoosasPy.simulation.radiation.calculation import _default_sky_positions
+    from MoosasPy.simulation.weather import CumulativeSky
+    from MoosasPy.simulation.airflow.pressure_model import callXgb
+
+    expected = _default_sky_positions()
+    actual = CumulativeSky(np.ones(145)).positions
+    assert len(expected) == len(actual) == 145
+    np.testing.assert_array_equal([point.array for point in expected], [point.array for point in actual])
+    prediction = callXgb([[1., 1., 0., .5, .5]])
+    assert prediction.shape == (1,) and np.isfinite(prediction).all()
+
+
+def test_native_sources_and_build_scripts_live_with_their_tools():
+    root = Path(path.libDir)
+    assert not (Path(__file__).parents[1] / "native").exists()
+    for tool, files in (
+        ("moosas_rad", ("MoosasRad.go", "MoosasBVH.go", "build.sh")),
+        ("moosas_afn", ("MoosasAFN.go", "build.sh")),
+    ):
+        for file in files:
+            assert (root / tool / file).is_file()
 
 
 def test_bundled_energyplus_resources_are_26_1():

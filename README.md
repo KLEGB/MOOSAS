@@ -106,14 +106,14 @@ result = EnergyRunner(model=model, weather=weather).run()
 print(result.data["total"])
 ```
 
-Energy simulation uses the bundled CETUS CES3 v2 binary engine with explicit
+Energy simulation uses the bundled MOOSAS Energy CES3 v2 binary engine with explicit
 surface boundaries (`outdoors`, `ground`, `adiabatic`). Each space is an
 independent single thermal zone; shared walls/slabs retain their allocated
 thermal storage with an adiabatic back face. See
-[the energy contract](MoosasPy/simulation/energy/CONTRACT.md) for parameter
+[the energy contract](MoosasPy/libs/moosas_energy/README.md) for parameter
 overrides, hourly radiation input, restart state, and native build instructions.
-Run `python test/accept_cetus_energy.py` for the full-year `NBuilding.rdf`
-acceptance and inspect `test/output/cetus_energy/summary.json`.
+Run `python -m pytest test/test_example_integration.py -k energy_engine -q`
+for a full-year geometry-fixture check with the packaged `MoosasEnergy` executable.
 
 Thermal templates are managed in `MoosasPy/db/building_template.json`, with
 GB 55015—2021 limits separated from equivalent-material assumptions. Select a

@@ -1,6 +1,9 @@
 # MoosasRad
 
-MoosasRad is the batched ray-to-geometry engine used by MOOSAS radiation workflows. `build.sh` builds and installs both Linux amd64 (`MoosasRad`) and Windows amd64 (`MoosasRad.exe`) executables with `CGO_ENABLED=0` and `GOAMD64=v1`.
+MoosasRad is the batched ray-to-geometry engine used by MOOSAS radiation workflows.
+Runtime executables live under `linux-x86_64/bin` and `windows-x86_64/bin`.
+Source and the cross-platform [build script](build.sh) live in this directory.
+The script targets `CGO_ENABLED=0` and `GOAMD64=v1`.
 
 ## Command line and files
 
@@ -24,7 +27,12 @@ SketchUp's triangulated compatibility export validates rounded triangles in the 
 
 ## Build
 
-Run `./build.sh stage /path/to/candidate` to cross-compile without replacing the installed binaries. Both targets are built in a temporary directory before being moved to the destination; build metadata is printed. Default `./build.sh` installs to this directory. Go 1.21.5 is used for both baseline and candidate, targeting `linux/amd64` and `windows/amd64`, `GOAMD64=v1`, `CGO_ENABLED=0`, with `-trimpath`. The host compiler being `windows/386` does not make the target programs 32-bit.
+Run `bash MoosasPy/libs/moosas_rad/build.sh stage /path/to/candidate` from the repository
+root to cross-compile without replacing the installed binaries. The output uses
+the same platform/bin layout. Both targets are built in a temporary directory
+before installation; build metadata is printed. Without arguments the script
+installs into this runtime directory. The host compiler being `windows/386` does
+not make the target programs 32-bit.
 
 ## Reproducible current-model benchmark
 

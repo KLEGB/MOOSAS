@@ -140,8 +140,7 @@ def callXgb(xgbInput, xgbOutput=None) -> np.ndarray:
     """
     from xgboost import Booster, DMatrix
     bst = Booster()
-    # print(os.path.join(path.libDir, r"vent\xgb.json"))
-    bst.load_model(os.path.join(path.libDir, 'vent', 'xgb.json'))
+    bst.load_model(os.path.join(path.dataBaseDir, 'airflow', 'xgb.json'))
     inputs = []
     if isinstance(xgbInput, str):
         with open(xgbInput, 'r') as f:
