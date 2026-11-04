@@ -36,8 +36,6 @@ not make the target programs 32-bit.
 
 ## Reproducible current-model benchmark
 
-See [BVH_BENCHMARK.md](BVH_BENCHMARK.md) for the measured results, deployment hashes and the two documented pre-existing near-vertical XY tolerance false hits found by native SketchUp comparison.
-
 `skp/scripts/rad_bvh_benchmark.rb` exports the visible full scene and samples 100 face instances, 25 area-weighted interior points each, with seed 4217 and 0.1 m normal offset. Component instance paths distinguish repeated definitions. Selection and visibility are not changed. The frozen scene, weather matrix and sampling manifest are kept in a runtime workload directory.
 
 Run `python/python.exe skp/scripts/benchmark_rad_bvh.py benchmark --workload WORKLOAD --output OUTPUT --baseline BASELINE_EXE --candidate CANDIDATE_EXE --threads 4`. On Windows hybrid-core CPUs add `--affinity-mask MASK` after checking core topology; the benchmark process and all its children inherit the same core mask. The driver warms up both programs and runs five alternating paired repetitions for Sunhour and Radiation. It captures the actual pipeline rays, verifies byte-identical engine outputs and equal JSON results, and measures complete engine calls, Python pipeline execution and Python process wall time separately. Engine redirection is isolated to the benchmark subprocess and does not modify MoosasPy or the installed executable.

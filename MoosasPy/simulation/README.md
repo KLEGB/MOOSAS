@@ -1,4 +1,4 @@
-# Simulation Conventions
+# Simulation API Conventions
 
 Public simulation APIs follow these rules. When a public API is replaced,
 remove the legacy interface in the same change without a transition period.

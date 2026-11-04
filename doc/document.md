@@ -30,7 +30,6 @@ MoosasPy/
 |-- utils/                 Shared constants, paths, errors, and utilities
 |-- db/                    Templates, schedules, weather, and EnergyPlus data
 |-- libs/                  Packaged native executables and support files
-|-- data/                  Legacy runtime examples
 `-- __temp__/              Runtime workspace; not included in distributions
 ```
 
@@ -255,6 +254,110 @@ IFC conversion and inspection functions are available from
 `MoosasModel.load()` or `model.save()` because its conversion contract is
 different from the complete-model formats above.
 
+#### OpenFOAM Mesh and CFD Export
+
+OpenFOAM export uses `exportFoam()`, not `model.save()`. The `.foam` target is
+a ParaView marker; its parent directory is the generated case directory.
+Exporting does not require OpenFOAM. Meshing and solving CFD cases require an
+OpenFOAM Foundation 12 installation.
+
+To export a single-room volume mesh, select a room by its zero-based index:
+
+```python
+from MoosasPy.transform import transform
+from MoosasPy.model.io.foam import exportFoam
+
+model = transform("test/caseFile/test0_6spacesIntersection.geo", input_type="geo")
+saved = exportFoam(
+    model,
+    "cases/room/room.foam",
+    space_index=0,
+    grid_size=1.0,
+    layers=8,
+)
+print(saved.primary_path)
+```
+
+The room must have one horizontal floor face and a constant height. The output
+contains an extruded `constant/polyMesh`, a `constant/moosasGrid.json` mapping,
+and the `.foam` marker. This mesh-only mode does not create solver settings or
+initial fields.
+
+For an indoor CFD case, provide one inlet and one outlet belonging to the
+selected room:
+
+```python
+from MoosasPy.transform import transform
+from MoosasPy.model.io.foam import exportFoam
+
+model = transform("test/caseFile/test6_twoVolumes.geo", input_type="geo")
+conditions = {
+    "viscosity": 1.5e-5,
+    "turbulence_intensity": 0.05,
+    "turbulence_length": 1.0,
+    "iterations": 1000,
+    "inlet": {"opening": "gls_g_80", "velocity": [0.409451, 0.286966, 0.0]},
+    "outlet": {"opening": "gls_g_79", "pressure": 0.0},
+}
+saved = exportFoam(
+    model,
+    "cases/indoor/case.foam",
+    scenario="indoor",
+    space_index=37,
+    grid_size=2.0,
+    conditions=conditions,
+)
+```
+
+The opening identifiers above are from the documented example model; inspect
+your own room's glazing and skylight IDs before using them. Inlet velocity is
+in world coordinates in m/s and must point into the room. Outlet pressure is
+kinematic gauge pressure in m²/s². Unspecified openings remain closed.
+
+For outdoor wind flow, provide the inflow velocity, domain bounds, and an
+air point outside the building:
+
+```python
+from MoosasPy.transform import transform
+from MoosasPy.model.io.foam import exportFoam
+
+model = transform("test/caseFile/test0_6spacesIntersection.geo", input_type="geo")
+conditions = {
+    "viscosity": 1.5e-5,
+    "turbulence_intensity": 0.05,
+    "turbulence_length": 1.0,
+    "iterations": 1000,
+    "velocity": [2.0, 0.0, 0.0],
+    "domain": [[-100.0, 120.0, 0.0], [0.0, 240.0, 45.0]],
+    "inside_point": [-90.0, 130.0, 5.0],
+}
+saved = exportFoam(
+    model,
+    "cases/outdoor/case.foam",
+    scenario="outdoor",
+    grid_size=4.0,
+    conditions=conditions,
+)
+```
+
+Both CFD scenarios also require `viscosity` (m²/s), `turbulence_intensity`
+(fraction), `turbulence_length` (m), and `iterations`. They create a steady,
+isothermal, incompressible RANS case using k-epsilon. MoosasPy writes the case
+but does not run mesh generation or the solver. In the case directory, run:
+
+```sh
+surfaceCheck constant/geometry/model.stl
+blockMesh
+snappyHexMesh -overwrite
+checkMesh -allTopology -meshQuality
+foamRun -solver incompressibleFluid
+```
+
+The CFD cases assume smooth ground and uniform inflow. Atmospheric boundary
+layers, surface roughness, temperature, buoyancy, and contaminant transport are
+not modeled. CFD targets must use an empty case directory to avoid mixing old
+results with the new case.
+
 #### EnergyPlus IDF Contract
 
 MoosasPy reads and writes EnergyPlus 26.1 IDF files using the bundled 26.1
@@ -452,7 +555,8 @@ overhead.
 
 ### Radiance Daylight Analysis
 
-`RadianceRunner` performs a daylight calculation in an isolated workspace:
+`RadianceRunner` provides point-in-time and annual daylight calculations. A
+point-in-time calculation uses an explicit sky:
 
 ```python
 from datetime import datetime
@@ -477,8 +581,77 @@ for floor in result.floors:
 are not separate simulation inputs.
 
 Each floor result contains grid illuminances, daylight factor, and the fraction
-of points exceeding 300 lux. The runner reports the `oconv` and `rtrace`
-commands used by the calculation.
+of points exceeding 300 lux.
+
+For an annual calculation, prepare a full-year WEA from EPW weather and pass it
+to `AnnualDaylightRequest`:
+
+```python
+import numpy as np
+
+from MoosasPy.simulation.radiation import AnnualDaylightRequest, RadianceRunner
+from MoosasPy.simulation.weather import prepare_daylight_weather
+
+wea_file = prepare_daylight_weather("custom.epw", "analysis-input/custom.wea")
+request = AnnualDaylightRequest(
+    wea_file,
+    output_dir="results",
+    grid_spacing_m=0.5,
+    workplane_height_m=0.76,
+    processes=2,
+)
+result = RadianceRunner(model).run_annual(request)
+
+total = np.load(result.illuminance_total_file, mmap_mode="r")
+direct = np.load(result.illuminance_direct_file, mmap_mode="r")
+print(total.shape, result.manifest_file)
+```
+
+The result matrices are file-backed with shape `(sensors, 8760)`; use memory
+mapping for large annual results. The manifest records resolved inputs,
+assumptions, and metric settings. Successful runs retain their output directory.
+
+Common request options include:
+
+| Option | Default | Description |
+| --- | ---: | --- |
+| `grid_spacing_m` | 0.5 | Clipped horizontal sensor-grid spacing in metres. |
+| `workplane_height_m` | 0.76 | Sensor height above the floor in metres. |
+| `sky_subdivision` | 2 | Reinhart sky subdivision. |
+| `north_rotation_deg` | 0 | Counter-clockwise model north rotation. |
+| `ambient_bounces` | 5 | Ambient reflection depth. |
+| `ambient_divisions` | 4096 | Ambient sampling divisions. |
+| `processes` | 1 | Number of native calculation processes. |
+| `space_ids` | `None` | Optional tuple of spaces to analyze. |
+| `occupied_by_space` | `None` | Per-space 8760-entry boolean occupancy masks. |
+| `optical_overrides` | `None` | Per-element overrides for visible optical properties. |
+
+When no request mask is supplied, a space can define
+`settings["daylight_occupied_mask"]` with 8760 boolean values. Otherwise the
+existing `zone_work_start` and `zone_work_end` settings define a daily
+local-standard-time interval; this fallback emits a warning and does not infer
+weekdays or holidays. Zero occupied hours are reported as such, not as a zero
+performance score.
+
+By default, DA counts occupied hours at or above 300 lux and cDA uses the
+occupied-hour average of illuminance divided by 300 lux, capped at 1. sDA is
+the area fraction meeting DA for at least 50% of occupied time. UDI bands are
+below 100 lux, 100–2000 lux, and above 2000 lux. ASE is the area fraction with
+direct illuminance above 1000 lux for more than 250 occupied hours. Thresholds
+can be changed with `da_threshold_lux`, `required_time_fraction`,
+`udi_lower_lux`, `udi_upper_lux`, `ase_threshold_lux`, and `ase_hours`.
+Per-space sDA and ASE are area-weighted; ratios are represented from 0 to 1.
+
+Annual analysis requires an ordered, complete, hourly, non-leap WEA with 8760
+records and valid DNI/DHI data. The analysis uses the model's fixed shading
+state and scalar, achromatic visible properties. It does not operate blinds
+and is not a full LM-83 operational-shading assessment; BSDF and colored
+optical materials are not supported. Visible transmittance, solar
+transmittance, and SHGC are distinct properties. Opaque surfaces use
+`visible_reflectance`; windows and skylights use `visible_transmittance`.
+Missing visible values use defaults recorded in the run manifest: VLT 0.70,
+floor reflectance 0.30, ceiling reflectance 0.75, and 0.60 for other opaque
+surfaces.
 
 ### Ventilation Analysis
 

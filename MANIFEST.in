@@ -1,9 +1,6 @@
 include LICENSE
-include MoosasPy/README.md
 
-graft MoosasPy/data
 graft MoosasPy/db
-graft MoosasPy/doc
 graft MoosasPy/libs
 
 global-exclude __pycache__/*
