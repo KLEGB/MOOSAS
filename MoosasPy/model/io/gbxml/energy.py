@@ -378,8 +378,6 @@ def attach(model, evidence):
                 evidence['zone_settings'][str(s.id)].get('volume_m3',0)>0]
     model.spaceList.extend(promoted)
     model.voidList = [s for s in model.voidList if s not in promoted]
-    from ...resources import rebuild_schedule_index
-    rebuild_schedule_index(model)
 
 
 def from_graph(model, graph):

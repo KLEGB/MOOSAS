@@ -98,7 +98,7 @@ ambiguous legacy `transparency`/`reflection` values are not silently reinterpret
 ### Time, weather and results
 
 Weather is hourly and non-leap (8760 records); dt is 3600 s. MOOSAS sky temperature
-is Kelvin, converted to sky irradiance as sigma*T^4. Existing `.sch` records carry
+is Kelvin, converted to sky irradiance as sigma*T^4. Model schedule records carry
 absolute values; no design intensity is multiplied into those values. Daily,
 weekly (day zero Monday), and explicit hourly schedules are supported.
 

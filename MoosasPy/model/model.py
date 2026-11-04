@@ -25,7 +25,7 @@ INCH_METER_MULTIPLIER_SQR = 1
 class MoosasModel(MoosasContainer):
     """Domain state for a building geometry and its analysis configuration.
 
-    Resource loading is deliberately handled by ``MoosasPy.model.resources``.
+    Resource loading is deliberately handled by ``MoosasPy.model.thermal_templates``.
     """
 
     def __init__(self):
@@ -46,9 +46,7 @@ class MoosasModel(MoosasContainer):
         super(MoosasModel, self).__init__()
 
         self.buildingTemplate = {}
-        self.schedulePath = None
         self.schedule = {}
-        self.scheduleByType = {}
         # Persistent energy boundary/parameter overrides, independent of templates.
         self.energy_settings = {}
 

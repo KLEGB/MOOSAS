@@ -11,15 +11,44 @@ import math
 from pathlib import Path
 
 
-DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'building_template.json'
+DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'template'
 
 
-def load_thermal_library(filename=None):
-    filename = Path(filename or DEFAULT_LIBRARY)
+def _read_library_file(filename):
     data = json.loads(filename.read_text(encoding='utf-8'))
     if data.get('schema') != 'moosas.thermal-templates' or data.get('version') != 1:
-        raise ValueError('Unsupported thermal template schema/version')
+        raise ValueError(f'Unsupported thermal template schema/version in {filename.name}')
     return data
+
+
+def load_thermal_library(library_path=None):
+    """Assemble the library from a template folder: common.json plus one file per building type.
+
+    Template ids are ``<envelope>_<standard id>_<operation id>``.
+    """
+    folder = Path(library_path or DEFAULT_LIBRARY)
+    library = _read_library_file(folder / 'common.json')
+    library['operations'] = {}
+    library['templates'] = {}
+    for filename in sorted(folder.glob('*.json')):
+        if filename.name == 'common.json':
+            continue
+        spec = _read_library_file(filename)
+        op_id = spec['operation_id']
+        library['operations'][op_id] = spec['operation']
+        for envelope in spec['envelopes']:
+            if envelope not in library['envelopes']:
+                raise ValueError(f'{filename.name}: unknown envelope {envelope!r}')
+            library['templates'][f"{envelope}_{library['standard']['id']}_{op_id}"] = dict(
+                envelope=envelope, operation=op_id)
+    return library
+
+
+def configure_model_resources(model, template_path=None):
+    """Attach the building template library to a model."""
+    if template_path is not None or not model.buildingTemplate:
+        model.buildingTemplate = building_templates(template_path)
+    return model
 
 
 def _strictest(value):
@@ -30,8 +59,8 @@ def _strictest(value):
     return value
 
 
-def building_templates(filename=None):
-    library = load_thermal_library(filename)
+def building_templates(library_path=None):
+    library = load_thermal_library(library_path)
     result = {}
     for name, spec in library['templates'].items():
         op = library['operations'][spec['operation']]
@@ -44,7 +73,7 @@ def building_templates(filename=None):
         payload = dict(id=name, standard=deepcopy(library['standard']),
                        envelope=deepcopy(envelope),
                        operation=deepcopy(op), assumptions=deepcopy(library['assumptions']),
-                       context=deepcopy(spec.get('context', {})))
+                       context={})
         result[name] = {k: v for k, v in op.items() if k.startswith('zone_')}
         # Whole-zone exporters (IDF) need flat representative envelope values.
         # SHGC without a prescribed limit follows the library optics convention

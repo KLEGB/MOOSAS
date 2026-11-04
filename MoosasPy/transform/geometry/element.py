@@ -3367,14 +3367,6 @@ class MoosasSpace(object):
             return
         self.settings['zone_template'] = buildingTemplateHint
 
-        templateType = str(template.get("type", "")).strip().upper()
-        if templateType and templateType not in getattr(self.parent, "scheduleByType", {}):
-            schedule_path = os.path.join(path.dataBaseDir, 'schedule', f"{templateType.lower()}.sch")
-            if os.path.isfile(schedule_path):
-                from ...model.resources import load_schedule
-                load_schedule(self.parent, schedule_path)
-        
-
         load_intensity_fields = ("zone_ppsm", "zone_equipment", "zone_lighting")
         for key, value in template.items():
             # Thermal loads may be a numeric intensity or a named Daily/Weekly

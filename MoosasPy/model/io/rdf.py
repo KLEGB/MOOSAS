@@ -8,7 +8,6 @@ from rdflib import Graph, Namespace, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, GEO, BRICK, WGS, XSD
 
 from ..model import *
-from ..resources import rebuild_schedule_index
 from ...utils import np, shapely, mixItemListToList, mixItemListToObject, searchBy, generate_code, path
 from ...utils.constant import geom
 
@@ -1282,7 +1281,6 @@ class MoosasRDF(Graph):
 
 def _import_schedule_nodes(rdfGraph: MoosasRDF, model: MoosasModel):
     model.schedule = {}
-    model.schedulePath = None
     schedule_nodes = set()
     for cls in (rdfGraph.pgd.DailySchedule, rdfGraph.pgd.WeeklySchedule):
         nodes = rdfGraph.getSubject(rdfGraph.rdf.type, cls)
@@ -1323,7 +1321,6 @@ def _import_schedule_nodes(rdfGraph: MoosasRDF, model: MoosasModel):
                 "type": "Weekly",
                 "value": values,
             }
-    rebuild_schedule_index(model)
 
 
 def _decode_space_settings(rdfGraph: MoosasRDF, spaceUri, spc: MoosasSpace):
@@ -1526,7 +1523,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     """
     rdfGraph: MoosasRDF = MoosasRDF.load(input_path, fileFormat=fileFormat)
     model = MoosasModel()
-    from ..resources import configure_model_resources
+    from ..thermal_templates import configure_model_resources
 
     configure_model_resources(model)
     _import_schedule_nodes(rdfGraph, model)

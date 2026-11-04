@@ -41,8 +41,6 @@ def convexify_model(model: MoosasModel) -> MoosasModel:
     convex_model = MoosasModel()
     convex_model.buildingTemplate = model.buildingTemplate
     convex_model.schedule = model.schedule
-    convex_model.scheduleByType = model.scheduleByType
-    convex_model.schedulePath = model.schedulePath
     convex_model.geometryList = [
         MoosasGeometry(
             shapely.polygons(face),

@@ -28,7 +28,7 @@ from .importers.geo import _readGeo, preClassified
 from .importers.obj import _readObj
 from .importers.stl import _readStl
 from ..model import MoosasModel
-from ..model.resources import configure_model_resources
+from ..model.thermal_templates import configure_model_resources
 from ..utils import np
 
 

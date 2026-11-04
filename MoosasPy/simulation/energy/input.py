@@ -10,10 +10,8 @@ import math
 import numpy as np
 import shapely
 
-from ...model.resources import get_schedule_name, load_schedule
 from ...model.thermal_templates import building_templates, resolve_surface_template, merge_surface_template, template_program
 from ...transform.geometry.geos import Projection, Vector
-from ...utils.tools import path
 
 
 @dataclass(frozen=True)
@@ -667,7 +665,7 @@ def _facade_window_ratios(spaces, owners, ground, overrides):
 
 def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_hour=0, hours=8760,
                        ground_level_m=None, surface_overrides=None, zone_overrides=None,
-                       irradiance_by_surface=None, schedule_path=None, require_radiation=False,
+                       irradiance_by_surface=None, require_radiation=False,
                        core=None, temporal_scale=None, spatial_scale=None,
                        template_id=None, template_path=None, template_context=None,
                        template_overrides_model=False):
@@ -686,8 +684,6 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         raise ValueError('template_path requires template_id to select a template explicitly')
     if template_id is not None and (template_id not in template_records or '_thermal_template' not in template_records[template_id]):
         raise ValueError(f'Unknown structured thermal template {template_id!r}')
-    if schedule_path:
-        load_schedule(model, schedule_path)
     if int(start_hour)!=start_hour or int(hours)!=hours or hours<=0 or start_hour<0 or start_hour+hours>8760:
         raise ValueError('start_hour/hours must define a nonempty window within 0..8759')
     if require_radiation and not irradiance_by_surface:
@@ -849,7 +845,6 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         surfaces.sort(key=lambda surface:surface.surface_id)
         if not surfaces:
             raise ValueError(f'{space.id}: no thermal surfaces after excluding air openings')
-        template_type = str(settings.get('zone_template','')).split('_')[-1].upper()
         def program(key, fallback):
             value = settings.get(key, fallback)
             if value is None: value=fallback
@@ -857,8 +852,6 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
             absolute = template_program(settings,key,value) if not overridden else None
             if absolute is not None:
                 value = absolute
-            elif not profile and key in ('zone_ppsm','zone_popheat','zone_equipment','zone_lighting') and not isinstance(value,str) and not overridden:
-                value = get_schedule_name(model,template_type,key) or value
             result = expand_schedule(model,value,f'{space.id}/{key}',schedule_cache)
             if key not in {'zone_h_temp','zone_c_temp'} and np.any(result<0):
                 raise ValueError(f'{space.id}/{key}: schedule values must be nonnegative')

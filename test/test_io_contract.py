@@ -19,7 +19,7 @@ from MoosasPy.model.io.idf.input import createThermalSurface, encodeFace
 from MoosasPy.model.io.idf.model import FaceDefault, MoosasSettings
 from MoosasPy.model.io.idf.parser import ZoneTemplate
 from MoosasPy.model.io.idf.version import bundled_template_idf_path, configure_idd
-from MoosasPy.model.resources import configure_model_resources, rebuild_schedule_index
+from MoosasPy.model import configure_model_resources
 from MoosasPy.transform import transform
 from MoosasPy.transform.geometry.element import MoosasElement, MoosasGeometry, MoosasSkylight
 from MoosasPy.transform.geometry.geos import Vector
@@ -51,33 +51,7 @@ def test_resource_service_configures_a_domain_model():
     model = configure_model_resources(MoosasModel())
 
     assert model.buildingTemplate
-    assert model.schedule
-    assert model.scheduleByType
-
-
-def test_schedule_index_uses_weekly_roots_regardless_of_insertion_order():
-    schedules = {
-        "OFF_EquipHeat_Weekend": {"type": "Daily", "value": [0.0] * 24},
-        "OFF_EquipHeat_Weekly": {"type": "Weekly", "value": ["daily"] * 7},
-        "OFF_EquipHeat_Weekday": {"type": "Daily", "value": [1.0] * 24},
-    }
-    model = MoosasModel()
-    model.schedule = dict(reversed(list(schedules.items())))
-
-    rebuild_schedule_index(model)
-
-    assert model.scheduleByType["OFFICE"]["zone_equipment"] == "OFF_EquipHeat_Weekly"
-
-
-def test_schedule_index_rejects_duplicate_weekly_roots():
-    model = MoosasModel()
-    model.schedule = {
-        "OFF_EquipHeat_Weekly": {"type": "Weekly", "value": ["daily"] * 7},
-        "OFF_EquipmentHeatGain_Weekly": {"type": "Weekly", "value": ["daily"] * 7},
-    }
-
-    with pytest.raises(ValueError, match="Multiple weekly schedules"):
-        rebuild_schedule_index(model)
+    assert model.schedule == {}
 
 
 @pytest.mark.parametrize("suffix", (".geo", ".obj", ".stl"))

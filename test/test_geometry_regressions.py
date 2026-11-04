@@ -9,7 +9,7 @@ from MoosasPy.simulation.radiation import calculation as radiation_calculation
 from MoosasPy.model.io.graph import buildGraph
 from MoosasPy.transform.geometry.convexify import GeometryConvexifier
 from MoosasPy.model import MoosasModel
-from MoosasPy.model.resources import configure_model_resources
+from MoosasPy.model import configure_model_resources
 from MoosasPy.transform.geometry.element import (
     MoosasEdge,
     MoosasElement,
@@ -830,13 +830,6 @@ def test_template_application_keeps_load_intensities_numeric():
     }
     model = SimpleNamespace(
         buildingTemplate={"test-residential": template},
-        scheduleByType={
-            "RESIDENTIAL": {
-                "zone_ppsm": "RES_OccDens_Weekly",
-                "zone_equipment": "RES_Equip_Weekly",
-                "zone_lighting": "RES_Light_Weekly",
-            }
-        },
     )
     space = object.__new__(MoosasSpace)
     space.edge = SimpleNamespace(parent=model)

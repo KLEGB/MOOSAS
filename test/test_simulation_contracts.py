@@ -276,6 +276,35 @@ class SimulationContractTests(unittest.TestCase):
     def test_energy_airflow_coupler_is_exposed_by_coupling_package(self):
         self.assertEqual(EnergyAirflowCoupler.__module__, "MoosasPy.simulation.coupling.energy_airflow")
 
+    def test_energy_airflow_coupler_resolves_gains_from_template_profiles(self):
+        from MoosasPy.model.thermal_templates import building_templates
+
+        record = building_templates()["public_A_cold_GB55015-2021_OFFICE"]
+        settings = dict(record)
+        space = SimpleNamespace(id="z1", settings=settings)
+        coupler = object.__new__(EnergyAirflowCoupler)
+        coupler.model = SimpleNamespace(schedule={"probe": {"type": "Daily", "value": [2.0] * 24}})
+        coupler._spaces_by_id = {"z1": space}
+        coupler._gain_cache = {}
+        base = settings["zone_ppsm"]
+        profile = settings["_thermal_template"]["operation"]["profiles"]["occupancy"]
+
+        # Unedited base values follow the template weekly profile.
+        self.assertAlmostEqual(
+            coupler._resolve_gain_value(base, 9, "zone_ppsm", "z1"),
+            base * profile["weekday"][9])
+        self.assertAlmostEqual(
+            coupler._resolve_gain_value(base, 5 * 24 + 9, "zone_ppsm", "z1"),
+            base * profile["weekend"][9])
+        # Edited values are explicit constants.
+        self.assertEqual(coupler._resolve_gain_value(0.25, 9, "zone_ppsm", "z1"), 0.25)
+        # Explicit schedule names resolve from the model schedule library.
+        self.assertEqual(coupler._resolve_gain_value("probe", 100, "zone_equipment", "z1"), 2.0)
+        # Unknown schedule names raise instead of fuzzy-matching.
+        with self.assertRaisesRegex(ValueError, "unknown schedule"):
+            coupler._resolve_gain_value("OFF_EquipHeat_Weekly", 9, "zone_equipment", "z1")
+        self.assertEqual(coupler._resolve_gain_value(None, 9, "zone_ppsm", "z1"), 0.0)
+
     def test_energy_airflow_coupler_delegates_iteration_to_airflow_runner(self):
         coupler = object.__new__(EnergyAirflowCoupler)
         coupler.model = SimpleNamespace()

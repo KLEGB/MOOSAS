@@ -184,7 +184,7 @@ def writeXml(file_path, model: MoosasModel, writeGeometry=False) -> ET.ElementTr
 def loadXml(filePath, geoPath):
     # initialize model
     model: MoosasModel = MoosasModel()
-    from ..resources import configure_model_resources
+    from ..thermal_templates import configure_model_resources
 
     configure_model_resources(model)
     # A model sidecar is already transformed geometry: preserve its SI values.

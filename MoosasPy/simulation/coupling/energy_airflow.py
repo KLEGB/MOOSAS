@@ -1,13 +1,13 @@
 ﻿"""Coupled energy and airflow simulation workflows."""
 
 from ..energy.runner import EnergyRunner, build_energy_input
+from ..energy.input import expand_schedule
 from ...transform.geometry.geos import Projection, Vector, Ray
 from ...model import MoosasModel
-from ...model.resources import get_schedule_name, load_schedule, write_schedule
+from ...model.thermal_templates import template_program
 from ..weather import CumulativeSky, WeatherData, build_cumulative_skies
 from ..radiation import calculate_model_radiation, ray_test, write_radiation_geometry
 from ...utils import np, path, os
-from ...utils.date import DateTime
 from ...utils.constant import afn
 from ..airflow.network import (
     NETWORK_SCHEMA_VERSION,
@@ -49,7 +49,7 @@ def _linear_interpolate_nan_series(values):
 class EnergyAirflowCoupler(object):
     __slots__ = [
         'model', 'zones', 'paths', 'networkDict', 'skySeries', 'pathRadIntensity', 'runtime',
-        'schedulePath', '_sch_daily_map', '_sch_weekly_map', '_sch_loaded_names', 'weather'
+        '_gain_cache', '_spaces_by_id', 'weather'
     ]
     ENERGY_INDEX = ["space_height", "zone_area", "outside_area", "facade_area", "window_area", "roof_area",
                     "skylight_area", "floor_area",
@@ -67,20 +67,13 @@ class EnergyAirflowCoupler(object):
     LPG_PATH_FIELDS = ("pathHeight", "pathWidth", "pressure", "pathType")
 
     def __init__(self, model: MoosasModel, weather: WeatherData,
-                 cumulative_sky_matrix, schedulePath=None):
+                 cumulative_sky_matrix):
         print("-----------------------\nPrepareing network...\n-----------------------")
         import time
         t0 = time.time()
         self.model = model
-        self.schedulePath = schedulePath
-        self._sch_daily_map = {}
-        self._sch_weekly_map = {}
-        self._sch_loaded_names = set()
-        if self.schedulePath is not None:
-            load_schedule(self.model, self.schedulePath)
-        elif getattr(self.model, "schedule", None):
-            self.schedulePath = write_schedule(self.model)
-        self._parse_schedule_file()
+        self._gain_cache = {}
+        self._spaces_by_id = {str(s.id): s for s in list(model.spaceList) + list(model.voidList)}
         self.weather = weather
         cumulative_sky_matrix = np.asarray(cumulative_sky_matrix, dtype=float)
         cumulative_sky = build_cumulative_skies(cumulative_sky_matrix)
@@ -130,70 +123,27 @@ class EnergyAirflowCoupler(object):
         t0 = time.time()
 
 
-    def _parse_schedule_file(self):
-        self._sch_daily_map = {}
-        self._sch_weekly_map = {}
-        self._sch_loaded_names = set()
-        if self.schedulePath is None:
-            return
-        with open(self.schedulePath, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                text = line.strip()
-                if (not text) or text.startswith("!"):
-                    continue
-                parts = [p.strip() for p in text.split(",")]
-                if len(parts) < 3:
-                    continue
-                name = parts[0]
-                mode = parts[1].strip().lower()
-                self._sch_loaded_names.add(name)
-                if mode == "daily":
-                    values = parts[2:26]
-                    if len(values) != 24:
-                        raise ValueError(f"Invalid daily schedule row '{name}', expected 24 hourly values.")
-                    try:
-                        self._sch_daily_map[name] = [float(v) for v in values]
-                    except Exception as e:
-                        raise ValueError(f"Invalid numeric value in daily schedule '{name}': {e}")
-                elif mode == "weekly":
-                    values = parts[2:9]
-                    if len(values) != 7:
-                        raise ValueError(f"Invalid weekly schedule row '{name}', expected 7 daily schedule references.")
-                    self._sch_weekly_map[name] = [str(v) for v in values]
-
-    def _value_from_schedule(self, schedule_name, hoy):
-        if schedule_name in self._sch_weekly_map:
-            week_refs = self._sch_weekly_map[schedule_name]
-            dt = DateTime.from_hoy(float(hoy))
-            daily_name = week_refs[dt.weekday()]
-            if daily_name not in self._sch_daily_map:
-                raise ValueError(
-                    f"Weekly schedule '{schedule_name}' references missing daily schedule '{daily_name}'."
-                )
-            return self._sch_daily_map[daily_name][dt.hour]
-        if schedule_name in self._sch_daily_map:
-            dt = DateTime.from_hoy(float(hoy))
-            return self._sch_daily_map[schedule_name][dt.hour]
-        raise KeyError(schedule_name)
+    def _gain_series(self, user, field_name, raw):
+        """Absolute 8760 series for a zone field, resolved like the energy path."""
+        key = (str(user), field_name, str(raw))
+        series = self._gain_cache.get(key)
+        if series is None:
+            space = self._spaces_by_id.get(str(user))
+            settings = space.settings if space is not None else {}
+            value = raw
+            # Unedited base values follow the zone template weekly profile,
+            # matching build_energy_input resolution for non-overridden fields.
+            if settings.get(field_name) == raw:
+                absolute = template_program(settings, field_name, raw)
+                if absolute is not None:
+                    value = absolute
+            series = self._gain_cache[key] = expand_schedule(self.model, value, f'{user}/{field_name}')
+        return series
 
     def _resolve_gain_value(self, raw_value, hoy, field_name, zone_name):
         if raw_value is None:
             return 0.0
-        if isinstance(raw_value, str) and raw_value.strip().lower() in ("", "none", "null", "nan"):
-            return 0.0
-        try:
-            return float(raw_value)
-        except Exception:
-            pass
-        try:
-            # Resolve schedule using current hour-of-year so gains follow
-            # hourly daily/weekly schedules instead of a fixed midnight value.
-            return float(self._value_from_schedule(str(raw_value), hoy))
-        except KeyError:
-            raise ValueError(
-                f"Schedule '{raw_value}' for zone '{zone_name}' field '{field_name}' not found in "
-                f"loaded schedule library."
-            )
+        return float(self._gain_series(zone_name, field_name, raw_value)[hoy])
 
     def updateHeatLoad(self, hoy, energyDict: dict = None):
         """
@@ -300,82 +250,21 @@ class EnergyAirflowCoupler(object):
         #     print(z.printHeatLoad())
         zoneDict = {z.userName: z.toDict() for z in network.zones}
         pathDict = {p.userName: p.toDict() for p in network.paths}
-        energyDict = build_energy_input(self.model, self.weather, require_radiation=True)
-        for z in energyDict['zones']:
-            for key in z.params.keys():
-                zone_name = z.params.get('zone_name')
-                zone_id = getattr(z, 'id', None)
-                if zone_name in zoneDict:
-                    zoneDict[zone_name][key] = z.params[key]
-                elif zone_id in zoneDict:
-                    zoneDict[zone_id][key] = z.params[key]
-        energyDict['paths'] = pathDict
-        energyDict['zones'] = zoneDict
-        energyDict['schemaVersion'] = NETWORK_SCHEMA_VERSION
-        energyDict['levels'] = [dict(level) for level in network.levels]
-        return energyDict
+        for z in network.zones:
+            zone = zoneDict[z.userName]
+            space = z.element
+            zone['zone_name'] = str(space.settings.get('zone_name') or space.id)
+            zone['zone_area'] = float(space.area)
+            zone.update({key: space.settings[key] for key in self.ENERGY_INDEX
+                         if space.settings.get(key) is not None})
+        return dict(zones=zoneDict, paths=pathDict, schemaVersion=NETWORK_SCHEMA_VERSION,
+                    levels=[dict(level) for level in network.levels])
 
     @staticmethod
     def _coerce_zone_ref(value):
         if value is None:
             return -1
         return int(round(float(value)))
-
-    @staticmethod
-    def _energy_zone_template_type(zone_dict: dict) -> str:
-        template = str(zone_dict.get("zone_template", "")).strip()
-        if not template:
-            return ""
-        return template.split("_")[-1].upper()
-
-    def _resolve_energy_schedule_ref(self, zone_dict: dict, field_name: str):
-        raw_value = zone_dict.get(field_name)
-        if raw_value is None:
-            return raw_value
-        schedule_lib = getattr(self.model, "schedule", {})
-        active_schedule_names = set(self._sch_daily_map) | set(self._sch_weekly_map)
-        if isinstance(raw_value, str):
-            text = raw_value.strip()
-            if text == "":
-                return text
-            try:
-                return float(text)
-            except Exception:
-                pass
-            if text in active_schedule_names or (not active_schedule_names and text in schedule_lib):
-                return text
-
-        template_type = self._energy_zone_template_type(zone_dict)
-        if template_type:
-            schedule_name = get_schedule_name(self.model, template_type, field_name)
-            if schedule_name in active_schedule_names or (not active_schedule_names and schedule_name in schedule_lib):
-                return schedule_name
-        candidate_pool = active_schedule_names if active_schedule_names else set(schedule_lib.keys())
-        candidates = [
-            name for name in candidate_pool
-            if _schedule_role_from_name(name) == field_name
-        ]
-        for preferred_token in ("weekly", "allday"):
-            for name in sorted(candidates):
-                if preferred_token in name.lower():
-                    return name
-        if candidates:
-            return sorted(candidates)[0]
-        for schedule_map in getattr(self.model, "scheduleByType", {}).values():
-            if not isinstance(schedule_map, dict):
-                continue
-            schedule_name = schedule_map.get(field_name)
-            if schedule_name in active_schedule_names or (not active_schedule_names and schedule_name in schedule_lib):
-                return schedule_name
-        return raw_value
-
-    def _normalize_energy_schedule_fields_in_dict(self, energy_dict: dict = None):
-        if not isinstance(energy_dict, dict):
-            return energy_dict
-        for zone_dict in energy_dict.get("zones", {}).values():
-            for field_name in ("zone_ppsm", "zone_equipment", "zone_lighting"):
-                zone_dict[field_name] = self._resolve_energy_schedule_ref(zone_dict, field_name)
-        return energy_dict
 
     @staticmethod
     def _normalize_energy_cli_arg(arg):
@@ -401,14 +290,16 @@ class EnergyAirflowCoupler(object):
             Energy input structure for `EnergyRunner`.
         """
         if energyDict:
-            self.networkDict = self._normalize_energy_schedule_fields_in_dict(energyDict)
-        energyDict = self.networkDict
+            self.networkDict = energyDict
         overrides = {}
-        for key, zone in energyDict['zones'].items():
+        for key, zone in self.networkDict['zones'].items():
             name = str(zone.get('userName', key))
-            overrides[name] = {field: zone[field] for field in self.ENERGY_INDEX if field in zone}
-            for field in ('zone_ppsm','zone_equipment','zone_lighting'):
-                overrides[name][field] = self._resolve_energy_schedule_ref(zone,field)
+            space = self._spaces_by_id.get(name)
+            settings = space.settings if space is not None else {}
+            # Only values edited away from the model settings act as explicit
+            # zone overrides; untouched fields keep template resolution.
+            overrides[name] = {field: zone[field] for field in self.ENERGY_INDEX
+                               if field in zone and zone[field] != settings.get(field)}
         return build_energy_input(self.model,self.weather,zone_ids=tuple(overrides),zone_overrides=overrides)
 
     def reconstructVentilationInputs(self, energyDict: dict = None):
@@ -426,9 +317,7 @@ class EnergyAirflowCoupler(object):
             `{\"paths\": list[AfnPath], \"zones\": list[AfnZone]}`.
         """
         if energyDict:
-            self.networkDict = self._normalize_energy_schedule_fields_in_dict(energyDict)
-        else:
-            self._normalize_energy_schedule_fields_in_dict(self.networkDict)
+            self.networkDict = energyDict
         energyDict = self.networkDict
         paths = [AfnPath(**pathDict) for pathDict in energyDict['paths'].values()]
         zones = [{key: zoneDict[key] for key in self.AFN_INDEX} for zoneDict in energyDict['zones'].values()]
@@ -932,13 +821,10 @@ class EnergyAirflowCoupler(object):
         return by_name, by_user
 
     def _resolve_zone_series_value(self, zone_dict, hoy, field_name, default=0.0):
-        if not isinstance(zone_dict, dict):
+        if not isinstance(zone_dict, dict) or zone_dict.get(field_name) is None:
             return float(default)
         user = str(zone_dict.get("userName", zone_dict.get("zone_name", "zone")))
-        try:
-            return float(self._resolve_gain_value(zone_dict.get(field_name), hoy, field_name, user))
-        except (ValueError, KeyError, TypeError):
-            return float(default)
+        return float(self._resolve_gain_value(zone_dict.get(field_name), hoy, field_name, user))
 
     def _build_hvac_availability(self, zone_dict, hoys, comfort):
         comfort_signal, occupancy, availability = [], [], []

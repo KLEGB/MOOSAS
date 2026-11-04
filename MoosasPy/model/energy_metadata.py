@@ -37,8 +37,6 @@ def apply_energy_metadata(model, value, *, include_settings: bool = True):
         raise ValueError('Unsupported energy model metadata version')
     model.energy_settings = data.get('energy_settings',{})
     model.schedule = data.get('schedules',model.schedule)
-    from .resources import rebuild_schedule_index
-    rebuild_schedule_index(model)
     for space in list(model.spaceList) + list(model.voidList):
         record = data.get('spaces',{}).get(str(space.id),{})
         space.conditioned = record.get('conditioned',space.conditioned)

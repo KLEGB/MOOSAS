@@ -28,7 +28,7 @@ MoosasPy/
 |   |-- weather/           Weather records, EPW preparation, and sky models
 |   `-- coupling/          Cross-domain workflows
 |-- utils/                 Shared constants, paths, errors, and utilities
-|-- db/                    Templates, schedules, weather, and EnergyPlus data
+|-- db/                    Templates, weather, and EnergyPlus data
 |-- libs/                  Packaged native executables and support files
 `-- __temp__/              Runtime workspace; not included in distributions
 ```
@@ -216,7 +216,7 @@ collections include:
 - `skylightList`: skylight elements.
 - `levelList`: detected building levels.
 - `buildingTemplate`: available thermal-setting templates.
-- `schedule` and `scheduleByType`: loaded schedule definitions.
+- `schedule`: explicitly imported schedule definitions (gbXML, RDF, user-defined).
 
 Use `model.summary()` for a level-by-level element and area summary.
 
@@ -440,8 +440,12 @@ Important energy-setting fields include:
 | `zone_infiltration`, `zone_nightACH` | Infiltration and night ventilation rates. |
 | `zone_template` | Applied template identifier. |
 
-Building templates are stored in `MoosasPy/db/building_template.json`; schedule
-libraries are stored under `MoosasPy/db/schedule/`.
+Building templates are stored under `MoosasPy/db/template/`: `common.json`
+holds the standard metadata, engineering assumptions, and envelope tables,
+and one file per building type (`office.json`, `residential.json`,
+`commercial.json`, `school.json`, `hotel.json`) holds that type's reference
+operation values and dimensionless weekly profiles. Template ids are
+`<envelope>_<standard id>_<operation id>`.
 
 ### Weather Data
 
@@ -510,12 +514,12 @@ print(result.data["total"])
 the requested temporal scale, with an additional zone-scale field when zone
 output is requested.
 
-Other energy options include the building type (`core`), radiation mode, and
-schedule path. `core` accepts `buildingType.RESIDENTIAL`, `OFFICE`, `HOTEL`,
+Other energy options include the building type (`core`) and radiation mode.
+`core` accepts `buildingType.RESIDENTIAL`, `OFFICE`, `HOTEL`,
 `SCHOOL`, or `COMMERCIAL`. Apply the matching climate-zone building template
 to each space before simulation; the non-residential types share the public
-building calculation path and use their templates and schedules for distinct
-occupancy, equipment, and lighting profiles.
+building calculation path and use their template operation profiles for
+distinct occupancy, equipment, and lighting schedules.
 
 Radiation modes are:
 
@@ -769,7 +773,7 @@ unless another tool must exchange one of these files directly.
 The installed package expects the following directories to remain adjacent to
 the Python modules:
 
-- `db/`: building templates, schedules, weather records, material data, the
+- `db/`: building templates, weather records, material data, the
   EnergyPlus 26.1 IDD, and the default IDF template.
 - `libs/radiance/`: one Radiance installation shared by daylight and weather.
 - `libs/contam/`: CONTAM distributions and the simread response template.
