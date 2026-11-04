@@ -21,7 +21,7 @@ def encode_energy_metadata(model):
             elements[str(element.Uid)] = dict(settings=element.settings,
                 explicit_settings=sorted(element.explicit_settings),
                 owners=list(element.space), is_outer=bool(element.isOuter))
-    return json.dumps(dict(schema_version=1,energy_settings=getattr(model,'energy_settings',{}),
+    return json.dumps(dict(schema_version=1,energy_settings=getattr(model,'energy_settings',{}),airflow_settings=getattr(model,'airflow_settings',{}),
         schedules=model.schedule,spaces=spaces,elements=elements),ensure_ascii=False,allow_nan=False,default=_json_value)
 
 
@@ -32,6 +32,7 @@ def apply_energy_metadata(model, value):
     if data.get('schema_version') != 1:
         raise ValueError('Unsupported energy model metadata version')
     model.energy_settings = data.get('energy_settings',{})
+    model.airflow_settings = data.get('airflow_settings',{})
     model.schedule = data.get('schedules',model.schedule)
     from .resources import rebuild_schedule_index
     rebuild_schedule_index(model)

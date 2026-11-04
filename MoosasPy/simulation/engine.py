@@ -83,13 +83,17 @@ class SubprocessEngine:
             launch_command = (application.name,*command[1:])
             launch_options['executable'] = str(application)
         try:
+            if stdin is not None and self._run_process is None:
+                payload=stdin.read()
+                launch_options['input']=payload if isinstance(payload,bytes) else payload.encode('utf-8')
+                stdin=None
             completed = run_process(
                 launch_command,
                 cwd=str(cwd) if cwd is not None else None,
                 stdin=stdin,
                 stdout=stdout if stdout is not None else subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=self._run_process is not None,
                 timeout=timeout_seconds,
                 check=False,
                 **launch_options,
@@ -102,8 +106,8 @@ class SubprocessEngine:
         except OSError as error:
             raise NativeEngineProcessError(command, -1, "", str(error)) from error
 
-        stdout_text = completed.stdout or ""
-        stderr_text = completed.stderr or ""
+        stdout_text=self._decode_output(completed.stdout)
+        stderr_text=self._decode_output(completed.stderr)
         if completed.returncode != 0:
             raise NativeEngineProcessError(command, completed.returncode, stdout_text, stderr_text)
         return NativeExecution(command, completed.returncode, stdout_text, stderr_text)
@@ -111,5 +115,6 @@ class SubprocessEngine:
     @staticmethod
     def _decode_output(output: str | bytes | None) -> str:
         if isinstance(output, bytes):
-            return output.decode(errors="replace")
+            try:return output.decode('utf-8')
+            except UnicodeDecodeError:return output.decode('gb18030',errors='replace')
         return output or ""

@@ -1,6 +1,7 @@
 from ...utils import shapely
 from datetime import datetime
 from ...transform.geometry.geos import Projection
+from ...transform.geometry.planar import planar_surface
 
 
 def _mesh_to_radiance_object(geos, material, object_id):
@@ -27,6 +28,24 @@ def _mesh_to_radiance_object(geos, material, object_id):
         geos = [geos]
     geoStr = []
     for gid,geo in enumerate(geos):
+        # Opaque geometry has already been triangulated on its physical plane.
+        # Re-projecting a tiny valid triangle requires a second, ill-conditioned
+        # basis and can erase it. Preserve its actual three-dimensional vertices.
+        coordinates=shapely.get_coordinates(geo,include_z=True)
+        if geo.geom_type=='Polygon' and len(coordinates)==4 and len(geo.interiors)==0:
+            vertices=coordinates[:-1]
+            import numpy as np
+            area_vector=np.cross(vertices[1]-vertices[0],vertices[2]-vertices[0])
+            if not np.isfinite(vertices).all():
+                raise ValueError(f'Degenerate Radiance triangle for {object_id}')
+            if not np.any(area_vector):
+                # A zero-area triangulation remnant has no optical surface.
+                # Retain every nonzero triangle, including very small ones.
+                continue
+            geoStr.append(f'{material} polygon {object_id}_{gid}_0 0 0 9')
+            geoStr.extend('    '+' '.join(pt.astype(str)) for pt in vertices)
+            geoStr.append('')
+            continue
         try:
             proj = Projection.fromPolygon(geo)
         except IndexError as e:
@@ -35,7 +54,7 @@ def _mesh_to_radiance_object(geos, material, object_id):
             # Project rings separately to retain holes in the input polygon.
             rings = [proj.toUV(ring) for ring in shapely.get_rings(geo)]
             geoUV = shapely.polygons(rings[0], holes=rings[1:] or None)
-            triangles = shapely.constrained_delaunay_triangles(geoUV)
+            triangles = shapely.constrained_delaunay_triangles(planar_surface(geoUV))
             triangles = [proj.toWorld(tri) for tri in shapely.get_parts(triangles)]
             if len(triangles) == 0:
                 continue

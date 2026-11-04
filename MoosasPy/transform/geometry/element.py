@@ -183,10 +183,17 @@ class MoosasGeometry(object):
 
         # force planner by project and reproject
         face = shapely.polygons(face) if not isinstance(face, shapely.Geometry) else face
-        proj = Projection(origin=shapely.get_coordinates(face, include_z=True)[0], unitZ=faceNormal(face))
-        face = proj.toUV(face)
-        face = shapely.force_3d(shapely.force_2d(face), z=0)
-        face = proj.toWorld(face)
+        coordinates=shapely.get_coordinates(face,include_z=True)
+        normal=faceNormal(face)
+        # Keep already planar source doubles exactly. A redundant inverse
+        # transform can turn a shared .8 vertex into .7999999999999998,
+        # destabilizing GEOS unions of otherwise exact tessellations.
+        distance=(coordinates-coordinates[0])@normal.array
+        if np.max(np.abs(distance))>1e-9:
+            proj=Projection(origin=coordinates[0],unitZ=normal)
+            face=proj.toUV(face)
+            face=shapely.force_3d(shapely.force_2d(face),z=0)
+            face=proj.toWorld(face)
 
         face = shapely.get_coordinates(face, include_z=True)
         _coordinates = []
@@ -2279,9 +2286,9 @@ class MoosasEdge:
     'level': The lower elevation of the envelope, which is used to reduce the scope of floor identification
     'toplevel': The upper elevation of the envelope, which is used to reduce the ceiling identification area
     """
-    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', 'internalMass')
+    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', '__ownerId', 'internalMass')
 
-    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None):
+    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None, owner_id=None):
         """
         Initialize a boundary object composed of walls.
         
@@ -2295,6 +2302,7 @@ class MoosasEdge:
         None
         """
         self.wall: list[MoosasWall] = walls
+        self.__ownerId = str(owner_id) if owner_id is not None else None
         self.__botBound = []
         self.__topBound = []
         self.__explicitBoundary = boundary is not None
@@ -2571,6 +2579,14 @@ class MoosasEdge:
                 length = float(np.linalg.norm(vector))
                 if length <= 0:
                     raise GeometryError(wall.face, "degenerate explicit wall")
+                owner_normal = wall.settings.get('geometry_owner_normals', {}).get(
+                    getattr(self, '_MoosasEdge__ownerId', None))
+                if owner_normal is not None:
+                    outward = np.asarray(owner_normal, dtype=float)
+                    if outward.shape != (3,) or not np.isfinite(outward).all() or np.linalg.norm(outward[:2]) <= 0:
+                        raise GeometryError(wall.face, 'invalid explicit owner normal')
+                    factors.append(Vector(outward / np.linalg.norm(outward[:2]) * length))
+                    continue
                 normal = np.array([vector[1], -vector[0]]) / length
                 center = (points[ia] + points[ib]) / 2
                 epsilon = min(.001, length * .001)
@@ -3058,6 +3074,10 @@ class MoosasSpace(object):
         float
             The top-level elevation value, either from `edge.toplevel` (if void) or `ceiling.level`.
         """
+        explicit=getattr(self,'settings',{}).get('geometry_top_elevation_m')
+        if explicit is not None:return float(explicit)
+        if self.space_type=='attic' and self.ceiling:
+            return max(float(np.max(shapely.get_coordinates(f.face,include_z=True)[:,2])) for f in self.ceiling.face)
         if self.is_void():
             return self.edge.toplevel
         else:
@@ -3083,6 +3103,11 @@ class MoosasSpace(object):
             the difference between `toplevel` and `level` of the edge. Otherwise, returns the
             difference between the adjusted ceiling level and the adjusted floor level.
         """
+        volume=getattr(self,'settings',{}).get('geometry_volume_m3')
+        if volume is not None:
+            volume=float(volume)
+            if not np.isfinite(volume) or volume<=0 or self.area<=0:raise ValueError('Invalid explicit physical volume')
+            return volume/self.area
         if self.is_void():
             return self.edge.toplevel - self.edge.level
         else:
@@ -3241,6 +3266,15 @@ class MoosasSpace(object):
         """
         if not self.floor or not self.ceiling:
             return True
+        # Labelled solid shells already carry a validated closed boundary.
+        # A multi-level hall can have floors and ceilings at several levels;
+        # comparing one modal elevation or net opaque ceiling area to the
+        # footprint incorrectly classifies its rooflights as an open void.
+        if getattr(self, 'settings', {}).get('geometry_shell_closed') is True:
+            volume = float(self.settings.get('geometry_volume_m3', 0))
+            if not np.isfinite(volume) or volume <= 0:
+                raise ValueError('Closed shell requires a positive physical volume')
+            return False
         # Inclined roof faces do not cover the footprint in XY projection. An attic
         # is validated by its existing floor, eave walls and roof topology instead.
         if self.space_type == "attic":
@@ -3444,6 +3478,12 @@ class MoosasSpace(object):
         faces = {}
         faces['MoosasFloor']: list[MoosasFace] = [f for f in self.floor.face] if self.floor else []
         faces['MoosasCeiling']: list[MoosasFace] = [f for f in self.ceiling.face] if self.ceiling else []
+        secondary=set(getattr(self,'settings',{}).get('secondary_ceiling_element_ids',[]))
+        if secondary and self.edge and len(self.edge.wall):
+            existing={f.Uid for f in faces['MoosasCeiling']}
+            actual={w.Uid:w for w in self.edge.wall[0].parent.wallList if w.Uid in secondary}
+            if secondary-set(actual):raise ValueError('Secondary ceiling refers to missing physical wall')
+            faces['MoosasCeiling'] += [actual[uid] for uid in sorted(secondary-existing)]
         faces['MoosasWall']: list[MoosasWall] = [w for w in self.edge.wall]
         for void in self.void:
             faces['MoosasWall'] += void.edge.wall

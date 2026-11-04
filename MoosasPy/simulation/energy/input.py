@@ -784,20 +784,30 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                 source_normal,center=element_geometry[geometry_key]
                 normal = source_normal.copy()
                 normal /= np.linalg.norm(normal)
-                if role == 'floor': normal = np.array([0.,0.,-1.])
-                elif role == 'ceiling': normal = np.array([0.,0.,1.])
-                elif np.dot(normal,center-room_center)<0: normal=-normal
+                owner_normal=element.settings.get('geometry_owner_normals',{}).get(str(space.id))
+                if owner_normal is not None:normal=np.asarray(owner_normal,dtype=float)
+                elif role=='floor':
+                    if normal[2]>0:normal=-normal
+                elif role=='ceiling' and abs(normal[2])>1e-8:
+                    if normal[2]<0:normal=-normal
+                else:
+                    region=space.force_2d();direction=normal[:2]
+                    before=region.contains(shapely.Point(center[:2]-direction*.001))
+                    after=region.contains(shapely.Point(center[:2]+direction*.001))
+                    if after and not before:normal=-normal
+                    elif before==after and np.dot(normal,center-room_center)<0:normal=-normal
                 projection = Projection(Vector(center),Vector(normal))
-                uv = [shapely.force_2d(projection.toUV(face)) for face in np.asarray(element.face).flatten()]
+                from ...transform.geometry.planar import planar_surface,polygon_parts
+                uv=[p for face in np.asarray(element.face).flatten() for p in polygon_parts(planar_surface(projection.toUV(face)))]
                 footprint = shapely.union_all([shapely.Polygon(p.exterior) for p in uv])
                 openings = list(element.glazingElement)
                 aperture = {}
                 for opening in openings:
-                    shapes = [shapely.force_2d(projection.toUV(f)) for f in np.asarray(opening.face).flatten()]
-                    aperture[str(opening.Uid)] = shapely.intersection(footprint,shapely.union_all(shapes))
+                    shapes=[planar_surface(projection.toUV(f)) for f in np.asarray(opening.face).flatten()]
+                    aperture[str(opening.Uid)]=shapely.intersection(shapely.normalize(footprint),shapely.normalize(shapely.union_all(shapes)))
                 # Preserve geometric holes even when no separate glazing/air
                 # object has been attached; never manufacture opaque material.
-                opaque = shapely.difference(shapely.union_all(uv),shapely.union_all(list(aperture.values())))
+                opaque=shapely.difference(shapely.normalize(shapely.union_all(uv)),shapely.normalize(shapely.union_all(list(aperture.values()))))
                 host_wwr = float(shapely.union_all(list(aperture.values())).area / footprint.area) if footprint.area else 0.
                 es = {**element.settings, **surface_overrides.get(str(element.Uid),{})}
                 es.update(es.get('side_overrides',{}).get(str(space.id),{}))
@@ -816,6 +826,34 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                         parts.append(('ground',patch,patch_owners))
                     else:
                         parts.extend((bc,p,patch_owners) for bc,p in _ground_parts(patch,projection,ground_level_m))
+                for region in es.get('boundary_regions',[]):
+                    if abs(normal[2])<1-1e-6:raise ValueError('XY boundary regions require horizontal surface')
+                    regional_bc=region['boundary_condition']
+                    if regional_bc not in {'outdoors','ground','adiabatic'}:raise ValueError('Invalid regional boundary')
+                    physical=shapely.force_3d(shapely.from_wkt(region['footprint_wkt']),z=float(center[2]))
+                    local=planar_surface(projection.toUV(physical))
+                    if local.difference(footprint).area>1e-5:raise ValueError('Regional boundary outside physical host')
+                    split=[]
+                    for bc,patch,patch_owners in parts:
+                        inside=shapely.normalize(patch).intersection(shapely.normalize(local))
+                        rest=shapely.normalize(patch).difference(shapely.normalize(local))
+                        if inside.area>1e-10:split.append((regional_bc,inside,patch_owners))
+                        if rest.area>1e-10:split.append((bc,rest,patch_owners))
+                    parts=split
+                for region in es.get('boundary_regions',[]):
+                    if abs(normal[2])<1-1e-6:raise ValueError('XY boundary regions require horizontal surface')
+                    regional_bc=region['boundary_condition']
+                    if regional_bc not in {'outdoors','ground','adiabatic'}:raise ValueError('Invalid regional boundary')
+                    physical=shapely.force_3d(shapely.from_wkt(region['footprint_wkt']),z=float(center[2]))
+                    local=shapely.force_2d(projection.toUV(physical))
+                    if local.difference(footprint).area>1e-5:raise ValueError('Regional boundary outside physical host')
+                    split=[]
+                    for bc,patch,patch_owners in parts:
+                        inside=shapely.normalize(patch).intersection(shapely.normalize(local))
+                        rest=shapely.normalize(patch).difference(shapely.normalize(local))
+                        if inside.area>1e-10:split.append((regional_bc,inside,patch_owners))
+                        if rest.area>1e-10:split.append((bc,rest,patch_owners))
+                    parts=split
                 for index,(bc,patch,patch_owners) in enumerate(parts):
                     suffix = f'/patch{index}' if len(parts)>1 else ''
                     area = float(shapely.area(shapely.intersection(opaque,patch)))
@@ -823,6 +861,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                         resolved_role = 'roof' if role=='ceiling' and bc=='outdoors' else role
                         side_settings = {**es, **surface_overrides.get(f'{space.id}/{element.Uid}/{resolved_role}{suffix}',{})}
                         opaque_boundary = side_settings.get('boundary_condition',bc)
+                        side_settings.update(es.get('boundary_parameters',{}).get(opaque_boundary,{}))
                         side_settings = templated(element,side_settings,resolved_role,opaque_boundary,normal,host_wwr,
                             (side_id,f'{space.id}/{element.Uid}/{resolved_role}{suffix}'))
                         if str(element.Uid) in mass_ids and len(eo)==1:
@@ -878,7 +917,8 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         if start>24 or end>24: raise ValueError(f'{space.id}: work hours outside 0..24')
         occupied = (clock>=start)&(clock<end) if start<end else (clock>=start)|(clock<end)
         ach = np.where(occupied,program('zone_infiltration',defaults.infiltration_ach),program('zone_nightACH',defaults.night_ach))
-        vent = ach*volume + density*program('zone_pfav',defaults.fresh_air_m3_h_person)*area
+        mechanical_ach = program('zone_mechanical_ach',0.)
+        vent = (ach+mechanical_ach)*volume + density*program('zone_pfav',defaults.fresh_air_m3_h_person)*area
         internal = density*people*area+equipment+lighting
         if np.any(internal<0) or np.any(vent<0) or np.any(lighting<0) or np.any(equipment<0):
             raise ValueError(f'{space.id}: negative internal load or ventilation')

@@ -1,5 +1,13 @@
 # Simulation Conventions
 
+Native Space setting `zone_mechanical_ach` is an explicitly assigned outdoor
+makeup-equivalent mechanical ventilation rate in 1/h. The energy adapter adds
+it to occupied/unoccupied infiltration ACH, then adds per-person outdoor air
+from `zone_pfav` (m3/h/person). Its default is zero for existing models. Supply
+or exhaust design capacities must not be assigned as continuous outdoor air
+without recording the operating and makeup-air assumption. This sensible
+energy input does not implement humidity control or an HVAC duct network.
+
 Public simulation APIs follow these rules. When a public API is replaced,
 remove the legacy interface in the same change without a transition period.
 

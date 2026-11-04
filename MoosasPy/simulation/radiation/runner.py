@@ -110,7 +110,7 @@ class RadianceRunner(Runner):
         """Generate inputs, run Radiance, and return parsed daylight metrics."""
         if self.sky is None:
             raise ValueError('PIT requires RadianceSky; annual calls use run_annual(request)')
-        with SimulationWorkspace(parent=self.work_dir, prefix="moosas-radiance-") as workspace:
+        with SimulationWorkspace(parent=self.work_dir, prefix="moosas-radiance-", retain=self.work_dir is not None) as workspace:
             run_dir = workspace.path
             rad_path = run_dir / "model.rad"
             grid_path = run_dir / "grid.input"
@@ -164,6 +164,7 @@ class RadianceRunner(Runner):
         floors = []
         for space in self.model.spaceList:
             for floor in space.getAllFaces(to_dict=True)["MoosasFloor"]:
+                if floor.category==2:continue
                 grid_lines = _write_grid(
                     floor,
                         grid_path=str(grid_path),
@@ -174,7 +175,7 @@ class RadianceRunner(Runner):
         return floors
 
     def _compile_scene(self, rad_path: Path, octree_path: Path, run_dir: Path) -> RadianceCommandResult:
-        command = (str(self._executable("oconv")), str(rad_path))
+        command = (str(self._executable("oconv")), rad_path.name)
         with octree_path.open("wb") as octree_file:
             return self._run_command(command, run_dir, stdout=octree_file)
 
@@ -185,7 +186,7 @@ class RadianceRunner(Runner):
         output_path: Path,
         run_dir: Path,
     ) -> tuple[RadianceCommandResult, tuple[float, ...]]:
-        command = (str(self._executable("rtrace")), *self._RTRACE_ARGUMENTS, str(octree_path))
+        command = (str(self._executable("rtrace")), *self._RTRACE_ARGUMENTS, octree_path.name)
         with grid_path.open("r", encoding="utf-8") as grid_file:
             command_result = self._run_command(command, run_dir, stdin=grid_file)
 

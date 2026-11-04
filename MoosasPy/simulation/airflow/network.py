@@ -773,6 +773,10 @@ class AfnPath(object):
             boundary points lying on the minimum Z-plane.
         """
         if self.pathWidth is None:
+            if isinstance(self.geometry,MoosasSkylight):
+                area=float(self.geometry.area3d())
+                if not np.isfinite(area) or area<=0:raise ValueError('Invalid physical skylight area')
+                self.pathWidth=float(np.sqrt(area));return self.pathWidth
             coordinates = shapely.get_coordinates(self.geometry.face, include_z=True)
             minZ = np.min(coordinates[:, 2])
             sortlist = [[coor[0], coor[1]] for coor in coordinates if
@@ -967,7 +971,7 @@ class AfnNetwork:
 
 
 def applyWindPressure(pathList: list[AfnPath], windVector: Vector, speed: float = None,
-                      airDensity=1.205, alpha=0.22) -> list[AfnPath]:
+                      airDensity=1.205, alpha=0.22, ground_elevation=0.) -> list[AfnPath]:
     """
     Apply wind pressure to a list of AfnPath objects based on wind conditions.
     
@@ -1020,7 +1024,7 @@ def applyWindPressure(pathList: list[AfnPath], windVector: Vector, speed: float 
     Wp = callXgb(xgbInput)
 
     pressure = Wp * airDensity * windVector.length(power=True) * np.power(
-        [path_item.position_z for path_item in geometry_paths], alpha * 2
+        [max(float(path_item.position_z)-float(ground_elevation),0.)/10. for path_item in geometry_paths], alpha * 2
     ) / 2
     for path_item in pathList:
         path_item.pressure = 0.0
@@ -1051,6 +1055,8 @@ def getZoneAndPath(model, calculate_heat=True):
     pathList: list[AfnPath] = []
     zoneList: list[AfnZone] = []
     seen_paths = set()
+    adapter_settings=getattr(model,'airflow_settings',{})
+    suppressed=set(adapter_settings.get('suppressed_native_path_ids',[]))
     spaces = sorted(
         list(model.spaceList),
         key=lambda s: (
@@ -1065,8 +1071,12 @@ def getZoneAndPath(model, calculate_heat=True):
         zone_paths: list[AfnPath] = []
         for gls in s.getAllFaces(to_dict=False):
             if isinstance(gls, MoosasGlazing) or isinstance(gls, MoosasSkylight):
-                zone_paths.append(AfnPath.fromElement(gls))
-        leak_path = _build_leakage_path_from_space(s, zoneList[-1])
+                if str(gls.Uid) in suppressed:continue
+                opening=AfnPath.fromElement(gls)
+                if gls.category==1 and adapter_settings.get('native_opening_operable') is not None:
+                    opening.element['operable']=_coerce_operable(adapter_settings['native_opening_operable'])
+                zone_paths.append(opening)
+        leak_path=_build_leakage_path_from_space(s,zoneList[-1]) if adapter_settings.get('include_leakage',True) else None
         if leak_path is not None:
             zone_paths.append(leak_path)
         zone_paths.sort(
@@ -1082,6 +1092,19 @@ def getZoneAndPath(model, calculate_heat=True):
             seen_paths.add(p.userName)
             pathList.append(p)
             pathList[-1].prjIndex = len(pathList)
+    indices={str(z.element.id):z.prjIndex for z in zoneList}
+    by_id={str(s.id):s for s in spaces}
+    for record in adapter_settings.get('adapter_openings',[]):
+        users=record['space_ids']
+        if not 1<=len(users)<=2 or any(s not in indices for s in users):raise ValueError('Missing/ambiguous adapter airflow zone')
+        position=record['position'];level=min(float(by_id[s].level) for s in users)
+        pathList.append(AfnPath(Uid=record['uid'],userName=record['uid'],prjIndex=len(pathList)+1,
+            fromZone=-1 if len(users)==1 else indices[users[0]],toZone=indices[users[-1]],pressure=0.,geometry=None,
+            position_x=position[0],position_y=position[1],position_z=position[2],orientation=Vector(record['normal']),
+            winType=0 if record['kind']=='paired_horizontal' else 1,pathType=record['kind'],
+            pathWidth=record['width_m'],pathHeight=record['height_m'],level=level,
+            levelIndex=model.levelList.index(level)+1 if level in model.levelList else 1,
+            relHt=float(position[2])-level,operable=record.get('operable',1.)))
     pathList = pathTopology(pathList, zoneList)
     return zoneList, pathList
 

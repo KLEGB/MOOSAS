@@ -24,12 +24,17 @@ class WeatherData:
     wind_speed: np.ndarray
     wind_direction: np.ndarray
     pressure: np.ndarray
+    epw_file: str | None = None
 
     HOURS_PER_YEAR = 8760
 
     def __post_init__(self):
         object.__setattr__(self, "weather_file", str(self.weather_file))
-        for field in fields(self)[2:]:
+        if self.epw_file is not None:
+            object.__setattr__(self, "epw_file", str(self.epw_file))
+        for field in fields(self):
+            if field.name in {'location', 'weather_file', 'epw_file'}:
+                continue
             values = np.array(getattr(self, field.name), dtype=float, copy=True)
             if values.shape != (self.HOURS_PER_YEAR,):
                 raise ValueError(

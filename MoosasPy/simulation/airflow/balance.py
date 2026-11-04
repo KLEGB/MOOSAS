@@ -332,6 +332,7 @@ class BalanceModel:
             raise ValueError('hoy must be an integer in [0, 8759]')
         neighbor = np.asarray(state.ta_c, dtype=float)
         for iteration in range(1, p.coupling_max_iterations + 1):
+            hvac_w = np.zeros(len(self.zone_ids))
             source = (ventilation.source_w(outdoor_temperature_c, neighbor)
                       if isinstance(ventilation, AirflowThermalBoundary) else ventilation.source_w)
             tm, ta, ts = (np.empty(len(self.zone_ids)) for _ in range(3))
@@ -359,10 +360,12 @@ class BalanceModel:
                         if abs(probe[1] - ta[i]) < 1e-12:
                             raise ValueError(f'Degenerate ideal HVAC response in zone {z}')
                         required = 10.0 * self.area[i] * (setpoint - ta[i]) / (probe[1] - ta[i])
+                        hvac_w[i] = required
                         tm[i], ta[i], ts[i] = self._zone(*args, required)
             if not np.isfinite([tm, ta, ts]).all():
                 raise ValueError('5R1C produced non-finite temperatures')
             if np.max(np.abs(ta - neighbor)) <= p.coupling_tolerance_c:
+                self.last_hvac_w = hvac_w.copy()
                 return BalanceState(self.zone_ids, tuple(ta), tuple(ts), tuple(tm)), iteration
             neighbor = 0.5 * neighbor + 0.5 * ta
         raise RuntimeError('5R1C inter-zone iteration did not converge')
