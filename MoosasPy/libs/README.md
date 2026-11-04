@@ -18,7 +18,3 @@ Go sources and build scripts live alongside the corresponding `moosas_rad`
 and `moosas_afn` runtimes and ship with the package. Solar directions and the airflow
 pressure model are in [`db`](../db). Tests and fixtures live under repository
 `test`; simulation inputs and outputs belong to `SimulationWorkspace`.
-
-The former `rad`, `vent`, `weather`, `energy` and nested `annual` paths are
-removed, not searched as alternatives. Direct external path consumers must
-update; public Python simulation entry points remain unchanged.
