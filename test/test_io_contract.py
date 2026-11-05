@@ -226,11 +226,14 @@ def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
     model = _single_room_model(tmp_path)
     space = model.spaceList[0]
     window = model.glazingList[0]
-    model.energy_settings = {'validation': {'enabled': True, 'hours': 24}}
-    model.schedule = {'probe_daily': {'type': 'Daily', 'value': [1.] * 24}}
+    model.energy_settings = {'validation': {'enabled': True, 'hours': 24}, 'latent': {'enabled': True}}
+    model.schedule = {'probe_daily': {'type': 'Daily', 'value': [1.] * 24},
+                      'person_moisture': {'type': 'Daily', 'value': [.04] * 12 + [.08] * 12, 'value_mode': 'absolute'}}
     space.conditioned = False
     space.settings['daylight_occupied_mask'] = [True] * 8760
-    space.explicit_settings = ['daylight_occupied_mask']
+    space.settings['zone_popmoisture'] = 'person_moisture'
+    space.settings['zone_c_hum'] = .55
+    space.explicit_settings = ['daylight_occupied_mask', 'zone_popmoisture', 'zone_c_hum']
     window.settings.update(visible_transmittance=.61, operable=.37, shgc=.42,
                            numeric_string='001', flags=np.array([True, False]))
     window.explicit_settings = {'visible_transmittance'}
@@ -245,7 +248,9 @@ def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
     assert restored.schedule == model.schedule
     assert restored_space.conditioned is False
     assert restored_space.settings['daylight_occupied_mask'] == [True] * 8760
-    assert restored_space.explicit_settings == space.explicit_settings
+    assert restored_space.settings['zone_popmoisture'] == 'person_moisture'
+    assert restored_space.settings['zone_c_hum'] == .55
+    assert sorted(restored_space.explicit_settings) == sorted(space.explicit_settings)
     assert result.settings['numeric_string'] == '001'
     assert result.settings['flags'] == [True, False]
     assert result.SHGC == .42 and result.operable == .37

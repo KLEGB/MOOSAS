@@ -8,7 +8,7 @@ import unittest
 
 import pytest
 
-from MoosasPy.simulation.energy.runner import EnergyRunner
+from MoosasPy.simulation.energy.runner import EnergyRunner, build_energy_input
 from MoosasPy.simulation.weather import Location
 from MoosasPy.simulation.weather.epw import read_weather_csv
 from MoosasPy.transform import transform
@@ -160,6 +160,75 @@ class ExampleIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(float(total["lighting"]), 7.30, places=2)
         self.assertAlmostEqual(float(total["equipment"]), 19.42, places=2)
         self.assertAlmostEqual(float(total["total"]), component_total, places=6)
+
+    @unittest.skipUnless(BEIJING_WEATHER.is_file(), "requires Beijing 545110 weather data")
+    @pytest.mark.slow
+    def test_latent_switch_preserves_sensible_results_and_adds_moisture(self):
+        weather = read_weather_csv(
+            BEIJING_WEATHER,
+            Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),
+        )
+        template_id = "CN/GB55015-2021/residential_hot_summer_cold_winter_A/RESIDENTIAL"
+        space = self.model.spaceList[0]
+        original_settings = dict(space.settings)
+        original_explicit = list(space.explicit_settings)
+        space.settings["zone_c_hum"] = 0.55
+        space.explicit_settings = list(set(original_explicit) | {"zone_c_hum"})
+        try:
+            for start_hour in (744, 194 * 24):
+                with self.subTest(start_hour=start_hour):
+                    off = build_energy_input(self.model, weather, start_hour=start_hour,
+                                             hours=24, template_id=template_id)
+                    on = build_energy_input(self.model, weather, start_hour=start_hour,
+                                            hours=24, template_id=template_id,
+                                            latent={"enabled": True})
+                    self.assertFalse(off.latent_enabled)
+                    self.assertTrue(on.latent_enabled)
+                    # Moisture is not thermal checkpoint state.
+                    self.assertEqual(off.signature, on.signature)
+                    self.assertEqual(off.hour(0), on.hour(0))
+
+                    zone = next(z for z in on.zones if z.zone_id == str(space.id))
+                    self.assertTrue(np.all(zone.cool_rh_fraction == 0.55))
+                    np.testing.assert_allclose(
+                        zone.fresh_air_m3_h + zone.infiltration_m3_h, zone.ventilation_m3_h
+                    )
+                    self.assertTrue(np.all(zone.people_moisture_kg_s >= 0))
+
+                    sensible_rows, latent_rows = [], []
+                    sensible = EnergyRunner(
+                        energy_input=off, on_hour=lambda h, rows: sensible_rows.append(rows)
+                    ).run()
+                    latent = EnergyRunner(
+                        energy_input=on, on_hour=lambda h, rows: latent_rows.append(rows)
+                    ).run()
+
+                    np.testing.assert_array_equal(
+                        sensible.zone_temperature_c, latent.zone_temperature_c
+                    )
+                    np.testing.assert_array_equal(
+                        sensible.zone_hourly_energy_kwh, latent.zone_hourly_energy_kwh
+                    )
+                    self.assertEqual(sensible.final_state, latent.final_state)
+                    self.assertEqual(sensible.latent_load, {"enabled": False})
+                    self.assertLess(latent.max_moisture_residual_kg_s, 1e-12)
+                    self.assertFalse(latent.latent_load["equipment_model"])
+                    self.assertFalse(latent.zone_latent_cooling_w.flags.writeable)
+                    for hour, (before, after) in enumerate(zip(sensible_rows, latent_rows)):
+                        for index, (old_row, new_row) in enumerate(zip(before, after)):
+                            self.assertTrue(all(new_row[key] == value for key, value in old_row.items()))
+                            self.assertAlmostEqual(
+                                new_row["total_cooling_w"],
+                                new_row["sensible_cooling_w"] + new_row["latent_cooling_w"],
+                            )
+                            np.testing.assert_allclose(
+                                latent.zone_latent_cooling_w[index, hour],
+                                new_row["latent_cooling_w"],
+                            )
+        finally:
+            space.settings.clear()
+            space.settings.update(original_settings)
+            space.explicit_settings = original_explicit
 
 
 if __name__ == "__main__":

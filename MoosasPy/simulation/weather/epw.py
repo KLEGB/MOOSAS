@@ -58,7 +58,7 @@ def read_weather_csv(
         epw_file=epw_file,
         hour_of_year=values[:, 2],
         temperature=values[:, 3],
-        humidity_ratio=values[:, 4],
+        humidity_ratio=values[:, 4] / 1000.,  # DeST CSV g/kg -> WeatherData SI kg/kg
         global_radiation=values[:, 5],
         diffuse_radiation=values[:, 6],
         ground_temperature=values[:, 7],
@@ -121,14 +121,15 @@ def _convert_epw_columns(epw_file: str):
         raise ValueError(f"EPW must contain 8760 complete hourly rows, got {climate.shape}")
 
     dew_point = climate[:, 7].astype(float)
-    humidity_ratio = (
-        3.703
-        + 0.286 * dew_point
-        + 9.164e-3 * dew_point ** 2
-        + 1.446e-4 * dew_point ** 3
-        + 1.741e-6 * dew_point ** 4
-        + 5.195e-8 * dew_point ** 5
-    )
+    # Preserve the legacy CSV's g/kg unit, but derive water content from the
+    # EPW dew point AND actual atmospheric pressure. The old polynomial could
+    # produce negative moisture in cold weather.
+    pressure_pa = climate[:, 9].astype(float)
+    vapor_pressure = 610.94 * np.exp(17.625 * dew_point / (dew_point + 243.04))
+    if (not np.isfinite(vapor_pressure).all() or np.any(pressure_pa <= vapor_pressure)
+            or np.any(pressure_pa <= 0) or np.any(dew_point >= 99)):
+        raise ValueError('EPW dew point/pressure is missing or invalid for humidity')
+    humidity_ratio = 1000 * .622 * vapor_pressure / (pressure_pa - vapor_pressure)
     horizontal_infrared = climate[:, 12].astype(float)
     sky_temperature = np.power(horizontal_infrared / 5.67e-8, 0.25)
     wind_speed = climate[:, 21].astype(float)

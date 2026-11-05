@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import MoosasPy
 from MoosasPy.simulation import CommandResult, SimulationResult, WorkspaceReport
-from MoosasPy.simulation.energy.runner import EnergyResult
+from MoosasPy.simulation.energy.runner import EnergyResult, build_energy_input, solve_latent_load
 from MoosasPy.simulation.coupling import (
     EnergyAirflowCoupler,
     PVResult,
@@ -141,6 +141,44 @@ class SimulationContractTests(unittest.TestCase):
 
         self.assertIsInstance(result, SimulationResult)
         self.assertEqual(result.commands, ())
+
+    def test_latent_balance_controls_drying_credit_and_control_switch(self):
+        arguments = dict(zone_c=26, outdoor_c=30, pressure_pa=101325, outdoor_humidity_ratio=0.018,
+                         people_moisture_kg_s=0.001, fresh_air_m3_s=0.5, infiltration_m3_s=0.1, rh_max=0.6)
+
+        controlled = solve_latent_load(**arguments)
+        expected_removal = 0.001 + (
+            controlled["fresh_dry_air_kg_s"] + controlled["infiltration_dry_air_kg_s"]
+        ) * (0.018 - controlled["target_humidity_ratio_kg_kg"])
+        self.assertAlmostEqual(controlled["dehumidification_kg_s"], expected_removal)
+        self.assertLess(abs(controlled["moisture_balance_residual_kg_s"]), 1e-14)
+        self.assertAlmostEqual(controlled["zone_rh_fraction"], 0.6)
+
+        dry_outdoor = solve_latent_load(**dict(arguments, outdoor_humidity_ratio=0.002))
+        self.assertEqual(dry_outdoor["latent_cooling_w"], 0)
+        self.assertLess(dry_outdoor["zone_rh_fraction"], 0.6)
+
+        uncontrolled = solve_latent_load(**dict(arguments, control_enabled=False))
+        self.assertEqual(uncontrolled["latent_cooling_w"], 0)
+        self.assertLess(abs(uncontrolled["moisture_balance_residual_kg_s"]), 1e-14)
+
+    def test_latent_uncontrolled_sealed_zone_has_no_steady_solution(self):
+        result = solve_latent_load(zone_c=26, outdoor_c=30, pressure_pa=101325, outdoor_humidity_ratio=0.018,
+                                   people_moisture_kg_s=0.001, fresh_air_m3_s=0, infiltration_m3_s=0,
+                                   rh_max=0.6, control_enabled=False)
+
+        self.assertEqual(result["status"], "no_steady_state")
+        self.assertIsNone(result["zone_humidity_ratio_kg_kg"])
+        self.assertEqual(result["dehumidification_kg_s"], 0)
+        self.assertEqual(result["moisture_balance_residual_kg_s"], 0.001)
+
+    def test_latent_switch_accepts_only_boolean(self):
+        model = SimpleNamespace(spaceList=[])
+        weather = SimpleNamespace()
+
+        for flag in (1, "true", None):
+            with self.assertRaisesRegex(ValueError, "latent"):
+                build_energy_input(model, weather, hours=24, latent={"enabled": flag})
 
     def test_pv_result_implements_shared_contract(self):
         result = PVResult(data={"total": 10.0})

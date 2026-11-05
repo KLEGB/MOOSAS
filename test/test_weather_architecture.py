@@ -13,6 +13,7 @@ from MoosasPy.simulation.weather import (
     build_cumulative_skies,
     generate_cumulative_sky,
     load_epw,
+    write_epw_csv,
 )
 from MoosasPy.utils.date import DateTime
 
@@ -33,6 +34,34 @@ class WeatherArchitectureTests(unittest.TestCase):
         self.assertFalse(weather.temperature.flags.writeable)
         with self.assertRaises(ValueError):
             weather.temperature[0] = 0
+
+    def test_weather_humidity_ratio_is_si_from_csv_g_per_kg(self):
+        with TemporaryDirectory() as temporary_dir:
+            epw_path = Path(temporary_dir) / "weather.epw"
+            self._write_epw_fixture(epw_path)
+            weather = load_epw(epw_path, Path(temporary_dir) / "prepared")
+            raw = np.loadtxt(weather.weather_file, delimiter=",")
+
+        np.testing.assert_allclose(weather.humidity_ratio, raw[:, 4] / 1000, rtol=0, atol=0)
+        self.assertTrue(0 < weather.humidity_ratio.max() < 0.05)
+
+    def test_epw_cold_humidity_is_positive_and_pressure_dependent(self):
+        with TemporaryDirectory() as temporary_dir:
+            epw_path = Path(temporary_dir) / "cold.epw"
+            self._write_epw_fixture(epw_path)
+            lines = epw_path.read_text(encoding="utf-8").splitlines()
+            for index in range(8, len(lines)):
+                record = lines[index].split(",")
+                record[7] = "-40"
+                record[9] = "80000"
+                lines[index] = ",".join(record)
+            epw_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            csv_path = Path(temporary_dir) / "cold.csv"
+            write_epw_csv(epw_path, csv_path)
+            values = np.loadtxt(csv_path, delimiter=",")
+
+        # g/kg at -40 C dew point and 80 kPa; the legacy polynomial went negative.
+        self.assertTrue(np.all(values[:, 4] == 0.15))
 
     def test_cumulative_sky_builds_annual_and_seasonal_views(self):
         matrix = np.ones((145, CumulativeSky.HOURS_PER_YEAR))

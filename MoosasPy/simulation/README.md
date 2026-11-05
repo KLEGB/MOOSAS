@@ -38,6 +38,15 @@ point and the converter's native-process timeout argument are removed.
 Cumulative sky matrices exclude gendaymtx's ground row and retain all 145 sky
 patches. This correction can change radiation and downstream energy results.
 
-The scoped energyv135 integration does not enable mechanical ACH, adapter
-wind paths, regional thermal boundary overrides, or thermal surface aggregation.
+Native Space setting `zone_mechanical_ach` is an explicitly assigned outdoor
+makeup-equivalent mechanical ventilation rate in 1/h. The energy adapter adds
+it to occupied/unoccupied infiltration ACH, then adds per-person outdoor air
+from `zone_pfav` (m3/h/person). Its default is zero for existing models. Supply
+or exhaust design capacities must not be assigned as continuous outdoor air
+without recording the operating and makeup-air assumption. The optional energy
+latent-load diagnostic uses these same outdoor airflows and the existing
+`hvac_enabled` schedule; it does not model an HVAC duct network.
+
+The scoped energyv135 integration does not enable adapter wind paths, regional
+thermal boundary overrides, or thermal surface aggregation.
 Building parameter templates remain unchanged.
