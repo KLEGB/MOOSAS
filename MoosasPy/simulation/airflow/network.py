@@ -772,6 +772,10 @@ class AfnPath(object):
             boundary points lying on the minimum Z-plane.
         """
         if self.pathWidth is None:
+            if isinstance(self.geometry,MoosasSkylight):
+                area=float(self.geometry.area3d())
+                if not np.isfinite(area) or area<=0:raise ValueError('Invalid physical skylight area')
+                self.pathWidth=float(np.sqrt(area));return self.pathWidth
             coordinates = shapely.get_coordinates(self.geometry.face, include_z=True)
             minZ = np.min(coordinates[:, 2])
             sortlist = [[coor[0], coor[1]] for coor in coordinates if

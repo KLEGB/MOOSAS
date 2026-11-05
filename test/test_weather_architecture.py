@@ -27,6 +27,7 @@ class WeatherArchitectureTests(unittest.TestCase):
         self.assertIsInstance(weather, WeatherData)
         self.assertEqual(weather.location.station_id, "12345")
         self.assertEqual(Path(weather.weather_file).name, "weather.csv")
+        self.assertEqual(Path(weather.epw_file).name, "weather.epw")
         self.assertEqual(weather.temperature.shape, (8760,))
         self.assertTrue(np.issubdtype(weather.temperature.dtype, np.floating))
         self.assertFalse(weather.temperature.flags.writeable)
@@ -52,7 +53,8 @@ class WeatherArchitectureTests(unittest.TestCase):
             wea_path = Path(temporary_dir) / "weather.wea"
             wea_path.write_text("weather", encoding="utf-8")
             run_command.side_effect = lambda command, stdout: stdout.write(
-                "1 1 1\n" * (146 * WeatherData.HOURS_PER_YEAR)
+                "".join(f"{value} {value} {value}\n" * WeatherData.HOURS_PER_YEAR
+                        for value in range(146))
             )
 
             matrix = generate_cumulative_sky(wea_path)
@@ -61,6 +63,10 @@ class WeatherArchitectureTests(unittest.TestCase):
         self.assertEqual(command[1:-1], ["-m", "1", "-O1"])
         self.assertEqual(command[-1], str(wea_path.resolve()))
         self.assertEqual(matrix.shape, (145, 2))
+        from MoosasPy.simulation.weather.epw import TREGENZA_COEFFICIENTS, TREGENZA_PATCHES_PER_ROW
+        coefficients = np.repeat(TREGENZA_COEFFICIENTS, TREGENZA_PATCHES_PER_ROW)
+        np.testing.assert_allclose(matrix[:, 0], np.arange(1, 146) * coefficients * 8760 / 1000)
+        np.testing.assert_array_equal(matrix[:, 0], matrix[:, 1])
 
     def test_direct_sky_uses_degree_based_location_coordinates(self):
         sun = DirectSky(0, 0, time_zone=0).sun_at_datetime(DateTime(3, 20, 12))

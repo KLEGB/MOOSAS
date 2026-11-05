@@ -56,6 +56,52 @@ def test_geo_import_preserves_millimetre_details(tmp_path):
     assert coordinates.max(axis=0) == pytest.approx([1.003, 1.007, 3.123])
 
 
+def test_projection_round_trip_preserves_polygon_holes():
+    polygon = shapely.Polygon(
+        [(0, 0, 3), (4, 0, 3), (4, 4, 3), (0, 4, 3)],
+        holes=[[(1, 1, 3), (2, 1, 3), (2, 2, 3), (1, 2, 3)]],
+    )
+    projection = Projection([.8, .8, 3], [0, 0, 1])
+    restored = projection.toWorld(projection.toUV(polygon))
+    assert len(restored.interiors) == 1
+    assert restored.area == pytest.approx(15)
+    np.testing.assert_allclose(
+        shapely.get_coordinates(restored, include_z=True),
+        shapely.get_coordinates(polygon, include_z=True), atol=1e-14,
+    )
+
+
+@pytest.mark.parametrize('explicit_holes', [False, True])
+def test_triangulation_keeps_intrinsic_holes_without_duplicate_rings(explicit_holes):
+    from MoosasPy.transform.geometry.triangulation import triangulate2dFace
+    polygon = shapely.Polygon(
+        [(0, 0), (4, 0), (4, 4), (0, 4)],
+        holes=[[(1, 1), (2, 1), (2, 2), (1, 2)]],
+    )
+    parts, _ = triangulate2dFace(polygon, [polygon.interiors[0]] if explicit_holes else None)
+    union = shapely.union_all(parts)
+    assert union.symmetric_difference(polygon).area < 1e-8
+    assert sum(part.area for part in parts) == pytest.approx(15)
+    assert all(not part.interiors for part in parts)
+
+
+def test_planar_repair_rejects_changed_area():
+    from MoosasPy.transform.geometry.polygon import planar_surface
+    bowtie = shapely.Polygon([(0, 0), (2, 2), (0, 2), (2, 0)])
+    with pytest.raises(ValueError, match='changes area'):
+        planar_surface(bowtie)
+    narrow = shapely.Polygon([(0, 0), (1, 0), (1, 1e-10)])
+    assert planar_surface(narrow).area == narrow.area
+
+
+def test_radiance_keeps_tiny_physical_triangles():
+    from MoosasPy.simulation.radiation.radiance import _mesh_to_radiance_object
+    triangle = shapely.Polygon([(0, 0, 3), (1e-8, 0, 3), (0, 1e-8, 3)])
+    text = _mesh_to_radiance_object([triangle], 'material', 'tiny')
+    assert text.count(' polygon ') == 1
+    assert '0 0 9' in text
+
+
 def test_merged_duplicate_wall_area_counts_geometry_once():
     model = MoosasModel()
     model.levelList = [0.0, 3.0]

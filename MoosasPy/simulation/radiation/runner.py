@@ -10,6 +10,7 @@ import shutil
 import csv
 import json
 import hashlib
+import shlex
 import numpy as np
 from typing import TYPE_CHECKING, TextIO
 
@@ -19,7 +20,7 @@ from ..contracts import Location, SimulationResult
 from ..engine import NativeEngine, SubprocessEngine
 from ..runner import CommandError, CommandResult, CommandTimeoutError, Runner
 from ..workspace import SimulationWorkspace
-from .scene import _model_to_radiance, _write_grid, _daylight_scene
+from .scene import _write_grid, _daylight_scene
 
 if TYPE_CHECKING:
     from ...model import MoosasModel
@@ -109,7 +110,7 @@ class RadianceRunner(Runner):
         """Generate inputs, run Radiance, and return parsed daylight metrics."""
         if self.sky is None:
             raise ValueError('PIT requires RadianceSky; annual calls use run_annual(request)')
-        with SimulationWorkspace(parent=self.work_dir, prefix="moosas-radiance-") as workspace:
+        with SimulationWorkspace(parent=self.work_dir, prefix="moosas-radiance-", retain=self.work_dir is not None) as workspace:
             run_dir = workspace.path
             rad_path = run_dir / "model.rad"
             grid_path = run_dir / "grid.input"
@@ -130,13 +131,13 @@ class RadianceRunner(Runner):
             )
 
     def _write_inputs(self, rad_path: Path, grid_path: Path) -> list[tuple[MoosasElement, int]]:
+        from .radiance import _get_sky
         self._input_commands = ()
         dni = self.sky.direct_normal_irradiance_w_m2
         dhi = self.sky.diffuse_horizontal_irradiance_w_m2
         if dni is not None or dhi is not None:
             if dni is None or dhi is None or not np.isfinite([dni, dhi]).all() or min(dni, dhi) < 0:
                 raise ValueError('Weather PIT requires finite nonnegative DNI and DHI together')
-            from .radiance import _get_sky
             date = self.sky.date
             offset = self.sky.utc_offset_hours if date.utcoffset() is None else date.utcoffset().total_seconds() / 3600
             hour = date.hour + date.minute / 60 + date.second / 3600
@@ -148,21 +149,23 @@ class RadianceRunner(Runner):
             hemisphere = _get_sky(date, '-c', 0, 0).split('\n', 1)[1]
             # Ground must be neutral to match gendaymtx's default ground color.
             hemisphere = hemisphere.replace('1 .8 .5 0', '1 1 1 0')
-            rad_path.write_text(result.stdout + '\n' + hemisphere + '\n' + _daylight_scene(self.model)[0], encoding='utf-8')
         else:
-            _model_to_radiance(
-                self.model,
-                self.sky.date,
-                self.sky.sky_type,
-                self.sky.location.latitude,
-                self.sky.location.longitude,
-                self.sky.diffuse_illuminance,
-                rad_path=str(rad_path),
-                utc_offset_hours=self.sky.utc_offset_hours,
-            )
+            command_text, hemisphere = _get_sky(
+                self.sky.date, self.sky.sky_type,
+                self.sky.location.latitude, self.sky.location.longitude,
+                self.sky.diffuse_illuminance, self.sky.utc_offset_hours,
+            ).split('\n', 1)
+            arguments = shlex.split(command_text[1:])
+            command = (str(self._executable(arguments[0])), *arguments[1:])
+            result = self._run_command(command, rad_path.parent)
+            self._input_commands = (result,)
+        if not result.stdout.strip():
+            raise ValueError('Radiance sky generator returned empty output')
+        rad_path.write_text(result.stdout + '\n' + hemisphere + '\n' + _daylight_scene(self.model)[0], encoding='utf-8')
         floors = []
         for space in self.model.spaceList:
             for floor in space.getAllFaces(to_dict=True)["MoosasFloor"]:
+                if floor.category==2:continue
                 grid_lines = _write_grid(
                     floor,
                         grid_path=str(grid_path),
@@ -173,9 +176,7 @@ class RadianceRunner(Runner):
         return floors
 
     def _compile_scene(self, rad_path: Path, octree_path: Path, run_dir: Path) -> RadianceCommandResult:
-        if self.sky is not None and self.sky.direct_normal_irradiance_w_m2 is None:
-            self._executable('gensky')
-        command = (str(self._executable("oconv")), str(rad_path))
+        command = (str(self._executable("oconv")), rad_path.name)
         with octree_path.open("wb") as octree_file:
             return self._run_command(command, run_dir, stdout=octree_file)
 
@@ -186,7 +187,7 @@ class RadianceRunner(Runner):
         output_path: Path,
         run_dir: Path,
     ) -> tuple[RadianceCommandResult, tuple[float, ...]]:
-        command = (str(self._executable("rtrace")), *self._RTRACE_ARGUMENTS, str(octree_path))
+        command = (str(self._executable("rtrace")), *self._RTRACE_ARGUMENTS, octree_path.name)
         with grid_path.open("r", encoding="utf-8") as grid_file:
             command_result = self._run_command(command, run_dir, stdin=grid_file)
 

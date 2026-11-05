@@ -14,7 +14,7 @@ import numpy as np
 from MoosasPy.model import MoosasModel
 from MoosasPy.simulation.airflow.network import getZoneAndPath
 from MoosasPy.simulation.energy.input import build_energy_input
-from MoosasPy.simulation.weather import prepare_daylight_weather, load_epw
+from MoosasPy.simulation.weather import convert_epw_to_wea, load_epw
 from MoosasPy.simulation.radiation import RadianceRunner, AnnualDaylightRequest
 
 
@@ -68,7 +68,7 @@ def main():
     matched_walls = [surface for zone in energy.zones for surface in zone.surfaces if surface.source_element_id == str(wall.Uid)]
     assert matched_walls and all(surface.reflectance == .31 for surface in matched_walls)
     prepared = time.monotonic()
-    wea = prepare_daylight_weather(str(epw), str(output / 'weather.wea'))
+    wea = convert_epw_to_wea(str(epw), str(output / 'weather.wea'))
     result = RadianceRunner(restored, timeout_seconds=3600).run_annual(AnnualDaylightRequest(
         wea, output_dir=str(output), grid_spacing_m=args.grid_spacing,
         ambient_divisions=args.divisions, processes=args.processes))

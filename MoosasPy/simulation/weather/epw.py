@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
 import os
 import tempfile
+import shutil
 
 import numpy as np
 
@@ -38,8 +41,10 @@ class PreparedWeather:
     wea_file: str
 
 
-def read_weather_csv(weather_file: str, location: Location) -> WeatherData:
-    """Read the internal 8760-row MOOSAS/DeST weather CSV format."""
+def read_weather_csv(
+    weather_file: str, location: Location, *, epw_file: str | None = None,
+) -> WeatherData:
+    """Read MOOSAS/DeST hourly CSV, optionally attaching its retained source EPW."""
     weather_file = os.path.abspath(weather_file)
     values = np.loadtxt(weather_file, delimiter=",", dtype=float)
     if values.shape != (WeatherData.HOURS_PER_YEAR, 13):
@@ -50,6 +55,7 @@ def read_weather_csv(weather_file: str, location: Location) -> WeatherData:
     return WeatherData(
         location=location,
         weather_file=weather_file,
+        epw_file=epw_file,
         hour_of_year=values[:, 2],
         temperature=values[:, 3],
         humidity_ratio=values[:, 4],
@@ -178,26 +184,50 @@ def load_epw(epw_file: str, output_dir: str) -> WeatherData:
         raise ValueError(f"Expected an EPW file: {epw_file}")
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
-    location = read_epw_location(epw_file)
-    weather_csv = write_epw_csv(epw_file, os.path.join(output_dir, "weather.csv"))
-    return read_weather_csv(weather_csv, location)
+    retained_epw = os.path.join(output_dir, 'weather.epw')
+    if os.path.normcase(os.path.realpath(epw_file)) != os.path.normcase(os.path.realpath(retained_epw)):
+        shutil.copyfile(epw_file, retained_epw)
+    location = read_epw_location(retained_epw)
+    weather_csv = write_epw_csv(retained_epw, os.path.join(output_dir, "weather.csv"))
+    return read_weather_csv(weather_csv, location, epw_file=retained_epw)
 
 
 def convert_epw_to_wea(
-    epw_file: str,
-    output_path: str,
-    *,
-    timeout_seconds: float = 300.0,
+    epw_file: str | Path,
+    output_path: str | Path,
 ) -> str:
-    """Run the packaged epw2wea executable with an explicit output path."""
-    output_path = os.path.abspath(output_path)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    platform_dir, suffix = native_platform()
-    executable = os.path.join(path.libDir, "radiance", platform_dir, "bin", f"epw2wea{suffix}")
-    Runner(timeout_seconds=timeout_seconds).run_command([executable, os.path.abspath(epw_file), output_path])
-    if not os.path.isfile(output_path):
-        raise FileNotFoundError(f"epw2wea did not create: {output_path}")
-    return output_path
+    """Write an hourly non-leap WEA, preserving fractional UTC offsets.
+
+    EPW records are end-of-hour; WEA uses local-standard-time midpoints.
+    Missing DNI/DHI, subhourly data and incomplete/leap years are rejected.
+    Used by both energy weather preparation and annual daylight.
+    Conversion is local and retains the full EPW coordinate precision.
+    """
+    with open(epw_file, encoding='utf-8-sig', newline='') as source:
+        rows = list(csv.reader(source))
+    if len(rows) != 8768 or len(rows[0]) < 10 or rows[0][0] != 'LOCATION':
+        raise ValueError('EPW requires a complete non-leap 8760-hour year')
+    if len(rows[7]) < 3 or rows[7][0] != 'DATA PERIODS' or int(rows[7][2]) != 1:
+        raise ValueError('EPW requires one record per hour')
+    location = rows[0]
+    latitude, longitude, offset, altitude = map(float, location[6:10])
+    if not all(np.isfinite([latitude, longitude, offset, altitude])) or not (-90 <= latitude <= 90 and -180 <= longitude <= 180 and -14 <= offset <= 14):
+        raise ValueError('Invalid EPW location')
+    lines = [f'place {location[1]}', f'latitude {latitude}',
+             f'longitude {-longitude}', f'time_zone {-15 * offset}',
+             f'site_elevation {altitude}', 'weather_data_file_units 1']
+    for index, row in enumerate(rows[8:]):
+        stamp = datetime(2001, 1, 1) + timedelta(hours=index)
+        if len(row) < 16 or tuple(map(int, row[1:4])) != (stamp.month, stamp.day, stamp.hour + 1) or int(row[4]) not in (0, 30, 60):
+            raise ValueError(f'Invalid/non-hourly EPW time axis at record {index}')
+        dni, dhi = map(float, (row[14], row[15]))
+        if not all(np.isfinite([dni, dhi])) or not (0 <= dni < 9999 and 0 <= dhi < 9999):
+            raise ValueError(f'Missing/invalid DNI or DHI at EPW record {index}')
+        lines.append(f'{stamp.month} {stamp.day} {stamp.hour + .5} {dni} {dhi}')
+    target = Path(output_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return str(target)
 
 
 def generate_cumulative_sky(
@@ -231,7 +261,8 @@ def generate_cumulative_sky(
     if rgb.shape != expected_shape:
         raise ValueError(f"Unexpected gendaymtx data shape: {rgb.shape}")
     broadband = 0.265074126 * rgb[:, 0] + 0.670114631 * rgb[:, 1] + 0.064811243 * rgb[:, 2]
-    matrix = broadband.reshape(146, WeatherData.HOURS_PER_YEAR)[:145]
+    # gendaymtx row zero is ground; the following 145 rows are sky patches.
+    matrix = broadband.reshape(146, WeatherData.HOURS_PER_YEAR)[1:]
     coefficients = np.repeat(TREGENZA_COEFFICIENTS, TREGENZA_PATCHES_PER_ROW).reshape(145, 1)
     return matrix * coefficients * 8760 / 1000
 
@@ -263,13 +294,13 @@ def prepare_epw(
     *,
     timeout_seconds: float = 300.0,
 ) -> PreparedWeather:
-    """Create weather CSV, WEA, and cumulative-sky assets in ``output_dir``."""
+    """Retain the source EPW, weather CSV, sky MTX and intermediate WEA together."""
     output_dir = os.path.abspath(output_dir)
     weather = load_epw(epw_file, output_dir)
+    assert weather.epw_file is not None
     wea_file = convert_epw_to_wea(
-        epw_file,
+        weather.epw_file,
         os.path.join(output_dir, "weather.wea"),
-        timeout_seconds=timeout_seconds,
     )
     sky_matrix = generate_cumulative_sky(
         wea_file,
@@ -277,7 +308,7 @@ def prepare_epw(
         timeout_seconds=timeout_seconds,
     )
     sky_matrix = calibrate_sky_radiation(sky_matrix, weather.global_radiation)
-    sky_file = os.path.join(output_dir, "cumulative_sky.csv")
+    sky_file = os.path.join(output_dir, "cumulative_sky.mtx")
     np.savetxt(sky_file, sky_matrix, delimiter=",")
     return PreparedWeather(
         weather,
@@ -299,39 +330,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def prepare_daylight_weather(epw_file: str, output_path: str) -> str:
-    """Write an hourly non-leap WEA, preserving fractional UTC offsets.
-
-    EPW records are end-of-hour; WEA uses local-standard-time midpoints.
-    Missing DNI/DHI, subhourly data and incomplete/leap years are rejected.
-    This independent asset does not alter Energy's weather protocol.
-    """
-    from datetime import datetime, timedelta
-    from pathlib import Path
-    with open(epw_file, encoding='utf-8-sig', newline='') as source:
-        rows = list(csv.reader(source))
-    if len(rows) != 8768 or len(rows[0]) < 10 or rows[0][0] != 'LOCATION':
-        raise ValueError('Daylight EPW requires a complete non-leap 8760-hour year')
-    if rows[7][0] != 'DATA PERIODS' or int(rows[7][2]) != 1:
-        raise ValueError('Daylight EPW requires one record per hour')
-    location = rows[0]
-    latitude, longitude, offset, altitude = map(float, location[6:10])
-    if not all(np.isfinite([latitude, longitude, offset, altitude])) or not (-90 <= latitude <= 90 and -180 <= longitude <= 180 and -14 <= offset <= 14):
-        raise ValueError('Invalid daylight EPW location')
-    lines = [f'place {location[1]}', f'latitude {latitude}',
-             f'longitude {-longitude}', f'time_zone {-15 * offset}',
-             f'site_elevation {altitude}', 'weather_data_file_units 1']
-    for index, row in enumerate(rows[8:]):
-        stamp = datetime(2001, 1, 1) + timedelta(hours=index)
-        if len(row) < 16 or tuple(map(int, row[1:4])) != (stamp.month, stamp.day, stamp.hour + 1) or int(row[4]) not in (0, 30, 60):
-            raise ValueError(f'Invalid/non-hourly EPW time axis at record {index}')
-        dni, dhi = map(float, (row[14], row[15]))
-        if not all(np.isfinite([dni, dhi])) or not (0 <= dni < 9999 and 0 <= dhi < 9999):
-            raise ValueError(f'Missing/invalid DNI or DHI at EPW record {index}')
-        lines.append(f'{stamp.month} {stamp.day} {stamp.hour + .5} {dni} {dhi}')
-    target = Path(output_path).resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    return str(target)

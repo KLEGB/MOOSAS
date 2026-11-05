@@ -182,6 +182,22 @@ def decodeURI(hint):
     return hint
 
 
+def _parse_nt_lines(graph, path):
+    """Standard RDFLib token parser with linear universal-newline input.
+
+    RDFLib's chunked readline repeatedly rescans a growing literal. Native
+    thermal metadata can have multi-megabyte JSON lines; TextIO handles LF,
+    CRLF and CR without rescanning those prefixes.
+    """
+    from rdflib.plugins.parsers.ntriples import W3CNTriplesParser, NTGraphSink
+    parser = W3CNTriplesParser(NTGraphSink(graph))
+    with open(path, 'r', encoding='utf-8', newline=None) as stream:
+        for line in stream:
+            parser.line = line.rstrip('\r\n')
+            parser.parseline()
+    return graph
+
+
 class MoosasRDF(Graph):
     def __init__(self, model: MoosasModel = None, dumpUseless=True, ExportIFC=False):
         """
@@ -254,6 +270,23 @@ class MoosasRDF(Graph):
             A new instance of the class populated with the parsed data.
         """
         g = cls()
+        # Native normalized files are often line-based N-Triples, which is a
+        # Turtle subset. Its streaming parser avoids the Turtle parser's very
+        # large token cost for provenance/thermal JSON literals. Try only for
+        # a full-IRI header; ordinary prefixed Turtle keeps its usual path.
+        nt_candidate = False
+        if fileFormat == 'turtle':
+            with open(filePath, 'rb') as stream:
+                nt_candidate = stream.read(4096).lstrip().startswith(b'<')
+        if nt_candidate:
+            from rdflib.exceptions import ParserError
+            try:
+                _parse_nt_lines(g, filePath)
+                return g
+            except (ParserError, ValueError):
+                # Full-IRI Turtle can still contain relative IRIs, semicolons
+                # or other Turtle syntax. Discard the partial graph on fallback.
+                g = cls()
         g.parse(filePath, format=fileFormat)
         return g
 
@@ -692,12 +725,12 @@ class MoosasRDF(Graph):
         self.add((URIRef(geo.faceId), self.moosas.faceId, Literal(geo.faceId)))
         self.add((URIRef(geo.faceId), self.geo.hasGeometry, URIRef(geo.faceId + "fv")))
         self.add((URIRef(geo.faceId + "fv"), self.geo.asWKT,
-                  Literal(shapely.polygons(geo.boundary).__str__(), datatype=self.geo.wktLiteral)))
+                  Literal(shapely.to_wkt(shapely.polygons(geo.boundary),rounding_precision=-1), datatype=self.geo.wktLiteral)))
         if len(geo.holes) > 0:
             for hi, hole in enumerate(geo.holes):
                 self.add((URIRef(geo.faceId), self.moosas.hasHole, URIRef(geo.faceId + f"fh{hi}")))
                 self.add((URIRef(geo.faceId + f"fh{hi}"), self.geo.asWKT,
-                          Literal(shapely.polygons(hole).__str__(), datatype=self.geo.wktLiteral)))
+                          Literal(shapely.to_wkt(shapely.polygons(hole),rounding_precision=-1), datatype=self.geo.wktLiteral)))
 
     def encodeElement(self, Element: MoosasElement, typeName: str = "rawElement", mask=None, ExportIFC=False):
         """
@@ -1063,7 +1096,11 @@ class MoosasRDF(Graph):
         if surfaceType is None:
             return None
 
-        if surfaceType == self.moosas.Face:
+        cache=getattr(self,'_decode_element_cache',None)
+        cache_key=(id(model),str(elementUri))
+        if cache is not None:
+            element=[cache[cache_key]] if cache_key in cache else []
+        elif surfaceType == self.moosas.Face:
             element = searchBy('Uid', Uid, model.faceList, earlyEnd=True, asObject=True)
         elif surfaceType == self.moosas.Wall or surfaceType == self.moosas.AirWall:
             element = searchBy('Uid', Uid, model.wallList, earlyEnd=True, asObject=True)
@@ -1138,6 +1175,7 @@ class MoosasRDF(Graph):
                 except Exception:
                     pass
         apply_element_settings(element)
+        if cache is not None:cache[cache_key]=element
         return element
 
     def isClass(self, _from: str, _class: URIRef) -> bool:
@@ -1503,7 +1541,22 @@ def writeRDF(model: MoosasModel, out_path: str, fileFormat="turtle", dumpUseless
         The generated MoosasRDF object that was serialized to the file.
     """
     g = MoosasRDF(model, dumpUseless, ExportIFC)
-    g.serialize(out_path, format=fileFormat)
+    output_format='nt' if fileFormat=='turtle' and len(g)>100000 else fileFormat
+    if output_format == 'nt':
+        from pathlib import Path
+        from urllib.parse import urlsplit, urljoin
+        base = Path(out_path).resolve().as_uri()
+        relative = {node: URIRef(urljoin(base, str(node)))
+                    for node in set(g.all_nodes()) | set(g.predicates())
+                    if isinstance(node, URIRef) and not urlsplit(str(node)).scheme}
+        for node in relative:
+            triples = (set(g.triples((node, None, None))) |
+                       set(g.triples((None, node, None))) |
+                       set(g.triples((None, None, node))))
+            for triple in triples:
+                g.remove(triple)
+                g.add(tuple(relative.get(term, term) for term in triple))
+    g.serialize(out_path,format=output_format,encoding='utf-8')
     return g
 
 
@@ -1524,6 +1577,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         A constructed MoosasModel instance populated with data from the RDF file.
     """
     rdfGraph: MoosasRDF = MoosasRDF.load(input_path, fileFormat=fileFormat)
+    rdfGraph._decode_element_cache={}
     model = MoosasModel()
     from ..thermal_templates import configure_model_resources
 
@@ -1699,7 +1753,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
             rdfGraph.getObject(spaceUri, rdfGraph.moosas.boundaryWKT)
         )
         boundary = shapely.from_wkt(str(boundary_wkt)) if boundary_wkt is not None else None
-        edgeTopo = MoosasEdge(edgeElements, boundary=boundary)
+        edgeTopo = MoosasEdge(edgeElements, boundary=boundary, owner_id=Uid)
 
         spc = MoosasSpace(
             _floor=floorTopo,
@@ -1749,6 +1803,10 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
                     space = active_spaces.get(str(space_uri))
                     if space is not None and space.id not in element.space:
                         element.space.append(space.id)
+                    if (space is not None and isinstance(element,MoosasWall) and
+                        _first_or_none(rdfGraph.getObject(interface_uri,rdfGraph.pgd.hasSurfaceType))==rdfGraph.moosas.Ceiling):
+                        refs=space.settings.setdefault('secondary_ceiling_element_ids',[])
+                        if element.Uid not in refs:refs.append(element.Uid)
 
     # Space settings are available only after the topology pass. Apply legacy
     # U/SHGC fallbacks now, while preserving all RDF-supplied element settings.
@@ -1760,4 +1818,5 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
 
     from .gbxml.energy import from_graph
     from_graph(model, rdfGraph)
+    del rdfGraph._decode_element_cache
     return model

@@ -9,7 +9,6 @@ from .epw import (
     generate_cumulative_sky,
     load_epw,
     prepare_epw,
-    prepare_daylight_weather,
     read_epw_location,
     write_epw_csv,
 )
@@ -34,7 +33,6 @@ __all__ = [
     "generate_cumulative_sky",
     "load_epw",
     "prepare_epw",
-    "prepare_daylight_weather",
     "read_cumulative_sky_matrix",
     "read_epw_location",
     "write_epw_csv",

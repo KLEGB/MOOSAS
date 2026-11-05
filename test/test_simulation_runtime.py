@@ -1,6 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 import subprocess
+import sys
+from io import StringIO
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -15,7 +17,7 @@ from MoosasPy.simulation.airflow.runner import (
     AirflowRunner,
     VentPaths,
 )
-from MoosasPy.simulation.engine import NativeExecution
+from MoosasPy.simulation.engine import NativeExecution, SubprocessEngine
 from MoosasPy.simulation.radiation.calculation import (
     calculate_model_radiation,
     calculate_position_radiation,
@@ -132,12 +134,30 @@ class RunnerTests(unittest.TestCase):
             input_path.write_text("request\n", encoding="utf-8")
             with input_path.open("r", encoding="utf-8") as input_file, output_path.open(
                 "w", encoding="utf-8"
-            ) as output_file, patch(
-                "MoosasPy.simulation.runner.subprocess.run", side_effect=run_command
-            ):
-                Runner().run_command(command, stdin=input_file, stdout=output_file)
+            ) as output_file:
+                Runner(engine=SubprocessEngine(run_process=run_command)).run_command(
+                    command, stdin=input_file, stdout=output_file
+                )
 
             self.assertEqual(output_path.read_text(encoding="utf-8"), "result\n")
+
+    def test_native_stdin_and_binary_stdout_preserve_bytes(self):
+        command = (sys.executable, "-c",
+                   "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())")
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "output.bin"
+            with output.open("wb") as stream:
+                result = SubprocessEngine().execute(
+                    command, stdin=StringIO("request\n"), stdout=stream
+                )
+            self.assertEqual(output.read_bytes(), b"request\n")
+            self.assertEqual(result.stdout, "")
+
+    def test_native_diagnostics_decode_non_utf8_output(self):
+        command = (sys.executable, "-c",
+                   "import sys; sys.stderr.buffer.write('\\u9519\\u8bef'.encode('gb18030'))")
+        result = SubprocessEngine().execute(command)
+        self.assertEqual(result.stderr, "\u9519\u8bef")
 
 
 class SimulationWorkspaceTests(unittest.TestCase):
@@ -152,14 +172,10 @@ class SimulationWorkspaceTests(unittest.TestCase):
             native_platform("darwin", "x86_64")
 
     def test_weather_conversion_uses_explicit_output_path(self):
-        def run_command(command, **_kwargs):
-            Path(command[-1]).write_text("wea", encoding="utf-8")
-
-        with TemporaryDirectory() as work_dir, patch(
-            "MoosasPy.simulation.weather.epw.Runner.run_command", side_effect=run_command
-        ):
+        epw = Path(__file__).parents[1] / "MoosasPy" / "db" / "CHN_BJ_Beijing-Nanyuan.AP.545120_TMYx.epw"
+        with TemporaryDirectory() as work_dir:
             output_path = Path(work_dir) / "station.wea"
-            wea_path = Path(convert_epw_to_wea("input.epw", str(output_path)))
+            wea_path = Path(convert_epw_to_wea(str(epw), str(output_path)))
 
             self.assertEqual(wea_path, output_path)
             self.assertTrue(wea_path.exists())
@@ -186,7 +202,8 @@ class SimulationWorkspaceTests(unittest.TestCase):
             self.assertIsNone(runner.paths)
             result = runner.run()
 
-        self.assertFalse(result.workspace.retained)
+            self.assertTrue(result.workspace.retained)
+            self.assertTrue(observed_paths[0].is_dir())
         self.assertFalse(observed_paths[0].exists())
         from_workspace.assert_called_once()
 
@@ -347,7 +364,7 @@ class RadianceRunnerTests(unittest.TestCase):
         self.sky = RadianceSky(datetime(2026, 1, 1, 12), "-c", location, 15000)
 
     def test_run_uses_an_isolated_temporary_directory(self):
-        floor = SimpleNamespace(Uid="floor-1")
+        floor = SimpleNamespace(Uid="floor-1", category=0)
         model = SimpleNamespace(
             spaceList=[SimpleNamespace(getAllFaces=lambda to_dict: {"MoosasFloor": [floor]})]
         )
@@ -361,20 +378,29 @@ class RadianceRunnerTests(unittest.TestCase):
             recorded_work_dirs.append(Path(cwd))
             if Path(command[0]).name.startswith("rtrace"):
                 return subprocess.CompletedProcess(command, 0, stdout="1 1 1\n", stderr="")
+            if Path(command[0]).name.startswith("gensky"):
+                return subprocess.CompletedProcess(command, 0, stdout="void brightfunc skyfunc\n", stderr="")
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         with TemporaryDirectory() as parent_dir:
             with patch(
-                "MoosasPy.simulation.radiation.runner._model_to_radiance"
-            ) as model_to_rad, patch(
+                "MoosasPy.simulation.radiation.runner._daylight_scene",
+                return_value=("", []),
+            ), patch(
                 "MoosasPy.simulation.radiation.runner._write_grid", side_effect=write_grid
             ), patch("MoosasPy.simulation.runner.subprocess.run", side_effect=run_command):
-                result = RadianceRunner(model, self.sky, work_dir=parent_dir).run()
+                result = RadianceRunner(model, self.sky).run()
 
         self.assertEqual(len(result.floors), 1)
         self.assertAlmostEqual(result.floors[0].illuminances[0], 179.0)
         self.assertAlmostEqual(result.floors[0].daylight_factor, 179.0 / 15000)
-        self.assertEqual(model_to_rad.call_args.args[3:5], (39.93, 116.28))
+        sky_command = result.commands[0].command
+        self.assertEqual(sky_command[sky_command.index("-a") + 1], "39.93")
+        self.assertEqual(sky_command[sky_command.index("-o") + 1], "-116.28")
+        self.assertEqual(len(result.commands), 3)
+        self.assertEqual(result.commands[1].command[-1], "model.rad")
+        self.assertEqual(result.commands[2].command[-1], "model.oct")
+        self.assertFalse(result.workspace.retained)
         self.assertTrue(recorded_work_dirs)
         self.assertFalse(recorded_work_dirs[0].exists())
 

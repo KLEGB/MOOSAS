@@ -1,10 +1,26 @@
-from .radiance import _get_sky, _material_library, _mesh_to_radiance_object
+from .radiance import _get_sky as _raw_get_sky, _material_library, _mesh_to_radiance_object
 from ...model import MoosasModel
 from ...transform.geometry.element import MoosasElement, MoosasSpace
 from ...transform.geometry.geos import Projection, Vector
 from ...transform.geometry.grid import MoosasGrid
 from ...utils import np, shapely, mixItemListToList
 from datetime import datetime
+
+def _get_sky(*args,**kwargs):
+    """Expand the sky command using the packaged native engine."""
+    import shlex
+    from pathlib import Path
+    from ...utils.tools import native_platform, path
+    from ..runner import Runner
+    text=_raw_get_sky(*args,**kwargs)
+    first,rest=text.split('\n',1)
+    command=shlex.split(first[1:])
+    platform_dir, suffix = native_platform()
+    executable = Path(path.libDir) / 'radiance' / platform_dir / 'bin' / (command[0] + suffix)
+    sky=Runner().run_command([str(executable), *command[1:]])
+    if not sky.stdout.strip():raise RuntimeError('Sky generator returned empty output')
+    return sky.stdout+'\n'+rest
+
 
 
 def _generate_radiance_geometry(roof, floor, others):
@@ -34,13 +50,19 @@ def _generate_radiance_geometry(roof, floor, others):
         geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_floor", ids)
         ids += 1
     for moFace in roof:
-        geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_roof", ids)
+        geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_wall" if abs(float(moFace.normal[2]))<.5 else "default_roof", ids)
         ids += 1
     for moFace in others:
         if moFace.category in (0, 3, 4, -1):
             geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_wall", ids)
         if moFace.category in (1, 5, 6):
-            geoStr += _mesh_to_radiance_object(moFace.representation(), "glazing_", ids)
+            material='glazing_'
+            if 'visible_transmittance' in moFace.settings:
+                from .radiance import _visible_material
+                material=f'glazing_{ids}'
+                optical, _ = _visible_material(moFace.settings, 'window', True, material)
+                geoStr += optical
+            geoStr += _mesh_to_radiance_object(moFace.face, material, ids)
         ids += 1
     return geoStr
 
@@ -101,16 +123,19 @@ def _triangulate_opaque(moFace:MoosasElement)->list[shapely.Geometry]:
         if len(shapely.get_rings(face))>1:
             holes+=list(shapely.get_rings(face))[1:]
     for gls in moFace.glazingElement:
-        holes.append(gls.representation())
-    baseBrep = [shapely.polygons(proj.toUV(face)) for face in baseBrep]
+        actual=getattr(gls,'face',None)
+        if actual is None:actual=gls.representation()
+        holes.extend(p for p in mixItemListToList(actual) if not shapely.is_empty(p))
+    from ...transform.geometry.polygon import planar_surface
+    baseBrep = [planar_surface(shapely.polygons(proj.toUV(face))) for face in baseBrep]
     baseBrep = shapely.union_all(baseBrep)
     holes = [proj.toUV(face) for face in holes]
     for h in holes:
         if shapely.get_dimensions(h) == 1:
             h = shapely.polygons(h)
-        baseBrep = shapely.difference(baseBrep,h)
+        baseBrep = shapely.difference(shapely.normalize(baseBrep),planar_surface(h))
     # Constrain triangles to the boundary, including concavities and window holes.
-    baseBrep = shapely.constrained_delaunay_triangles(baseBrep)
+    baseBrep = shapely.constrained_delaunay_triangles(planar_surface(baseBrep))
     baseBrep = [proj.toWorld(tri) for tri in shapely.get_parts(baseBrep)]
     return baseBrep
 def _space_to_radiance(space: MoosasSpace, date: datetime, sky_type, lat, lon, diffuse_illuminance=10000,
@@ -187,8 +212,17 @@ def _write_grid(element: MoosasElement, grid_path: str, normal=None, append=True
         mode = 'w+'
     gridStr = []
     grid = MoosasGrid(element)
-    for pts in grid.gridPoints:
-        pts = shapely.get_coordinates(pts, include_z=True).astype(str)[0]
+    points=grid.gridPoints
+    if len(points)==0:
+        if grid.UVFace.is_empty or grid.UVFace.area<=0:raise ValueError('Cannot sample zero-area floor')
+        sample=shapely.force_3d(shapely.point_on_surface(grid.UVFace),z=grid.gridOffset)
+        points=[grid.proj.toWorld(sample)]
+    for pts in points:
+        coordinates=shapely.get_coordinates(pts,include_z=True)[0]
+        xyz=shapely.get_coordinates(element.face,include_z=True)
+        if normal is not None and Vector(normal).array[2]>.999 and np.ptp(xyz[:,2])<1e-8:
+            coordinates[2]=float(xyz[0,2])+grid.gridOffset
+        pts=coordinates.astype(str)
         nor = grid.normal.astype(str) if normal is None else Vector(normal).array.astype(str)
 
         gridStr += [" ".join(pts) + " " + " ".join(nor)]
@@ -231,7 +265,7 @@ def _daylight_scene(model, *, black=False, overrides=None, split_transport=False
         material, record = _visible_material(settings, roles.get(uid, 'wall'), glass, f'mat_{index}', black, split_transport)
         record.update(uid=uid, source='override' if uid in overrides else 'settings_or_default')
         optics.append(record)
-        geometry = element.representation() if glass else _triangulate_opaque(element)
+        geometry = element.face if glass else _triangulate_opaque(element)
         if not glass and not geometry:
             continue  # Fully glazed parent: its opening is exported separately.
         polygons = _mesh_to_radiance_object(geometry, f'mat_{index}', index)

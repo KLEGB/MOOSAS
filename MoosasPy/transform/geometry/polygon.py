@@ -7,6 +7,27 @@ from typing import List, Tuple, Union
 from ...utils import np, shapely
 
 
+def planar_surface(geometry):
+    """Preserve planar area while removing invalid nonphysical linework."""
+    region = shapely.force_2d(geometry)
+    if not region.is_valid:
+        stack = [shapely.make_valid(region)]
+        polygons = []
+        while stack:
+            part = stack.pop()
+            kind = shapely.get_type_id(part)
+            if kind == 3:
+                polygons.append(part)
+            elif kind in (6, 7):
+                stack.extend(shapely.get_parts(part))
+        repaired = shapely.union_all(polygons)
+        if abs(repaired.area - region.area) > max(1e-8, abs(region.area) * 1e-8):
+            raise ValueError('Planar validity repair changes area; source geometry requires review')
+        region = repaired
+    # Drop precision metadata without rounding physical coordinates.
+    return shapely.set_precision(region, 0)
+
+
 class GeometryBasic:
     """Basic geometry utility methods."""
 

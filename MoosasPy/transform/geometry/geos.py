@@ -844,18 +844,9 @@ class Projection(Ray):
         if dims == -1:
             raise Exception(f'invalid geometry: {worldGeometry}')
         if dims == 2:
-            rings = [[self.toUV(ring) for ring in shapely.get_rings(part)] for part in shapely.get_parts(worldGeometry)]
-            parts = []
-            for ring in rings:
-                if len(ring) > 1:
-                    try:
-                        parts.append(shapely.polygons(rings[0], rings[1:]))
-                    except Exception as e:
-                        # failed to create hole
-                        parts.append(shapely.polygons(rings[0]))
-                else:
-                    parts.append(shapely.polygons(rings[0]))
-            return shapely.union_all(parts)
+            def project_coordinates(coordinates):
+                return (np.nan_to_num(coordinates,nan=0.)-self.origin.array)@self.rotateMatrix
+            return shapely.transform(worldGeometry,project_coordinates,include_z=True)
         worldGeometry = shapely.force_3d(worldGeometry, z=0)
         coors = shapely.get_coordinates(worldGeometry, include_z=True)
         coors = np.nan_to_num(coors, nan=0)
@@ -893,16 +884,10 @@ class Projection(Ray):
         if shapely.get_dimensions(UVGeometry) == -1:
             raise Exception(f'invalid geometry: {UVGeometry}')
         if shapely.get_dimensions(UVGeometry) == 2:
-            rings = [self.toWorld(ring) for ring in shapely.get_rings(UVGeometry)]
-            if len(rings) == 0:
-                return shapely.GeometryCollection()
-            if len(rings) > 1:
-                return shapely.polygons(
-                    shapely.get_coordinates(rings[0], include_z=True),
-                    [shapely.get_coordinates(ring, include_z=True) for ring in rings[1:]]
-                )
-            else:
-                return shapely.polygons(shapely.get_coordinates(rings[0], include_z=True))
+            inverse=np.linalg.inv(self.rotateMatrix)
+            def world_coordinates(coordinates):
+                return np.nan_to_num(coordinates,nan=0.)@inverse+self.origin.array
+            return shapely.transform(shapely.force_3d(UVGeometry,z=0.),world_coordinates,include_z=True)
         UVGeometry = shapely.force_3d(UVGeometry, z=0)
         coors = shapely.get_coordinates(UVGeometry, include_z=True)
         coor_new = [coor @ np.linalg.inv(self.rotateMatrix) for coor in coors]
@@ -1436,7 +1421,7 @@ def faceNormal(poly: shapely.Geometry, EPS: float = geom.POINT_PRECISION) -> Vec
         normal = np.cross(v1, v2)
         norm = np.linalg.norm(normal)
 
-        if norm < EPS:
+        if not np.isfinite(norm) or norm == 0:
             print("******GeometryError: invalid face results in zero normal")
             return Vector(0, 0, 1)  # Collinear vertices
         return Vector(normal / norm)
@@ -1446,11 +1431,8 @@ def faceNormal(poly: shapely.Geometry, EPS: float = geom.POINT_PRECISION) -> Vec
     centroid = np.mean(vertices, axis=0)
     centered = vertices - centroid
 
-    # Compute covariance matrix (3x3, symmetric)
-    cov_matrix = np.dot(centered.T, centered) / (n_vertices - 1)
-
-    # SVD decomposition (stable for small matrices)
-    _, _, vh = np.linalg.svd(cov_matrix)
+    # Fit X directly: X.T@X squares the condition number of thin faces.
+    _, _, vh = np.linalg.svd(centered, full_matrices=False)
     normal = vh[-1]  # Normal = eigenvector with smallest eigenvalue (best fit plane)
 
     # ------------------- Step 4: Ensure consistent orientation -------------------

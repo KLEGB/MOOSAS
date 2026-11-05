@@ -156,7 +156,7 @@ class AirflowRunner(Runner):
         if self.paths is not None:
             return self._run()
 
-        with SimulationWorkspace(parent=self.work_dir, prefix="moosas-airflow-") as workspace:
+        with SimulationWorkspace(parent=self.work_dir, prefix="moosas-airflow-", retain=self.work_dir is not None) as workspace:
             self.paths = VentPaths.from_workspace(workspace.path)
             try:
                 return self._run(workspace.report)

@@ -628,9 +628,9 @@ to `AnnualDaylightRequest`:
 import numpy as np
 
 from MoosasPy.simulation.radiation import AnnualDaylightRequest, RadianceRunner
-from MoosasPy.simulation.weather import prepare_daylight_weather
+from MoosasPy.simulation.weather import convert_epw_to_wea
 
-wea_file = prepare_daylight_weather("custom.epw", "analysis-input/custom.wea")
+wea_file = convert_epw_to_wea("custom.epw", "analysis-input/custom.wea")
 request = AnnualDaylightRequest(
     wea_file,
     output_dir="results",

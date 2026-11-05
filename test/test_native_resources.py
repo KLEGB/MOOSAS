@@ -75,7 +75,7 @@ def test_scene_writers_require_workspace_output_paths():
 def test_radiance_and_weather_share_one_tool_installation(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from MoosasPy.simulation.radiation import RadianceRunner
-    from MoosasPy.simulation.weather import convert_epw_to_wea, generate_cumulative_sky
+    from MoosasPy.simulation.weather import generate_cumulative_sky
     from MoosasPy.simulation.weather.data import WeatherData
     from MoosasPy.simulation.runner import Runner
 
@@ -89,12 +89,11 @@ def test_radiance_and_weather_share_one_tool_installation(tmp_path, monkeypatch)
 
     monkeypatch.setattr(Runner, "run_command", run_command)
     monkeypatch.setattr(WeatherData, "HOURS_PER_YEAR", 1)
-    wea = convert_epw_to_wea("test.epw", str(tmp_path / "weather.wea"))
+    wea = tmp_path / "weather.wea"
+    wea.write_text("weather", encoding="utf-8")
     generate_cumulative_sky(wea)
     runner = RadianceRunner(SimpleNamespace())
-    _, suffix = native_platform()
-    assert Path(commands[0][0]) == runner.executable_dir / f"epw2wea{suffix}"
-    assert Path(commands[1][0]) == runner._executable("gendaymtx")
+    assert Path(commands[0][0]) == runner._executable("gendaymtx")
 
 
 def test_relocated_sky_directions_and_pressure_model_are_usable():

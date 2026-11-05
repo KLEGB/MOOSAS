@@ -15,7 +15,7 @@ from MoosasPy.simulation.radiation.runner import (
     _daylight_sensors, _read_daylight_wea, _read_radiance_matrix,
 )
 from MoosasPy.simulation.radiation.radiance import _visible_material, _get_sky
-from MoosasPy.simulation.weather import prepare_daylight_weather
+from MoosasPy.simulation.weather import convert_epw_to_wea
 from MoosasPy.simulation.airflow.network import AfnPath
 
 
@@ -66,19 +66,25 @@ def test_vlt_is_not_shgc_and_pit_uses_west_positive_and_fractional_time():
 def test_epw_fractional_timezone_and_midpoints(tmp_path):
     source=Path(__file__).parents[1]/'MoosasPy/db/CHN_BJ_Beijing-Nanyuan.AP.545120_TMYx.epw'
     rows=source.read_text().splitlines()
-    header=rows[0].split(',');header[8]='5.5';rows[0]=','.join(header)
+    header=rows[0].split(',');header[8]='5.5';header[7]='116.3834567';rows[0]=','.join(header)
     epw=tmp_path/'test.epw';epw.write_text('\n'.join(rows)+'\n')
-    wea=prepare_daylight_weather(epw,tmp_path/'test.wea')
+    wea=convert_epw_to_wea(epw,tmp_path/'test.wea')
     _,_,location=_read_daylight_wea(wea)
     assert location['utc_offset_hours']==5.5
+    assert float(Path(wea).read_text().splitlines()[2].split()[1]) == -116.3834567
+    assert len(Path(wea).read_text().splitlines()) == 8766
     assert Path(wea).read_text().splitlines()[6].split()[:3]==['1','1','0.5']
     bad=rows[8].split(',');bad[14]='9999';rows[8]=','.join(bad)
     epw.write_text('\n'.join(rows)+'\n')
     with pytest.raises(ValueError,match='DNI'):
-        prepare_daylight_weather(epw,tmp_path/'missing.wea')
+        convert_epw_to_wea(epw,tmp_path/'missing.wea')
     epw.write_text('\n'.join(rows[:-1])+'\n')
     with pytest.raises(ValueError,match='8760'):
-        prepare_daylight_weather(epw,tmp_path/'short.wea')
+        convert_epw_to_wea(epw,tmp_path/'short.wea')
+
+def test_obsolete_daylight_weather_api_is_removed():
+    import MoosasPy.simulation.weather as weather
+    assert not hasattr(weather, 'prepare_daylight_weather')
 
 
 def test_matrix_rejects_truncated_or_wrong_dimension(tmp_path):
@@ -177,7 +183,7 @@ def test_real_radiance_unobstructed_sensor(tmp_path):
     space=SimpleNamespace(id='room',settings={},getAllFaces=lambda to_dict:{'MoosasFloor':[floor],'MoosasCeiling':[]})
     model=SimpleNamespace(spaceList=[space],wallList=[],glazingList=[],skylightList=[],shadingList=[])
     epw=Path(__file__).parents[1]/'MoosasPy/db/CHN_BJ_Beijing-Nanyuan.AP.545120_TMYx.epw'
-    wea=prepare_daylight_weather(epw,tmp_path/'test.wea')
+    wea=convert_epw_to_wea(epw,tmp_path/'test.wea')
     result=RadianceRunner(model,timeout_seconds=120).run_annual(AnnualDaylightRequest(wea,output_dir=str(tmp_path),grid_spacing_m=1,sky_subdivision=1,ambient_divisions=1024))
     total=np.load(result.illuminance_total_file)
     direct=np.load(result.illuminance_direct_file)

@@ -371,23 +371,8 @@ def _ground_parts(geometry, projection, ground):
 @lru_cache(maxsize=512)
 def _room_region(geometry):
     """Regularize area only; touching legacy holes leave nonphysical linework."""
-    region = shapely.force_2d(geometry)
-    if not region.is_valid:
-        stack = [shapely.make_valid(region)]
-        polygons = []
-        while stack:
-            part = stack.pop()
-            kind = shapely.get_type_id(part)
-            if kind == 3: polygons.append(part)
-            elif kind in (6,7): stack.extend(shapely.get_parts(part))
-        repaired = shapely.union_all(polygons)
-        if abs(repaired.area-region.area)>max(1e-8,abs(region.area)*1e-8):
-            raise ValueError('Room footprint validity repair changes area; source geometry requires review')
-        region = repaired
-    # Mixing a fixed precision room with floating point buffer arcs can create
-    # zero-length overlay edges in GEOS. Removing the precision *metadata*
-    # leaves every coordinate intact and uses one consistent floating overlay.
-    return shapely.set_precision(region,0)
+    from ...transform.geometry.polygon import planar_surface
+    return planar_surface(geometry)
 
 
 def _height_band(footprint, projection, lo, hi):
@@ -781,20 +766,30 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                 source_normal,center=element_geometry[geometry_key]
                 normal = source_normal.copy()
                 normal /= np.linalg.norm(normal)
-                if role == 'floor': normal = np.array([0.,0.,-1.])
-                elif role == 'ceiling': normal = np.array([0.,0.,1.])
-                elif np.dot(normal,center-room_center)<0: normal=-normal
+                owner_normal=element.settings.get('geometry_owner_normals',{}).get(str(space.id))
+                if owner_normal is not None:normal=np.asarray(owner_normal,dtype=float)
+                elif role=='floor':
+                    if normal[2]>0:normal=-normal
+                elif role=='ceiling' and abs(normal[2])>1e-8:
+                    if normal[2]<0:normal=-normal
+                else:
+                    region=space.force_2d();direction=normal[:2]
+                    before=region.contains(shapely.Point(center[:2]-direction*.001))
+                    after=region.contains(shapely.Point(center[:2]+direction*.001))
+                    if after and not before:normal=-normal
+                    elif before==after and np.dot(normal,center-room_center)<0:normal=-normal
                 projection = Projection(Vector(center),Vector(normal))
-                uv = [shapely.force_2d(projection.toUV(face)) for face in np.asarray(element.face).flatten()]
+                from ...transform.geometry.polygon import planar_surface
+                uv=[p for face in np.asarray(element.face).flatten() for p in shapely.get_parts(planar_surface(projection.toUV(face)))]
                 footprint = shapely.union_all([shapely.Polygon(p.exterior) for p in uv])
                 openings = list(element.glazingElement)
                 aperture = {}
                 for opening in openings:
-                    shapes = [shapely.force_2d(projection.toUV(f)) for f in np.asarray(opening.face).flatten()]
-                    aperture[str(opening.Uid)] = shapely.intersection(footprint,shapely.union_all(shapes))
+                    shapes=[planar_surface(projection.toUV(f)) for f in np.asarray(opening.face).flatten()]
+                    aperture[str(opening.Uid)]=shapely.intersection(shapely.normalize(footprint),shapely.normalize(shapely.union_all(shapes)))
                 # Preserve geometric holes even when no separate glazing/air
                 # object has been attached; never manufacture opaque material.
-                opaque = shapely.difference(shapely.union_all(uv),shapely.union_all(list(aperture.values())))
+                opaque=shapely.difference(shapely.normalize(shapely.union_all(uv)),shapely.normalize(shapely.union_all(list(aperture.values()))))
                 host_wwr = float(shapely.union_all(list(aperture.values())).area / footprint.area) if footprint.area else 0.
                 es = {**element.settings, **surface_overrides.get(str(element.Uid),{})}
                 es.update(es.get('side_overrides',{}).get(str(space.id),{}))

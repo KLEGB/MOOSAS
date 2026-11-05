@@ -25,3 +25,19 @@ remove the legacy interface in the same change without a transition period.
 - Run files are owned by `SimulationWorkspace`. Short-lived calculations use
   auto-cleaned workspaces. Workflows that need follow-up files explicitly use
   retained workspaces and expose their location through `WorkspaceReport`.
+
+PIT Radiance and airflow runs retain their workspace when `work_dir` is
+provided; runs without it use auto-cleaned temporary directories.
+
+`convert_epw_to_wea(epw_file, output_path)` is the single local EPW-to-WEA
+converter for energy weather preparation and annual daylight. It preserves
+coordinate precision and fractional UTC offsets and validates a non-leap
+8760-hour time axis and DNI/DHI. The former `prepare_daylight_weather` entry
+point and the converter's native-process timeout argument are removed.
+
+Cumulative sky matrices exclude gendaymtx's ground row and retain all 145 sky
+patches. This correction can change radiation and downstream energy results.
+
+The scoped energyv135 integration does not enable mechanical ACH, adapter
+wind paths, regional thermal boundary overrides, or thermal surface aggregation.
+Building parameter templates remain unchanged.

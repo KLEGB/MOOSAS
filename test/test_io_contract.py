@@ -54,6 +54,60 @@ def test_resource_service_configures_a_domain_model():
     assert model.schedule == {}
 
 
+@pytest.mark.parametrize('newline', ['\n', '\r\n', '\r'])
+def test_rdf_streaming_parser_preserves_large_literals(tmp_path, newline):
+    from MoosasPy.model.io.rdf import MoosasRDF
+    from rdflib import URIRef
+    value = 'x' * 1048576 + '\n"metadata"'
+    target = tmp_path / 'large.rdf'
+    triples = [
+        f'<urn:space> <urn:metadata> {json.dumps(value)} .',
+        '<urn:space> <urn:type> <urn:room> .',
+    ]
+    target.write_bytes(newline.join(triples).encode('utf-8'))
+    graph = MoosasRDF.load(str(target))
+    assert len(graph) == len(MoosasRDF()) + 2
+    assert str(graph.value(URIRef('urn:space'), URIRef('urn:metadata'))) == value
+
+
+def test_full_iri_turtle_remains_supported(tmp_path):
+    from MoosasPy.model.io.rdf import MoosasRDF
+    target = tmp_path / 'full-iri.rdf'
+    target.write_text('<urn:space> <urn:type> <urn:room> ; <urn:name> "Room" .', encoding='utf-8')
+    assert len(MoosasRDF.load(str(target))) == len(MoosasRDF()) + 2
+
+
+def test_large_rdf_export_threshold_and_relative_iris(tmp_path, monkeypatch):
+    from MoosasPy.model.io import rdf
+    from rdflib import Graph, Literal, URIRef
+    graph = Graph()
+    predicate = URIRef('urn:value')
+    for index in range(100000):
+        graph.add((URIRef(f'urn:space:{index}'), predicate, Literal(index)))
+    formats = []
+    serialize = graph.serialize
+
+    def record_serialization(destination, **kwargs):
+        formats.append(kwargs['format'])
+        return serialize(destination, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rdf, 'MoosasRDF', lambda *_: graph)
+        patch.setattr(graph, 'serialize', record_serialization)
+        rdf.writeRDF(None, str(tmp_path / 'threshold.rdf'))
+        graph.add((URIRef('relative-space'), URIRef('relative-predicate'), Literal('value')))
+        target = tmp_path / 'large.rdf'
+        rdf.writeRDF(None, str(target))
+
+    assert formats == ['turtle', 'nt']
+    restored = rdf.MoosasRDF.load(str(target))
+    assert len(restored) == len(graph) + len(rdf.MoosasRDF())
+    assert set(graph) <= set(restored)
+    from urllib.parse import urljoin
+    assert (URIRef(urljoin(target.as_uri(), 'relative-space')),
+            URIRef(urljoin(target.as_uri(), 'relative-predicate')), Literal('value')) in restored
+
+
 @pytest.mark.parametrize("suffix", (".geo", ".obj", ".stl"))
 def test_load_rejects_raw_geometry_sources(suffix: str):
     with pytest.raises(ValueError, match="Unsupported model load format"):
