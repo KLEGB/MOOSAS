@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import math
 import platform
 import queue
 import struct
@@ -270,6 +271,106 @@ MONTH_NAMES = ('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov'
 MONTH_START = np.array((0,31,59,90,120,151,181,212,243,273,304,334,365))*24
 
 
+# CETUS 1.9.4 scalar moisture balance; vendored here to retain the existing module boundary.
+MOLECULAR_RATIO = 0.622
+
+
+def _finite(value, name, minimum=None):
+    value = float(value)
+    if not math.isfinite(value) or (minimum is not None and value < minimum):
+        raise ValueError(f'Invalid {name}: {value}')
+    return value
+
+
+def saturation_pressure(temperature_c):
+    """WEA.epw Magnus water-vapor correlation, Pa; no RH clipping."""
+    t = _finite(temperature_c, 'temperature')
+    if not -100 < t < 100:
+        raise ValueError('Latent psychrometrics requires -100 < temperature_c < 100')
+    return 610.94 * math.exp(17.625 * t / (t + 243.04))
+
+
+def humidity_ratio(temperature_c, rh_fraction, pressure_pa):
+    rh = _finite(rh_fraction, 'relative humidity', 0)
+    p = _finite(pressure_pa, 'pressure', 1)
+    if rh > 1:
+        raise ValueError('Relative humidity must be a fraction, not percent')
+    pv = rh * saturation_pressure(temperature_c)
+    if pv >= p:
+        raise ValueError('Vapor pressure must be below atmospheric pressure')
+    return MOLECULAR_RATIO * pv / (p - pv)
+
+
+def relative_humidity(temperature_c, w, pressure_pa):
+    return pressure_pa * w / (MOLECULAR_RATIO + w) / saturation_pressure(temperature_c)
+
+
+def latent_heat(temperature_c):
+    """J/kg, same temperature polynomial as UHI.vapor.latentHeat (kJ/kg)."""
+    t = float(temperature_c)
+    return 2_500_800 - 2360 * t + 1.6 * t*t - .06 * t*t*t
+
+
+def solve_latent_load(*, zone_c, outdoor_c, pressure_pa, outdoor_humidity_ratio,
+                      people_moisture_kg_s, fresh_air_m3_s,
+                      infiltration_m3_s, rh_max, control_enabled=True):
+    """Solve steady ideal upper-RH control and return SI diagnostic quantities.
+
+    Volumes are actual outdoor m3/s. Negative outdoor moisture terms are drying
+    credits and are combined BEFORE clipping the net dehumidification demand.
+    Control follows the existing hourly hvac_enabled setting; when available
+    it is independent of whether sensible cooling is needed. No humidification demand is supplied.
+    """
+    zone_c = _finite(zone_c, 'zone temperature')
+    outdoor_c = _finite(outdoor_c, 'outdoor temperature')
+    p = _finite(pressure_pa, 'pressure', 1)
+    wo = _finite(outdoor_humidity_ratio, 'outdoor humidity ratio', 0)
+    g = _finite(people_moisture_kg_s, 'people moisture', 0)
+    vf = _finite(fresh_air_m3_s, 'fresh air volume', 0)
+    vi = _finite(infiltration_m3_s, 'infiltration volume', 0)
+    rh = _finite(rh_max, 'CoolingSetpointHumidity', 0)
+    if not 0 < rh <= 1:
+        raise ValueError('CoolingSetpointHumidity must be in (0,1] when latent is enabled')
+    target = humidity_ratio(zone_c, rh, p)
+    saturation_pressure(outdoor_c)
+    # Dry-air partial density, not total moist-air density.
+    rho_da = p / (287.05 * (outdoor_c + 273.15) * (1 + wo / MOLECULAR_RATIO))
+    mf, mi = rho_da * vf, rho_da * vi
+    mass = mf + mi
+    fresh_target, infiltration_target = mf * (wo-target), mi * (wo-target)
+    net = g + fresh_target + infiltration_target
+    removal = max(0., net) if control_enabled else 0.
+    free = wo + g/mass if mass > 0 else None
+    if removal > 0:
+        wz, status = target, 'controlled'
+    elif mass > 0:
+        wz, status = free, ('free_below_upper_limit' if free<=target else 'free_above_upper_limit')
+    else:
+        # No source and no exchange: every sub-limit humidity is a solution.
+        wz, status = None, ('no_steady_state' if g else 'underdetermined_no_exchange')
+    actual_fresh = mf*(wo-wz) if wz is not None else 0.
+    actual_infiltration = mi*(wo-wz) if wz is not None else 0.
+    residual = g + actual_fresh + actual_infiltration - removal
+    hfg = latent_heat(zone_c)
+    free_rh = relative_humidity(zone_c, free, p) if free is not None else None
+    return dict(status=status, zone_c=float(zone_c), outdoor_c=float(outdoor_c),
+        pressure_pa=p, outdoor_humidity_ratio_kg_kg=wo, rh_upper_fraction=rh,
+        target_humidity_ratio_kg_kg=target, zone_humidity_ratio_kg_kg=wz,
+        zone_rh_fraction=relative_humidity(zone_c,wz,p) if wz is not None else None,
+        free_humidity_ratio_kg_kg=free, free_rh_fraction=free_rh,
+        free_supersaturated=free_rh is not None and free_rh > 1.,
+        people_moisture_kg_s=g, fresh_air_m3_s=vf, infiltration_m3_s=vi,
+        fresh_dry_air_kg_s=mf, infiltration_dry_air_kg_s=mi,
+        fresh_moisture_at_limit_kg_s=fresh_target,
+        infiltration_moisture_at_limit_kg_s=infiltration_target,
+        fresh_moisture_actual_kg_s=actual_fresh,
+        infiltration_moisture_actual_kg_s=actual_infiltration,
+        people_latent_w=g*hfg, fresh_latent_at_limit_w=fresh_target*hfg,
+        infiltration_latent_at_limit_w=infiltration_target*hfg,
+        dehumidification_kg_s=removal, latent_cooling_w=removal*hfg,
+        latent_heat_j_kg=hfg, moisture_balance_residual_kg_s=residual)
+
+
 def _row(values):
     result = dict(zip(PARTS, map(float, values)))
     result['total'] = sum(result.values())
@@ -305,6 +406,23 @@ class EnergyResult(SimulationResult):
     surface_hours: tuple = ()
     temporal_scale: str = 'monthly'
     spatial_scale: str = 'building'
+    zone_latent_cooling_w: np.ndarray | None = None
+    zone_sensible_cooling_w: np.ndarray | None = None
+    zone_humidity_ratio: np.ndarray | None = None
+    zone_relative_humidity: np.ndarray | None = None
+    zone_dehumidification_kg_s: np.ndarray | None = None
+    max_moisture_residual_kg_s: float = 0.
+
+    @property
+    def latent_load(self):
+        if self.zone_latent_cooling_w is None:
+            return {'enabled': False}
+        return dict(enabled=True, latent_cooling_kwh=float(self.zone_latent_cooling_w.sum()/1000),
+            sensible_cooling_kwh=float(self.zone_sensible_cooling_w.sum()/1000),
+            total_cooling_kwh=float((self.zone_latent_cooling_w+self.zone_sensible_cooling_w).sum()/1000),
+            dehumidification_kg=float(self.zone_dehumidification_kg_s.sum()*3600),
+            max_moisture_residual_kg_s=self.max_moisture_residual_kg_s,
+            equipment_model=False, electricity_model=False)
 
     @property
     def data(self):
@@ -314,6 +432,8 @@ class EnergyResult(SimulationResult):
         intensity = absolute / areas[:,None,None]
         building = absolute.sum(axis=0) / areas.sum()
         data = dict(total=_row(building.sum(axis=0)),spaces=self.zone_results)
+        if self.zone_latent_cooling_w is not None:
+            data['latent_load'] = self.latent_load
         hoy = np.asarray(self.hour_of_year)
         if self.temporal_scale == 'monthly':
             months = [building[(hoy>=a)&(hoy<b)].sum(axis=0) for a,b in zip(MONTH_START[:-1],MONTH_START[1:])]
@@ -385,8 +505,11 @@ class EnergyRunner:
         energy = np.zeros((len(models),request.hours,4))
         temperatures = np.zeros((len(models),request.hours))
         maximum_residual = 0.
+        latent_arrays = [np.zeros((len(models),request.hours)) for _ in range(5)] if request.latent_enabled else None
+        max_moisture_residual = 0.
         history, surfaces = [], []
         warnings = list(request.warnings)
+        moisture_issues = set()
         session = BinarySurfaceEngineV2(self.executable,self.timeout_seconds,self.engine.open_binary_session)
         with session:
             session.configure(models)
@@ -418,12 +541,32 @@ class EnergyRunner:
                                       max(q,0)/zone.heating_cop/1000,
                                       zone.lighting_w[h]/1000,zone.equipment_w[h]/1000)
                     temperatures[i,hour] = row['zone_c']
+                    if latent_arrays is not None:
+                        moisture = solve_latent_load(zone_c=row['zone_c'],outdoor_c=float(request.weather.temperature[h]),
+                            pressure_pa=float(request.weather.pressure[h]),outdoor_humidity_ratio=float(request.weather.humidity_ratio[h]),
+                            people_moisture_kg_s=float(zone.people_moisture_kg_s[h]),
+                            fresh_air_m3_s=float(zone.fresh_air_m3_h[h])/3600,
+                            infiltration_m3_s=float(zone.infiltration_m3_h[h])/3600,rh_max=float(zone.cool_rh_fraction[h]),control_enabled=bool(zone.hvac_enabled[h]))
+                        if moisture['status']=='no_steady_state' or (not zone.hvac_enabled[h] and moisture['free_supersaturated']):
+                            moisture_issues.add(zone.zone_id)
+                        row['latent'] = moisture
+                        row['sensible_cooling_w'] = max(-q,0.)
+                        row['latent_cooling_w'] = moisture['latent_cooling_w']
+                        row['total_cooling_w'] = max(-q,0.)+moisture['latent_cooling_w']
+                        for output,value in zip(latent_arrays,(moisture['latent_cooling_w'],max(-q,0.),
+                                moisture['zone_humidity_ratio_kg_kg'],moisture['zone_rh_fraction'],moisture['dehumidification_kg_s'])):
+                            output[i,hour] = np.nan if value is None else value
+                        max_moisture_residual = max(max_moisture_residual,abs(moisture['moisture_balance_residual_kg_s']))
                 if self.surface_results:
                     surfaces.append(tuple(row['surfaces'] for row in rows))
                 if self.on_hour is not None:
                     self.on_hour(request.start_hour+hour,rows)
                 if self.on_progress and ((hour+1)%24==0 or hour+1==request.hours):
                     self.on_progress(hour+1,request.hours)
+        if moisture_issues:
+            warnings.append('Uncontrolled moisture has no unsaturated steady state in zones: '+', '.join(sorted(moisture_issues)))
+        if latent_arrays is not None:
+            for values in latent_arrays: values.setflags(write=False)
         energy.setflags(write=False)
         temperatures.setflags(write=False)
         results = tuple(EnergyZoneResult(z.zone_id,z.name,z.area_m2,tuple(energy[i].sum(axis=0))) for i,z in enumerate(request.zones))
@@ -432,4 +575,6 @@ class EnergyRunner:
         return EnergyResult(commands=(command,),warnings=tuple(warnings),request=request,zone_results=results,
             hour_of_year=tuple(range(request.start_hour,request.start_hour+request.hours)),zone_hourly_energy_kwh=energy,
             zone_temperature_c=temperatures,final_state=checkpoint,max_balance_residual_w=maximum_residual,
-            warmup=tuple(history),surface_hours=tuple(surfaces),temporal_scale=self.temporal_scale,spatial_scale=self.spatial_scale)
+            warmup=tuple(history),surface_hours=tuple(surfaces),temporal_scale=self.temporal_scale,spatial_scale=self.spatial_scale,
+            **(dict(zip(('zone_latent_cooling_w','zone_sensible_cooling_w','zone_humidity_ratio','zone_relative_humidity',
+                         'zone_dehumidification_kg_s'),latent_arrays),max_moisture_residual_kg_s=max_moisture_residual) if latent_arrays is not None else {}))

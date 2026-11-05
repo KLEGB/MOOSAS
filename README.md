@@ -232,3 +232,7 @@ For technical questions: junx026@gmail.com, liyihui23@mails.tsinghua.edu.cn
 Annual Radiance daylight (DA, UDI, area-weighted sDA and direct-sun ASE),
 including TTL optical/airflow properties and runnable NBuilding verification,
 is documented in [doc/annual_daylight.md](doc/annual_daylight.md).
+
+## CETUS 1.9.4 潜热负荷接入
+
+基于 energyv135/eab3656；默认关闭，使用已有模型/空间 settings 持久化，详见 [接入与 NBuilding 验证](doc/CETUS_1.9.4_integration.md)。不新增 RDF 实体或原生引擎。

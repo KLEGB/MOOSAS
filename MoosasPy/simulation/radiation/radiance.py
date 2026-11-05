@@ -1,7 +1,7 @@
 from ...utils import shapely
 from datetime import datetime
 from ...transform.geometry.geos import Projection
-from ...transform.geometry.planar import planar_surface
+from ...transform.geometry.geos import planar_surface
 
 
 def _mesh_to_radiance_object(geos, material, object_id):

@@ -127,7 +127,7 @@ def _triangulate_opaque(moFace:MoosasElement)->list[shapely.Geometry]:
         actual=getattr(gls,'face',None)
         if actual is None:actual=gls.representation()
         holes.extend(p for p in mixItemListToList(actual) if not shapely.is_empty(p))
-    from ...transform.geometry.planar import planar_surface
+    from ...transform.geometry.geos import planar_surface
     baseBrep = [planar_surface(shapely.polygons(proj.toUV(face))) for face in baseBrep]
     baseBrep = shapely.union_all(baseBrep)
     holes = [proj.toUV(face) for face in holes]

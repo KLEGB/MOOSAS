@@ -46,6 +46,8 @@ class EnergyDefaults:
     lighting_w_m2: float = 5.
     infiltration_ach: float = .5
     night_ach: float = .5
+    occupant_moisture_kg_h: float = .06
+    cooling_rh_fraction: float = .6
 
     def __post_init__(self):
         for key, value in asdict(self).items():
@@ -54,10 +56,10 @@ class EnergyDefaults:
         for key in ('wall_u_value','window_u_value','inside_film_w_m2k','ground_contact_w_m2k','cooling_cop','heating_cop'):
             if getattr(self,key)<=0:
                 raise ValueError(f'EnergyDefaults.{key} must be positive')
-        for key in ('opaque_capacity_j_m2k','slab_capacity_j_m2k','occupant_density','occupant_heat_w','fresh_air_m3_h_person','equipment_w_m2','lighting_w_m2','infiltration_ach','night_ach'):
+        for key in ('opaque_capacity_j_m2k','slab_capacity_j_m2k','occupant_density','occupant_heat_w','fresh_air_m3_h_person','equipment_w_m2','lighting_w_m2','infiltration_ach','night_ach','occupant_moisture_kg_h'):
             if getattr(self,key)<0:
                 raise ValueError(f'EnergyDefaults.{key} must be nonnegative')
-        for key in ('opaque_emissivity','glass_emissivity','solar_reflectance','glass_solar_reflectance','solar_transmittance','internal_radiant_fraction','solar_floor_fraction','ground_albedo'):
+        for key in ('opaque_emissivity','glass_emissivity','solar_reflectance','glass_solar_reflectance','solar_transmittance','internal_radiant_fraction','solar_floor_fraction','ground_albedo','cooling_rh_fraction'):
             if not 0<=getattr(self,key)<=1:
                 raise ValueError(f'EnergyDefaults.{key} must be in 0..1')
 
@@ -172,6 +174,10 @@ class ZoneRequest:
     cool_setpoint_c: np.ndarray
     ventilation_m3_h: np.ndarray
     hvac_enabled: np.ndarray
+    people_moisture_kg_s: np.ndarray | None = None
+    fresh_air_m3_h: np.ndarray | None = None
+    infiltration_m3_h: np.ndarray | None = None
+    cool_rh_fraction: np.ndarray | None = None
 
     def __post_init__(self):
         if not self.zone_id or not self.surfaces or len({s.surface_id for s in self.surfaces})!=len(self.surfaces):
@@ -212,6 +218,7 @@ class EnergyRequest:
     start_hour: int = 0
     hours: int = 8760
     warnings: tuple[str, ...] = ()
+    latent_enabled: bool = False
 
     def __post_init__(self):
         if not self.zones or len({z.zone_id for z in self.zones})!=len(self.zones):
@@ -227,6 +234,25 @@ class EnergyRequest:
             values=np.asarray(getattr(self.weather,key))
             if values.shape!=(8760,) or not np.all(np.isfinite(values)):
                 raise ValueError(f'weather.{key}: requires 8760 finite values')
+        if not isinstance(self.latent_enabled,bool):
+            raise ValueError('latent.enabled must be a boolean')
+        if self.latent_enabled:
+            humidity = np.asarray(self.weather.humidity_ratio)
+            if humidity.shape!=(8760,) or not np.isfinite(humidity).all() or np.any(humidity<0):
+                raise ValueError('weather.humidity_ratio requires 8760 nonnegative finite kg/kg values')
+            for zone in self.zones:
+                for key in ('people_moisture_kg_s','fresh_air_m3_h','infiltration_m3_h','cool_rh_fraction'):
+                    raw = getattr(zone,key)
+                    if raw is None:
+                        raise ValueError(f'{zone.zone_id}: latent input {key} is missing')
+                    values = readonly(raw)
+                    if values.shape!=(8760,) or np.any(values<0):
+                        raise ValueError(f'{zone.zone_id}: invalid {key}')
+                    object.__setattr__(zone,key,values)
+                if np.any(zone.cool_rh_fraction<=0) or np.any(zone.cool_rh_fraction>1):
+                    raise ValueError('zone_c_hum must be in (0,1] for latent loads')
+                if not np.allclose(zone.fresh_air_m3_h+zone.infiltration_m3_h,zone.ventilation_m3_h,rtol=1e-12,atol=1e-12):
+                    raise ValueError('Latent airflows must sum to sensible ventilation')
         if np.any(self.weather.pressure<=0) or np.any(self.weather.sky_temperature<=0) or np.any(self.weather.wind_speed<0):
             raise ValueError('Weather requires positive pressure, Kelvin sky temperature, and nonnegative wind')
 
@@ -670,7 +696,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                        irradiance_by_surface=None, schedule_path=None, require_radiation=False,
                        core=None, temporal_scale=None, spatial_scale=None,
                        template_id=None, template_path=None, template_context=None,
-                       template_overrides_model=False):
+                       template_overrides_model=False, latent=None):
     """Build CES3 v2 requests; shared surfaces are resolved independently per owner.
 
     Override keys are element Uids or complete surface-side IDs. Legacy seasonal
@@ -693,6 +719,10 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     if require_radiation and not irradiance_by_surface:
         raise ValueError('CETUS requires hourly incident irradiance_by_surface; seasonal zone radiation cannot be reused')
     config = getattr(model,'energy_settings',{})
+    latent_config = config.get('latent',{}) if latent is None else latent
+    if not isinstance(latent_config,dict) or set(latent_config)-{'enabled'} or not isinstance(latent_config.get('enabled',False),bool):
+        raise ValueError('latent accepts only {"enabled": bool}')
+    latent_enabled = latent_config.get('enabled',False)
     surface_overrides = {**config.get('surface_overrides',{}), **(surface_overrides or {})}
     zone_overrides = {**config.get('zone_overrides',{}), **(zone_overrides or {})}
     from ...model.io.gbxml.energy import validate as validate_external_thermal_model
@@ -797,7 +827,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                     if after and not before:normal=-normal
                     elif before==after and np.dot(normal,center-room_center)<0:normal=-normal
                 projection = Projection(Vector(center),Vector(normal))
-                from ...transform.geometry.planar import planar_surface,polygon_parts
+                from ...transform.geometry.geos import planar_surface,polygon_parts
                 uv=[p for face in np.asarray(element.face).flatten() for p in polygon_parts(planar_surface(projection.toUV(face)))]
                 footprint = shapely.union_all([shapely.Polygon(p.exterior) for p in uv])
                 openings = list(element.glazingElement)
@@ -928,7 +958,11 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
             float(settings.get('initial_temperature_c',(heat[0]+cool[0])/2)),
             float(settings.get('internal_radiant_fraction',defaults.internal_radiant_fraction)),
             float(settings.get('solar_floor_fraction',defaults.solar_floor_fraction)),readonly(internal),readonly(lighting),readonly(equipment),
-            readonly(heat),readonly(cool),readonly(vent),readonly(program('hvac_enabled',1. if space.conditioned else 0.)))
+            readonly(heat),readonly(cool),readonly(vent),readonly(program('hvac_enabled',1. if space.conditioned else 0.)),
+            people_moisture_kg_s=readonly(density*area*program('zone_popmoisture',defaults.occupant_moisture_kg_h)/3600) if latent_enabled else None,
+            fresh_air_m3_h=readonly(mechanical_ach*volume+density*program('zone_pfav',defaults.fresh_air_m3_h_person)*area) if latent_enabled else None,
+            infiltration_m3_h=readonly(ach*volume) if latent_enabled else None,
+            cool_rh_fraction=readonly(program('zone_c_hum',defaults.cooling_rh_fraction)) if latent_enabled else None)
         rad = []
         for surface in surfaces:
             prescribed = (irradiance_by_surface or {}).get(surface.surface_id,(irradiance_by_surface or {}).get(surface.source_element_id))
@@ -951,4 +985,4 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         matrix.setflags(write=False)
         requests.append(zone);irradiation.append(matrix)
     if not requests: raise ValueError('No zones selected')
-    return EnergyRequest(tuple(requests),weather,tuple(irradiation),int(start_hour),int(hours),tuple(dict.fromkeys(notes)))
+    return EnergyRequest(tuple(requests),weather,tuple(irradiation),int(start_hour),int(hours),tuple(dict.fromkeys(notes)),latent_enabled=latent_enabled)

@@ -16,7 +16,7 @@ class WeatherData:
     weather_file: str
     hour_of_year: np.ndarray
     temperature: np.ndarray
-    humidity_ratio: np.ndarray
+    humidity_ratio: np.ndarray  # kg water / kg dry air; legacy CSV is g/kg
     global_radiation: np.ndarray
     diffuse_radiation: np.ndarray
     ground_temperature: np.ndarray

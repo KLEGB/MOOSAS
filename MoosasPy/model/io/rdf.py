@@ -1838,8 +1838,17 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
 
     from .gbxml.energy import from_graph
     from_graph(model, rdfGraph)
-    from .adapter_openings import read_adapter_openings
-    read_adapter_openings(model,rdfGraph)
+    # Legacy/native RDF has no adapter-opening payload. Do not require an
+    # optional adapter reader merely to restore the ordinary model/settings.
+    try:
+        from .adapter_openings import read_adapter_openings
+    except ModuleNotFoundError as exc:
+        if exc.name != __package__ + '.adapter_openings':
+            raise
+        if any('adapter' in str(predicate).lower() for predicate in rdfGraph.predicates()):
+            raise ValueError('RDF adapter-opening payload requires its missing reader') from exc
+    else:
+        read_adapter_openings(model,rdfGraph)
     del rdfGraph._decode_element_cache
     return model
 

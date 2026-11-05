@@ -267,3 +267,54 @@ python -B test/accept_cetus_energy.py --template public_A_cold_GB55015-2021_OFFI
 ```
 
 验收脚本保存 JSON 库与引擎哈希、逐表面解析值、边界表、逐时能耗和最终状态。测试覆盖所有 55 个模板的实际二进制注册和计算、自定义 JSON 数值修改、运行覆盖、典型周强度换算，以及三种模型格式的往返。
+
+## CETUS 1.9.4：建筑侧理想潜热负荷
+
+本次以 `energyv135` 的 `eab365642545ad0d3b9da9f7f69d2d3beac2ef07` 为基线，
+将已交付 CETUS 1.9.4 的水汽平衡接入现有 `input.py` / `runner.py`。
+1.9.4 的原生显热 Go 内核与 1.9.3 相同，因此继续使用本目录既有的 CES3 v2
+Windows/Linux 可执行文件，不重编译、不增加传输字段或新的引擎进程。
+
+```python
+model.energy_settings['latent'] = {'enabled': True}  # 缺省 false
+space.settings['zone_popmoisture'] = 0.06  # kg/(h person)，或已有日程名
+space.settings['zone_c_hum'] = 0.60       # 0–1，复用已有湿度设定参数
+result = EnergyRunner(model=model, weather=weather, hours=24).run()
+print(result.latent_load)
+```
+
+也可传 `EnergyRunner(..., latent={'enabled': True})`，覆盖模型的开关。
+现有 `zone_overrides` 可以按热区覆盖上述参数；人员密度仍使用 `zone_ppsm`。
+新默认值仅为人员产湿 0.06 kg/(h·人)、缺省 RH 上限 0.6，均为可编辑先验。
+不增加 RDF 类、谓词体系或 element 子类，使用已有模型/空间 settings 及
+energy metadata 保存、恢复参数与日程。新参数作用于空间，不添加到墙窗上。
+
+每小时在显热解之后计算：
+`G + m_f*(w_out-w_zone) + m_i*(w_out-w_zone) - D = 0`。
+新风包括既有按人数新风以及显式 `zone_mechanical_ach` 的室外补风等效量；
+渗风/夜间通风沿用既有占用时段选择。两部分流量之和严格等于显热输入流量。
+干燥外气的负湿负荷先抵消人员产湿，再裁剪净除湿需求。显热内扰不得重复包含人员潜热。
+
+湿度控制沿用现有 `hvac_enabled` 日程。启用时，即使没有显热制冷仍可产生潜热冷负荷；
+关闭时没有除湿，返回自由湿平衡。零交换且有产湿的无控热区没有稳态解，湿度数组为 NaN，
+回调中为 None，并输出 warning；自由数学解过饱和也记录 warning，不能作为有效物理湿度使用。
+不引入蓄湿、材料吸放湿、实际盘管、加湿、再热或潜热电耗，也不把潜热加入耦合热流。
+
+结果扩展在现有 `EnergyResult` 中：
+
+- `zone_latent_cooling_w`、`zone_sensible_cooling_w`：热区×小时的热负荷 W；二者相加为总冷负荷。
+- `zone_humidity_ratio`：kg/kg 干空气；`zone_relative_humidity`：0–1（无控超饱和数学解会超过 1）。
+- `zone_dehumidification_kg_s`：理想除湿质量负荷。
+- `latent_load` / `data['latent_load']`：显热/潜热/总冷负荷 kWh、除湿 kg、最大湿量残差。
+- `on_hour` 回调每个热区行的 `latent`：实际湿边界、湿源/流量分项、目标/自由/求解湿度和残差。
+
+原有 `zone_hourly_energy_kwh`、`load`、`data['total']` 继续为现有显热空调电耗、照明与设备电耗，
+不能把新增热负荷直接解释为电耗。关闭开关时不分配湿度结果数组。湿度不增加热预热/断点状态，
+现有热检查点可用于切换诊断开关；请求保留解析后的湿源日程与气象作为输入依据。
+
+天气接口明确为：DeST CSV 第五列 g/kg；`WeatherData.humidity_ratio` kg/kg。
+EPW 转换改用露点及实际气压计算含湿量，避免原经验多项式在低温时产生负值。
+CSV 文件格式保持 g/kg，进入 WeatherData 时除以 1000；直接构造 WeatherData 应提供 kg/kg。
+
+NBuilding 测试：`python -m test.run_cetus194_nbuilding`。
+详见 `doc/CETUS_1.9.4_integration.md` 和 `test/test_cetus194.py`。

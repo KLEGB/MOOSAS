@@ -2414,3 +2414,23 @@ bool
 #    if vec_length(vec1.array-vec2.array , True) < geom.POINT_PRECISION:
 #        return True
 #    return False
+
+
+def polygon_parts(geometry):
+    """Return polygon leaves while excluding line/point repair remnants."""
+    if geometry.is_empty:
+        return []
+    if geometry.geom_type == 'Polygon':
+        return [geometry]
+    if geometry.geom_type in ('MultiPolygon','GeometryCollection'):
+        return [polygon for part in shapely.get_parts(geometry) for polygon in polygon_parts(part)]
+    return []
+
+
+def planar_surface(geometry):
+    """Resolve projected polygon topology, retaining holes and polygon parts."""
+    geometry = shapely.force_2d(geometry)
+    if geometry.geom_type in ('LinearRing','LineString'):
+        geometry = shapely.Polygon(geometry)
+    repaired = shapely.make_valid(geometry)
+    return shapely.union_all(polygon_parts(repaired))

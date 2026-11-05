@@ -1,0 +1,53 @@
+{
+  "base_commit": "eab365642545ad0d3b9da9f7f69d2d3beac2ef07",
+  "model": "NBuilding.rdf",
+  "zones": 37,
+  "hours": 8760,
+  "zone_hours": 324120,
+  "total_area_m2": 1793.52,
+  "runs": {
+    "off": {
+      "seconds": 38.94112302500071,
+      "max_thermal_balance_residual_w": 2.2258973331190646e-08,
+      "warmup_cycles": 15,
+      "latent_load": {
+        "enabled": false
+      },
+      "electricity_kwh": 161164.0234214473,
+      "warnings": [
+        "Regional conduction is adiabatic; inter-zone airflow is excluded.",
+        "Unspecified optics/film/construction values use recorded EnergyDefaults assumptions.",
+        "Incident solar uses an unshaded direct/diffuse weather projection; no geometric shading/reflections."
+      ]
+    },
+    "on": {
+      "seconds": 36.822050315000524,
+      "max_thermal_balance_residual_w": 2.2258973331190646e-08,
+      "warmup_cycles": 15,
+      "latent_load": {
+        "enabled": true,
+        "latent_cooling_kwh": 17492.22075099109,
+        "sensible_cooling_kwh": 129379.56735085271,
+        "total_cooling_kwh": 146871.7881018438,
+        "dehumidification_kg": 25810.05551706876,
+        "max_moisture_residual_kg_s": 1.3552527156068805e-19,
+        "equipment_model": false,
+        "electricity_model": false
+      },
+      "electricity_kwh": 161164.0234214473,
+      "warnings": [
+        "Regional conduction is adiabatic; inter-zone airflow is excluded.",
+        "Unspecified optics/film/construction values use recorded EnergyDefaults assumptions.",
+        "Incident solar uses an unshaded direct/diffuse weather projection; no geometric shading/reflections."
+      ]
+    }
+  },
+  "max_temperature_difference_k": 0.0,
+  "max_existing_energy_difference_kwh": 0.0,
+  "final_thermal_state_exact": true,
+  "humidity_ratio_min": 0.00025,
+  "humidity_ratio_max": 0.02102,
+  "nonfinite_indoor_humidity_count": 0,
+  "weather": "Bundled Beijing-Nanyuan TMY; software test, not NBuilding site calibration",
+  "radiation": "Existing unshaded weather projection; no new Radiance run"
+}

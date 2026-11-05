@@ -65,8 +65,9 @@ class NativeToolResourceTests(unittest.TestCase):
                 rows = list(csv.reader(output_file))
 
         self.assertEqual(len(rows), 8760)
+        # 10 C dew point at 101325 Pa: 7.62 g/kg, retaining DeST CSV units.
         self.assertEqual(rows[0], [
-            "12345", "0", "0", "20.13", "7.65", "100.00", "50.00",
+            "12345", "0", "0", "20.13", "7.62", "100.00", "50.00",
             "10.00", "269.70", "1.00", "16", "101325.00", "9999999",
         ])
 
