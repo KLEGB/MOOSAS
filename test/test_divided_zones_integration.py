@@ -125,7 +125,7 @@ def test_divided_zone_space_center_uses_boundary_centroid():
     "case_name",
     (
         "test0_6spacesIntersection.geo",
-        "test2_cortyard.geo",
+        pytest.param("test2_cortyard.geo", marks=pytest.mark.slow),
         "test4_skylight.geo",
     ),
 )
@@ -294,6 +294,7 @@ fh,0,1.000,-3.500,20.500
     not BEIJING_WEATHER.is_file(),
     reason="requires Beijing 545110 weather data",
 )
+@pytest.mark.slow
 def test_divided_zone_model_runs_energy_simulation():
     model = _transform_divided_case("test0_6spacesIntersection.geo")
 

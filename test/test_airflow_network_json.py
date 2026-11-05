@@ -149,6 +149,7 @@ def test_moosas_afn_binary_generates_prj_from_json():
     assert "0.222222 1.000000 0.500000 0.795970" in project_text
 
 
+@pytest.mark.slow
 def test_rdf_model_runs_airflow_simulation():
     rdf_path = Path(__file__).parent / "caseFile" / "NBuilding.rdf"
     model = MoosasModel.load(rdf_path)

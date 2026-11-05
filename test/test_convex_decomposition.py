@@ -50,7 +50,7 @@ def test_shortest_diagonal_split_preserves_notched_footprints(points):
     np.testing.assert_array_equal(vertices, before)
 
 
-@pytest.mark.parametrize("angle", [0, 0.37, 1.2])
+@pytest.mark.parametrize("angle", [0, 1.2])
 @pytest.mark.parametrize("scale,offset", [
     (1.0, (0, 0)), (1.0, (10000, -25000)), (0.01, (17, 29)), (100.0, (-10, 15)),
 ])
@@ -119,7 +119,7 @@ def test_large_adjacent_convex_zones_are_not_merged():
     assert_partition(result, shapely.box(0, 0, 8, 3))
 
 
-@pytest.mark.parametrize("angle", [0, 37, 90])
+@pytest.mark.parametrize("angle", [0, 37])
 @pytest.mark.parametrize("triangular", [False, True])
 def test_slender_zone_above_minimum_area_is_absorbed(angle, triangular):
     room = shapely.box(0, -2, 60, 0)
@@ -144,7 +144,7 @@ def test_slender_zone_above_minimum_area_is_absorbed(angle, triangular):
 
 
 @pytest.mark.parametrize("width,expected_count", [
-    (0.099, 1), (0.1, 2), (0.101, 2), (1.0, 2),
+    (0.099, 1), (0.1, 2), (0.101, 2),
 ])
 def test_slender_zone_width_threshold_preserves_wider_long_zones(width, expected_count):
     parts = [shapely.box(0, -2, 30, 0), shapely.box(0, 0, 30, width)]

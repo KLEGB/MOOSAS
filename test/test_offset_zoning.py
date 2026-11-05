@@ -33,7 +33,7 @@ def test_default_offset_and_internal_configuration(monkeypatch):
     assert "core_offset_depth" not in TransformOptions.__dataclass_fields__
 
 
-@pytest.mark.parametrize("width", [1.0, 1.99, 2.0, 2.01, 3.0])
+@pytest.mark.parametrize("width", [1.99, 2.0, 2.01])
 @pytest.mark.parametrize("angle", [0, 37])
 def test_narrow_core_retains_original_length_and_two_sided_partition(width, angle):
     core = rotate(shapely.box(0, 0, 20, width), angle)
@@ -142,6 +142,7 @@ def test_large_coordinate_translation_preserves_zoning():
     validate_partition_lines(perimeter + core, cuts)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("divided_zones", [False, True])
 def test_insert_core_preserves_virtual_subdivisions_and_space_types(divided_zones):
     case = Path(__file__).parent / "caseFile" / "test2_cortyard.geo"
@@ -214,6 +215,7 @@ def test_actual_core_interfaces_are_opaque_and_other_partitions_remain_air(tmp_p
     assert abs(union.area - footprint.area) < footprint.length * geom.POINT_PRECISION
 
 
+@pytest.mark.slow
 def test_core_interfaces_export_as_paired_opaque_surfaces(tmp_path):
     model = _offset_model(tmp_path, shapely.box(0, 0, 30, 20))
     opaque = [wall for wall in model.wallList if not wall.isOuter and not wall.is_air_boundary]

@@ -62,10 +62,18 @@ exporters—including OpenFOAM—see the [MoosasPy usage documentation](doc/docu
 
 ## Development
 
-Run the test suite from the repository root:
+Run the fast test suite from the repository root (heavy integration and
+external-solver tests marked `slow` are excluded by default):
 
 ```bash
 python -m pytest -q
+```
+
+Run the slow tier, or the full suite, before releases:
+
+```bash
+python -m pytest -q -m slow
+python -m pytest -q -m "slow or not slow"
 ```
 
 Build and validate distributions:

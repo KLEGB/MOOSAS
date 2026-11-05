@@ -48,6 +48,13 @@ dev = [
   "twine>=5,<8",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = '-m "not slow"'
+markers = [
+  'slow: heavy integration or external-solver tests, excluded by default; run them with `pytest -m slow`, or everything with `pytest -m "slow or not slow"`',
+]
+
 [project.urls]
 Homepage = "https://github.com/KLEGB/moosas"
 Repository = "https://github.com/KLEGB/moosas"

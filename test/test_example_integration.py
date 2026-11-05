@@ -6,6 +6,8 @@ from pathlib import Path
 import math
 import unittest
 
+import pytest
+
 from MoosasPy.simulation.energy.runner import EnergyRunner
 from MoosasPy.simulation.weather import Location
 from MoosasPy.simulation.weather.epw import read_weather_csv
@@ -122,6 +124,7 @@ class ExampleIntegrationTests(unittest.TestCase):
         self.assertEqual(root.findtext("level"), " ".join(str(level) for level in self.model.levelList))
 
     @unittest.skipUnless(BEIJING_WEATHER.is_file(), "requires Beijing 545110 weather data")
+    @pytest.mark.slow
     def test_energy_engine_returns_real_results_for_geometry_fixture(self):
         weather = read_weather_csv(
             BEIJING_WEATHER,

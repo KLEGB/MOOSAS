@@ -144,6 +144,7 @@ def test_ttl_rejects_misspelled_infiltration_key():
         _decode_space_settings(graph, subject, SimpleNamespace(settings={}))
 
 
+@pytest.mark.slow
 def test_ttl_canonical_settings_reach_airflow_without_duplicate_snapshot(tmp_path):
     source=Path(__file__).parent/'caseFile/NBuilding.rdf'
     with contextlib.redirect_stdout((tmp_path/'load.log').open('w')):
@@ -175,6 +176,7 @@ def test_ttl_canonical_settings_reach_airflow_without_duplicate_snapshot(tmp_pat
     assert record['visible_transmittance']==.51
 
 
+@pytest.mark.slow
 def test_real_radiance_unobstructed_sensor(tmp_path):
     """Native transport sanity: horizontal plane receives sky and exact sun."""
     # A tiny notional room supplies only the analysis floor; the optical scene

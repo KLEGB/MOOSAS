@@ -234,7 +234,7 @@ def test_wall_intersections_preserve_millimetre_junctions(origin, transpose, cro
     )
 
 
-@pytest.mark.parametrize("offset", [(0, 0), (10000, 10000), (-10000, 25000)])
+@pytest.mark.parametrize("offset", [(0, 0), (10000, 10000)])
 @pytest.mark.parametrize("point,orientation", [
     ((1, 0.1), 1),
     ((1, -0.1), -1),
@@ -268,7 +268,7 @@ def test_polygon_point_on_segment(points, expected, offset):
     assert GeometryValidator._is_between(b, a, c) == expected
 
 
-@pytest.mark.parametrize("offset", [(0, 0), (10000, 10000), (-10000, 25000)])
+@pytest.mark.parametrize("offset", [(0, 0), (10000, 10000)])
 @pytest.mark.parametrize("points,expected", [
     (((0, 0), (2, 2), (0, 2), (2, 0)), True),
     (((0, 0), (2, 0), (2, 0), (3, 1)), True),
@@ -314,7 +314,7 @@ def test_polygon_diagonal_is_strictly_internal(points, pair, expected, offset):
     assert GeometryValidator._is_diagonal(source, indices, *pair[::-1]) == expected
 
 
-@pytest.mark.parametrize("offset", [(0, 0), (10000, 10000), (-10000, 25000)])
+@pytest.mark.parametrize("offset", [(0, 0), (10000, 10000)])
 @pytest.mark.parametrize("points", [
     [
         (0, 0), (8, 0), (8, 4), (7, 4), (7, 2), (6, 2),

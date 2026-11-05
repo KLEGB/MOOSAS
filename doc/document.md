@@ -827,11 +827,19 @@ The Python distribution includes these resources through `pyproject.toml` and
 
 ## Testing
 
-Tests and fixtures belong under the repository-level `test/` directory. Run the
-full suite from the repository root:
+Tests and fixtures belong under the repository-level `test/` directory. The
+default run excludes tests marked `slow` (heavy integration and external-solver
+runs). Run the fast suite from the repository root:
 
 ```bash
 python -m pytest -q
+```
+
+Run the slow tier, or the full suite, before releases:
+
+```bash
+python -m pytest -q -m slow
+python -m pytest -q -m "slow or not slow"
 ```
 
 The suite covers geometry regressions, model I/O, resource packaging,

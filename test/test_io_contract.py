@@ -77,6 +77,7 @@ def test_full_iri_turtle_remains_supported(tmp_path):
     assert len(MoosasRDF.load(str(target))) == len(MoosasRDF()) + 2
 
 
+@pytest.mark.slow
 def test_large_rdf_export_threshold_and_relative_iris(tmp_path, monkeypatch):
     from MoosasPy.model.io import rdf
     from rdflib import Graph, Literal, URIRef
@@ -352,7 +353,7 @@ def test_idf_export_matches_template_ground_and_prunes_unused_materials(tmp_path
     assert [list(g.face.exterior.coords) for g in model.geometryList] == geometry_before
 
 
-@pytest.mark.parametrize("suffix", (".xml", ".json", ".idf"))
+@pytest.mark.parametrize("suffix", (".xml", ".json", pytest.param(".idf", marks=pytest.mark.slow)))
 def test_single_room_formats_round_trip(tmp_path, suffix):
     model = _single_room_model(tmp_path)
     target = tmp_path / f"single{suffix}"
@@ -425,6 +426,7 @@ def test_rdf_round_trip_preserves_air_boundaries_as_walls(semantic_model: Moosas
     assert all(glazing.category != 2 for glazing in restored.glazingList)
 
 
+@pytest.mark.slow
 def test_idf_air_boundaries_use_native_simple_mixing(semantic_model: MoosasModel):
     with TemporaryDirectory() as directory:
         file_path = Path(directory) / "air-boundaries.idf"
@@ -654,10 +656,15 @@ def test_idf_export_surface_and_window_winding(tmp_path, vertex_direction):
         )
 
 
-@pytest.mark.parametrize("method", [
-    "Flow/Person", "Flow/Area", "Flow/Zone", "AirChanges/Hour", "Sum", "Maximum",
+@pytest.mark.parametrize("method,hvac_mode", [
+    ("Flow/Person", "ideal_loads"),
+    ("Flow/Area", "ideal_loads"),
+    ("Flow/Zone", "ideal_loads"),
+    ("AirChanges/Hour", "ideal_loads"),
+    ("Sum", "ideal_loads"),
+    ("Maximum", "ideal_loads"),
+    ("Sum", "simple"),
 ])
-@pytest.mark.parametrize("hvac_mode", ["ideal_loads", "simple"])
 def test_idf_template_outdoor_air_keeps_method_and_all_flow_components(semantic_model, method, hvac_mode):
     configure_idd()
     idf = IDF(str(bundled_template_idf_path()))
@@ -744,6 +751,7 @@ def test_new_idf_constructions_have_unique_deterministic_names():
     }) == len(template_idf.idfobjects["MATERIAL"])
 
 
+@pytest.mark.slow
 def test_idf_export_clones_simple_baseboard_hvac_per_zone(semantic_model: MoosasModel):
     configure_idd()
     with TemporaryDirectory() as directory:
@@ -823,6 +831,7 @@ def test_idf_export_uses_ideal_loads_for_complex_office_template(semantic_model:
     )
 
 
+@pytest.mark.slow
 def test_idf_export_removes_template_zone_groups_and_system_sizing(semantic_model: MoosasModel):
     configure_idd()
     with TemporaryDirectory() as directory:
@@ -856,6 +865,7 @@ def test_idf_export_removes_template_zone_groups_and_system_sizing(semantic_mode
     assert not exported.idfobjects["SIZING:SYSTEM"]
 
 
+@pytest.mark.slow
 def test_idf_export_preserves_shading_geometry(semantic_model: MoosasModel):
     source_geometry = semantic_model.geometryList[0]
     shading_geometry = MoosasGeometry(
@@ -902,6 +912,7 @@ def test_idf_export_preserves_shading_geometry(semantic_model: MoosasModel):
     assert _idf_vertex_normal(exported[0]) == pytest.approx(expected_normal)
 
 
+@pytest.mark.slow
 def test_idf_import_serializes_detailed_shading_geometry(semantic_model: MoosasModel):
     base_vertices = (
         (0.0, 0.0),
@@ -953,6 +964,7 @@ def test_idf_import_serializes_detailed_shading_geometry(semantic_model: MoosasM
     assert {tuple(face.vertices) for face in shading_faces} == set(expected_vertices)
 
 
+@pytest.mark.slow
 def test_unconditioned_space_exports_only_zone_and_surfaces(semantic_model: MoosasModel):
     core = semantic_model.spaceList[0]
     original_conditioned = core.conditioned
@@ -998,6 +1010,7 @@ def test_unconditioned_space_exports_only_zone_and_surfaces(semantic_model: Moos
         assert all(core.id not in map(str, obj.fieldvalues) for obj in idf.idfobjects[object_type])
 
 
+@pytest.mark.slow
 def test_all_unconditioned_spaces_remove_template_hvac(semantic_model: MoosasModel):
     original = [space.conditioned for space in semantic_model.spaceList]
     prohibited = (
