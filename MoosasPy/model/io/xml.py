@@ -40,7 +40,7 @@ def _has_serializable_space_topology(space) -> bool:
 def build_xml(model: MoosasModel, write_geometry: bool = False) -> ET.Element:
     """Build the XML representation of a complete Moosas model."""
     root = ET.Element("model")
-    from ..energy_metadata import encode_energy_metadata
+    from ..metadata import encode_energy_metadata
     ET.SubElement(root, "energy_metadata").text = encode_energy_metadata(model)
     elements = {"MoosasFace": set(), "MoosasSkylight": set(), "MoosasWall": set(), "MoosasGlazing": set()}
     spaces = [space for space in model.spaceList + model.voidList if _has_serializable_space_topology(space)]
@@ -184,7 +184,7 @@ def writeXml(file_path, model: MoosasModel, writeGeometry=False) -> ET.ElementTr
 def loadXml(filePath, geoPath):
     # initialize model
     model: MoosasModel = MoosasModel()
-    from ..thermal_templates import configure_model_resources
+    from ..building_templates import configure_model_resources
 
     configure_model_resources(model)
     # A model sidecar is already transformed geometry: preserve its SI values.
@@ -351,7 +351,7 @@ def loadXml(filePath, geoPath):
             Uid = str(element.get('id', None))
             spc = MoosasSpace(_floor=topology["Floor"], _ceiling=topology["ceiling"], _edge=topology["Edge"], Uid=Uid)
 
-            spc.settings.pop('_thermal_template', None)
+            spc.settings.pop('_building_template', None)
             for key in element['setting']:
                 try:
                     spc.settings[key] = float(element['setting'][key])
@@ -376,7 +376,7 @@ def loadXml(filePath, geoPath):
             model.voidList.append(space)
         else:
             model.spaceList.append(space)
-    from ..energy_metadata import apply_energy_metadata
+    from ..metadata import apply_energy_metadata
     apply_energy_metadata(model,root.get('energy_metadata'))
     return model
 

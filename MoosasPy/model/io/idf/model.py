@@ -32,7 +32,6 @@ SpaceDefault = {
     'zone_equipment': 3.8,  #ZoneEquipmentDefault
     'zone_lighting': 5,  #ZoneLightDefault
     'zone_infiltration': 0.5,  #ZoneInfiltrationDefault
-    'zone_nightACH': 1,
 }
 FaceDefault = {
     'key': 'BuildingSurface:Detailed',

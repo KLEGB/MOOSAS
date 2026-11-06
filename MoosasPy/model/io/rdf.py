@@ -8,7 +8,7 @@ from rdflib import Graph, Namespace, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, GEO, BRICK, WGS, XSD
 
 from ..model import *
-from ..thermal_templates import validate_template_snapshot
+from ..building_templates import validate_template_snapshot
 from ...utils import np, shapely, mixItemListToList, mixItemListToObject, searchBy, generate_code, path
 from ...utils.constant import geom
 
@@ -93,7 +93,7 @@ def _is_numeric_text(value) -> bool:
 
 def _setting_literal(value):
     """Preserve booleans, numeric strings, arrays and nested settings exactly."""
-    from ..energy_metadata import _json_value
+    from ..metadata import _json_value
     if hasattr(value, 'tolist'):
         value = value.tolist()
     if isinstance(value, (dict, list, tuple)):
@@ -309,7 +309,7 @@ class MoosasRDF(Graph):
         None
             This function does not return any value.
         """
-        from ..energy_metadata import encode_energy_metadata
+        from ..metadata import encode_energy_metadata
         self.add((URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata'),
                   Literal(encode_energy_metadata(model, include_settings=False))))
         self.buildOntology(model)
@@ -541,11 +541,12 @@ class MoosasRDF(Graph):
         """constructing hierarchy for class in moosas
         """
         # program
-        item = list(model.buildingTemplate.keys())[0]
-        for zInfo in model.buildingTemplate[item].keys():
-            self.add((self.moosas.term(zInfo), self.rdfs.subPropertyOf, self.moosas.Program))
-            self.add((self.moosas.term(zInfo), self.rdf.type, self.moosas.ZoneInfo))
-            self.add((self.moosas.term(zInfo), self.moosas.Uid, Literal(zInfo)))
+        if model.buildingTemplate:
+            item = list(model.buildingTemplate.keys())[0]
+            for zInfo in model.buildingTemplate[item].keys():
+                self.add((self.moosas.term(zInfo), self.rdfs.subPropertyOf, self.moosas.Program))
+                self.add((self.moosas.term(zInfo), self.rdf.type, self.moosas.ZoneInfo))
+                self.add((self.moosas.term(zInfo), self.moosas.Uid, Literal(zInfo)))
 
         # geometry
         self.add((self.geo.hasGeometry, self.rdfs.subPropertyOf, self.moosas.Geometry))
@@ -1363,7 +1364,7 @@ def _import_schedule_nodes(rdfGraph: MoosasRDF, model: MoosasModel):
 
 
 def _decode_space_settings(rdfGraph: MoosasRDF, spaceUri, spc: MoosasSpace):
-    spc.settings.pop('_thermal_template', None)
+    spc.settings.pop('_building_template', None)
     spcSettings = mixItemListToList(rdfGraph.getObject(spaceUri, rdfGraph.moosas.hasSetting))
     for key in spcSettings:
         if str(key) == 'zone_inflitration':
@@ -1579,7 +1580,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     rdfGraph: MoosasRDF = MoosasRDF.load(input_path, fileFormat=fileFormat)
     rdfGraph._decode_element_cache={}
     model = MoosasModel()
-    from ..thermal_templates import configure_model_resources
+    from ..building_templates import configure_model_resources
 
     configure_model_resources(model)
     _import_schedule_nodes(rdfGraph, model)
@@ -1811,7 +1812,7 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     # Space settings are available only after the topology pass. Apply legacy
     # U/SHGC fallbacks now, while preserving all RDF-supplied element settings.
     _apply_element_parameter_defaults(model, rdfGraph)
-    from ..energy_metadata import apply_energy_metadata
+    from ..metadata import apply_energy_metadata
     metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
     apply_energy_metadata(model, str(metadata) if metadata is not None else None,
                           include_settings=False)

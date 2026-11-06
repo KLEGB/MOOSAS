@@ -1,9 +1,9 @@
-"""Typed energy metadata shared by XML/JSON and RDF model persistence."""
+"""Typed model metadata shared by XML/JSON and RDF persistence."""
 from __future__ import annotations
 
 import json
 
-from .thermal_templates import validate_template_snapshot
+from .building_templates import validate_template_snapshot
 
 
 def _json_value(value):
@@ -27,16 +27,18 @@ def encode_energy_metadata(model, *, include_settings: bool = True):
                 record.update(settings=element.settings,
                     explicit_settings=sorted(element.explicit_settings))
             elements[str(element.Uid)] = record
-    return json.dumps(dict(schema_version=1,energy_settings=getattr(model,'energy_settings',{}),
-        schedules=model.schedule,spaces=spaces,elements=elements),ensure_ascii=False,allow_nan=False,default=_json_value)
+    return json.dumps(dict(schema_version=2,metadata=getattr(model,'metadata',{}),
+        energy_settings=getattr(model,'energy_settings',{}),schedules=model.schedule,
+        spaces=spaces,elements=elements),ensure_ascii=False,allow_nan=False,default=_json_value)
 
 
 def apply_energy_metadata(model, value, *, include_settings: bool = True):
     if not value:
         return
     data = json.loads(value)
-    if data.get('schema_version') != 1:
+    if data.get('schema_version') not in {1, 2}:
         raise ValueError('Unsupported energy model metadata version')
+    model.metadata = data.get('metadata', {})
     model.energy_settings = data.get('energy_settings',{})
     model.schedule = data.get('schedules',model.schedule)
     for space in list(model.spaceList) + list(model.voidList):

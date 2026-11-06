@@ -431,12 +431,20 @@ def _daylight_metrics(total, direct, sensors, spaces, request):
         uid = str(space.id)
         mask = supplied.get(uid, space.settings.get('daylight_occupied_mask'))
         if mask is None:
-            start = float(space.settings.get('zone_work_start', 8))
-            end = float(space.settings.get('zone_work_end', 18))
-            if not 0 <= start <= 24 or not 0 <= end <= 24:
-                raise ValueError(f'{uid}: invalid daily daylight hours')
-            hours = np.arange(8760) % 24 + .5
-            mask = (hours >= start) & (hours < end) if start <= end else (hours >= start) | (hours < end)
+            settings = space.settings
+            if ('_building_template' in settings and
+                    'zone_ppsm' not in getattr(space, 'explicit_settings', ())):
+                from ...model.building_templates import template_parameter
+                occupancy = template_parameter(settings, 'zone_ppsm')
+                values = np.asarray(occupancy)
+                mask = (np.full(8760, bool(values > 0)) if values.ndim == 0 else values > 0)
+            else:
+                start = float(settings.get('zone_work_start', 8))
+                end = float(settings.get('zone_work_end', 18))
+                if not 0 <= start <= 24 or not 0 <= end <= 24:
+                    raise ValueError(f'{uid}: invalid daily daylight hours')
+                hours = np.arange(8760) % 24 + .5
+                mask = (hours >= start) & (hours < end) if start <= end else (hours >= start) | (hours < end)
         mask = np.asarray(mask)
         if mask.shape != (8760,) or not np.isin(mask, [False, True]).all():
             raise ValueError(f'{uid}: occupancy requires 8760 boolean entries')

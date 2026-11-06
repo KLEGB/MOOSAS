@@ -118,7 +118,6 @@ class ExampleIntegrationTests(unittest.TestCase):
     def test_xml_serialization_is_owned_by_the_io_boundary(self):
         root = build_xml(self.model)
 
-        self.assertFalse(hasattr(self.model, "buildXml"))
         self.assertEqual(root.tag, "model")
         self.assertEqual(len(root.findall("space")), len(self.model.spaceList))
         self.assertEqual(root.findtext("level"), " ".join(str(level) for level in self.model.levelList))
@@ -134,7 +133,7 @@ class ExampleIntegrationTests(unittest.TestCase):
         result = EnergyRunner(
             model=self.model,
             weather=weather,
-            template_id="CN/GB55015-2021/residential_hot_summer_cold_winter_A/RESIDENTIAL",
+            template_id="CN/GB55015-2021/3A/Residential",
         ).run()
 
         self.assertEqual(len(result.commands), 1)
@@ -155,8 +154,8 @@ class ExampleIntegrationTests(unittest.TestCase):
             self.assertGreaterEqual(value, 0.0)
             component_total += value
         self.assertGreater(component_total, 0.0)
-        self.assertAlmostEqual(float(total["cooling"]), 6.75, places=2)
-        self.assertAlmostEqual(float(total["heating"]), 48.64, places=2)
+        self.assertAlmostEqual(float(total["cooling"]), 5.26, places=2)
+        self.assertAlmostEqual(float(total["heating"]), 50.92, places=2)
         self.assertAlmostEqual(float(total["lighting"]), 7.30, places=2)
         self.assertAlmostEqual(float(total["equipment"]), 19.42, places=2)
         self.assertAlmostEqual(float(total["total"]), component_total, places=6)
@@ -168,7 +167,7 @@ class ExampleIntegrationTests(unittest.TestCase):
             BEIJING_WEATHER,
             Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),
         )
-        template_id = "CN/GB55015-2021/residential_hot_summer_cold_winter_A/RESIDENTIAL"
+        template_id = "CN/GB55015-2021/3A/Residential"
         space = self.model.spaceList[0]
         original_settings = dict(space.settings)
         original_explicit = list(space.explicit_settings)

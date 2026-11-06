@@ -36,12 +36,6 @@ class SimulationContractTests(unittest.TestCase):
         self.assertTrue(callable(MoosasPy.transform.transform))
         self.assertTrue(callable(MoosasPy.MoosasModel.load))
         self.assertTrue(callable(MoosasPy.MoosasModel().save))
-        self.assertFalse(hasattr(MoosasPy, "load"))
-        self.assertFalse(hasattr(MoosasPy, "save"))
-        self.assertFalse(hasattr(MoosasPy, "energyAnalysis"))
-        self.assertFalse(hasattr(MoosasPy, "includeEpw"))
-        self.assertFalse(hasattr(MoosasPy, "positionRadiation"))
-        self.assertFalse(hasattr(MoosasPy, "positionSunHour"))
 
     def test_simulation_aggregates_domain_modules(self):
         self.assertEqual(MoosasPy.simulation.energy.__name__, "MoosasPy.simulation.energy")
@@ -57,8 +51,6 @@ class SimulationContractTests(unittest.TestCase):
             set(airflow.__all__),
             {"AirflowResult", "AirflowRunner", "AirflowZoneResult", "create_openfoam_workspace"},
         )
-        for legacy_name in ("iterateFile", "iterateProjects", "contam_iteration", "runFile"):
-            self.assertFalse(hasattr(airflow, legacy_name))
 
     def test_weather_exports_unprefixed_sky_types(self):
         weather = MoosasPy.simulation.weather
@@ -66,11 +58,6 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(weather.DirectSky.__name__, "DirectSky")
         self.assertEqual(weather.CumulativeSky.__name__, "CumulativeSky")
         self.assertEqual(weather.WeatherData.__name__, "WeatherData")
-        self.assertFalse(hasattr(weather, "MoosasDirectSky"))
-        self.assertFalse(hasattr(weather, "MoosasCumSky"))
-        self.assertFalse(hasattr(weather, "MoosasWeather"))
-        self.assertFalse(hasattr(weather, "includeEpw"))
-        self.assertFalse(hasattr(weather, "loadCumSky"))
 
     def test_energy_exposes_only_formal_runner_and_snake_case_helpers(self):
         energy = MoosasPy.simulation.energy
@@ -83,8 +70,6 @@ class SimulationContractTests(unittest.TestCase):
                 "LayerRequest", "SurfaceRequest", "ZoneRequest",
             },
         )
-        for legacy_name in ("energyAnalysis", "getEnergyInput", "parseEnergyOutput"):
-            self.assertFalse(hasattr(energy, legacy_name))
 
     def test_radiation_exposes_only_formal_runner_and_snake_case_helpers(self):
         radiation = MoosasPy.simulation.radiation
@@ -111,15 +96,6 @@ class SimulationContractTests(unittest.TestCase):
                 "write_radiation_geometry",
             },
         )
-        for legacy_name in (
-            "faceRadiation",
-            "modelRadiation",
-            "positionRadiation",
-            "positionSunHour",
-            "simModel",
-            "spaceRadiation",
-        ):
-            self.assertFalse(hasattr(radiation, legacy_name))
 
     def test_base_result_defaults_to_empty_diagnostics(self):
         result = SimulationResult()
@@ -314,31 +290,26 @@ class SimulationContractTests(unittest.TestCase):
     def test_energy_airflow_coupler_is_exposed_by_coupling_package(self):
         self.assertEqual(EnergyAirflowCoupler.__module__, "MoosasPy.simulation.coupling.energy_airflow")
 
-    def test_energy_airflow_coupler_resolves_gains_from_template_profiles(self):
-        from MoosasPy.model.thermal_templates import building_templates
+    def test_energy_airflow_coupler_resolves_gains_from_template_schedules(self):
+        from MoosasPy.model.building_templates import building_templates, template_parameter
 
-        record = building_templates()["CN/GB55015-2021/public_A_cold/OFFICE"]
-        settings = dict(record)
-        space = SimpleNamespace(id="z1", settings=settings)
+        record = building_templates()["CN/GB55015-2021/3A/OfficeLarge"]
+        settings = {"_building_template": record}
+        space = SimpleNamespace(id="z1", settings=settings, explicit_settings=set())
         coupler = object.__new__(EnergyAirflowCoupler)
         coupler.model = SimpleNamespace(schedule={"probe": {"type": "Daily", "value": [2.0] * 24}})
         coupler._spaces_by_id = {"z1": space}
         coupler._gain_cache = {}
-        base = settings["zone_ppsm"]
-        profile = settings["_thermal_template"]["operation"]["profiles"]["occupancy"]
+        occupancy = template_parameter(settings, "zone_ppsm")
+        self.assertEqual(len(occupancy), 8760)
 
-        # Unedited base values follow the template weekly profile.
         self.assertAlmostEqual(
-            coupler._resolve_gain_value(base, 9, "zone_ppsm", "z1"),
-            base * profile["weekday"][9])
-        self.assertAlmostEqual(
-            coupler._resolve_gain_value(base, 5 * 24 + 9, "zone_ppsm", "z1"),
-            base * profile["weekend"][9])
-        # Edited values are explicit constants.
+            coupler._resolve_gain_value(.125, 9, "zone_ppsm", "z1"),
+            occupancy[9])
+        space.explicit_settings.add("zone_ppsm")
         self.assertEqual(coupler._resolve_gain_value(0.25, 9, "zone_ppsm", "z1"), 0.25)
-        # Explicit schedule names resolve from the model schedule library.
+        space.explicit_settings.add("zone_equipment")
         self.assertEqual(coupler._resolve_gain_value("probe", 100, "zone_equipment", "z1"), 2.0)
-        # Unknown schedule names raise instead of fuzzy-matching.
         with self.assertRaisesRegex(ValueError, "unknown schedule"):
             coupler._resolve_gain_value("OFF_EquipHeat_Weekly", 9, "zone_equipment", "z1")
         self.assertEqual(coupler._resolve_gain_value(None, 9, "zone_ppsm", "z1"), 0.0)

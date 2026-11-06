@@ -4,7 +4,7 @@ from ..energy.runner import EnergyRunner, build_energy_input
 from ..energy.input import expand_schedule
 from ...transform.geometry.geos import Projection, Vector, Ray
 from ...model import MoosasModel
-from ...model.thermal_templates import template_program
+from ...model.building_templates import template_parameter
 from ..weather import CumulativeSky, WeatherData, build_cumulative_skies
 from ..radiation import calculate_model_radiation, ray_test, write_radiation_geometry
 from ...utils import np, path, os
@@ -55,9 +55,9 @@ class EnergyAirflowCoupler(object):
                     "skylight_area", "floor_area",
                     "summer_solar", "winter_solar", "zone_wallU", "zone_winU", "zone_win_SHGC", "zone_c_temp",
                     "zone_c_hum", "zone_h_temp",
-                    "zone_collingEER", "zone_HeatingEER", "zone_work_start", "zone_work_end", "zone_ppsm", "zone_pfav",
+                    "zone_collingEER", "zone_HeatingEER", "zone_ppsm", "zone_pfav",
                     "zone_popheat",
-                    "zone_equipment", "zone_lighting", "zone_infiltration", "zone_nightACH", "zone_name",
+                    "zone_equipment", "zone_lighting", "zone_infiltration", "zone_name",
                     "zone_summerrad", "zone_winterrad", "zone_template"
                     ]
     AFN_INDEX = ['userName', 'temperature', 'prjIndex', 'prjName', 'heatLoad', 'volume', 'position_x', 'position_y',
@@ -131,12 +131,11 @@ class EnergyAirflowCoupler(object):
             space = self._spaces_by_id.get(str(user))
             settings = space.settings if space is not None else {}
             value = raw
-            # Unedited base values follow the zone template weekly profile,
-            # matching build_energy_input resolution for non-overridden fields.
-            if settings.get(field_name) == raw:
-                absolute = template_program(settings, field_name, raw)
-                if absolute is not None:
-                    value = absolute
+            configured = template_parameter(settings, field_name)
+            explicit = field_name in getattr(space, 'explicit_settings', ()) if space is not None else False
+            matches_template = field_name not in settings or np.array_equal(settings[field_name], raw)
+            if not explicit and configured is not None and matches_template:
+                value = configured
             series = self._gain_cache[key] = expand_schedule(self.model, value, f'{user}/{field_name}')
         return series
 
@@ -1665,5 +1664,3 @@ class EnergyAirflowCoupler(object):
                 "MechanicalVent": [float(v) for v in mech[:len(hoys)]],
             }
         return result
-
-

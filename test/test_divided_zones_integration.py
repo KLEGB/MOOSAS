@@ -300,7 +300,7 @@ def test_divided_zone_model_runs_energy_simulation():
 
     result = EnergyRunner(
         model=model,
-        template_id="CN/GB55015-2021/residential_hot_summer_cold_winter_A/RESIDENTIAL",
+        template_id="CN/GB55015-2021/3A/Residential",
         weather=read_weather_csv(
             BEIJING_WEATHER,
             Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),
@@ -313,8 +313,8 @@ def test_divided_zone_model_runs_energy_simulation():
     assert len(result.data["months"]) == 12
     totals = {key: float(result.data["total"][key]) for key in ("cooling", "heating", "lighting", "equipment", "total")}
     assert all(math.isfinite(value) and value >= 0 for value in totals.values())
-    assert totals["cooling"] == pytest.approx(15.13, abs=0.01)
-    assert totals["heating"] == pytest.approx(77.57, abs=0.01)
+    assert totals["cooling"] == pytest.approx(14.36, abs=0.01)
+    assert totals["heating"] == pytest.approx(78.24, abs=0.01)
     assert totals["lighting"] == pytest.approx(7.30, abs=0.01)
     assert totals["equipment"] == pytest.approx(19.42, abs=0.01)
     assert totals["total"] == pytest.approx(sum(totals[key] for key in ("cooling", "heating", "lighting", "equipment")), abs=0.01)

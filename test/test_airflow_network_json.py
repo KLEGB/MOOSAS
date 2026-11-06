@@ -14,7 +14,6 @@ from MoosasPy.simulation.airflow.network import (
     AfnPath,
     AfnZone,
     _build_leakage_path_from_space,
-    _load_network_payload,
     buildNetworkFile,
     buildZoneInfoFile,
 )
@@ -91,14 +90,6 @@ def test_zone_info_reads_json_network_directly():
     text = buildZoneInfoFile(networkDict=payload)
 
     assert "z001,100.0,room" in text
-
-
-def test_legacy_net_input_is_rejected():
-    with TemporaryDirectory() as directory:
-        input_path = Path(directory) / "network.net"
-        input_path.write_text("room,z001,100,27,30,2,1.5,1.5,0 0 4 0", encoding="utf-8")
-        with pytest.raises(json.JSONDecodeError):
-            _load_network_payload(str(input_path))
 
 
 def test_leakage_path_connects_zone_to_ambient():

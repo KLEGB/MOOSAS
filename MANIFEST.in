@@ -2,6 +2,7 @@ include LICENSE
 
 graft MoosasPy/db
 graft MoosasPy/libs
+prune MoosasPy/db/template/CN
 
 global-exclude __pycache__/*
 global-exclude *.py[cod]

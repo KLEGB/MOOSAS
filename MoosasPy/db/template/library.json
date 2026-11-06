@@ -1,7 +1,39 @@
 {
-  "schema": "moosas.thermal-library",
-  "version": 2,
+  "schema": "moosas.building-template-library",
   "standards": [
-    "CN/GB55015-2021"
-  ]
+    "CN_GB55015-2021"
+  ],
+  "standard_metadata": {
+    "country": "CN",
+    "id": "GB55015-2021",
+    "title": "建筑节能与可再生能源利用通用规范",
+    "source_url": "https://zh.wikisource.org/wiki/GB_55015-2021_建筑节能与可再生能源利用通用规范"
+  },
+  "template_assumptions": {
+    "glass_absorptance": 0.1,
+    "glass": {
+      "inside_emissivity": 0.84,
+      "outside_emissivity": 0.84,
+      "solar_reflectance": 0.4,
+      "solar_transmittance": 0.5,
+      "thermal_mass_j_m2k": 0
+    },
+    "wall": {
+      "inside_emissivity": 0.9,
+      "outside_emissivity": 0.9,
+      "solar_reflectance": 0.3,
+      "thermal_mass_j_m2k": 60000
+    },
+    "slab": {
+      "inside_emissivity": 0.9,
+      "outside_emissivity": 0.9,
+      "solar_reflectance": 0.3,
+      "thermal_mass_j_m2k": 120000
+    },
+    "internal_resistance_m2k_w": 0.2,
+    "ground_base_resistance_m2k_w": 0.2,
+    "unspecified_ground_insulation_r": 1.0,
+    "unspecified_resistance_m2k_w": 1.0
+  },
+  "version": 4
 }

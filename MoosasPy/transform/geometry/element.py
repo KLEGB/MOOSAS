@@ -3390,10 +3390,12 @@ class MoosasSpace(object):
             template = buildingTemplateHint
             buildingTemplateHint = list(self.parent.buildingTemplate.values()).index(template)
             buildingTemplateHint = list(self.parent.buildingTemplate.keys())[buildingTemplateHint]
-        if '_thermal_template' in template:
-            from ...model.thermal_templates import apply_thermal_template
-            apply_thermal_template(self, template, buildingTemplateHint)
+        if template.get('schema') == 'moosas.building-template':
+            from ...model.building_templates import apply_building_template_to_space
+            apply_building_template_to_space(self, template, buildingTemplateHint)
             return
+        if '_building_template' in template:
+            raise ValueError('Unsupported legacy template record; use a version 4 BuildingTemplate')
         self.settings['zone_template'] = buildingTemplateHint
 
         load_intensity_fields = ("zone_ppsm", "zone_equipment", "zone_lighting")

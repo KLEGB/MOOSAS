@@ -307,8 +307,6 @@ def project(root, *, source_name='', source_sha256=None):
                     records.append(dict(source_id=owner,parameter=key,schedule=name,source_schedule_id=ref,xpath=f"//*[@id='{owner}']/@{attr}",source='gbXML'))
                 except (KeyError,ValueError,TypeError) as exc:
                     issue(owner,key,str(exc))
-        if 'zone_infiltration' in settings:
-            settings['zone_nightACH'] = settings['zone_infiltration']
         condition = node.get('conditionType','HeatedAndCooled')
         settings['hvac_enabled'] = 0. if condition in {'Unconditioned','Unheated'} else 1.
         if condition in {'Heated','Cooled'}:

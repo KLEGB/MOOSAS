@@ -1,0 +1,211 @@
+{
+  "BuildingTemplate": {
+    "metadata": {
+      "schema": "moosas.building-template",
+      "id": "CN_GB55015-2021_OfficeLarge_3A",
+      "country": "CN",
+      "standard_name": "GB55015-2021",
+      "standard_source": "https://zh.wikisource.org/wiki/GB_55015-2021_建筑节能与可再生能源利用通用规范",
+      "building_type": "OfficeLarge",
+      "climate_zone": "3A"
+    },
+    "Space": {
+      "air_exchange": {
+        "fresh_air": {
+          "mode": "constant",
+          "unit": "m3/h/person",
+          "value": 30
+        },
+        "infiltration": {
+          "mode": "constant",
+          "unit": "1/h",
+          "value": 0.5
+        }
+      },
+      "internal_gains": {
+        "equipment_power_density": {
+          "file": "schedules/office.sch",
+          "mode": "schedule",
+          "name": "equipment_power_density",
+          "unit": "W/m2"
+        },
+        "lighting_power_density": {
+          "file": "schedules/office.sch",
+          "mode": "schedule",
+          "name": "lighting_power_density",
+          "unit": "W/m2"
+        },
+        "occupancy_density": {
+          "file": "schedules/office.sch",
+          "mode": "schedule",
+          "name": "occupancy_density",
+          "unit": "person/m2"
+        },
+        "occupant_heat": {
+          "mode": "constant",
+          "unit": "W/person",
+          "value": 75
+        }
+      },
+      "system": {
+        "cooling_cop": {
+          "mode": "constant",
+          "unit": "1",
+          "value": 3.5
+        },
+        "cooling_setpoint": {
+          "mode": "constant",
+          "unit": "degC",
+          "value": 26
+        },
+        "heating_cop": {
+          "mode": "constant",
+          "unit": "1",
+          "value": 2.6
+        },
+        "heating_setpoint": {
+          "mode": "constant",
+          "unit": "degC",
+          "value": 20
+        },
+        "hvac_availability": {
+          "file": "schedules/office.sch",
+          "mode": "schedule",
+          "name": "hvac_availability",
+          "unit": "1"
+        }
+      }
+    },
+    "Envelope": {
+      "exterior_wall": {
+        "visible_reflectance": {
+          "mode": "constant",
+          "value": 0.6,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        },
+        "u": {
+          "mode": "constant",
+          "value": 0.6,
+          "unit": "W/(m2 K)"
+        }
+      },
+      "interior_wall": {
+        "visible_reflectance": {
+          "mode": "constant",
+          "value": 0.6,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        }
+      },
+      "floor": {
+        "visible_reflectance": {
+          "mode": "constant",
+          "value": 0.3,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        },
+        "u": {
+          "mode": "constant",
+          "value": 0.7,
+          "unit": "W/(m2 K)"
+        }
+      },
+      "ground": {
+        "visible_reflectance": {
+          "mode": "constant",
+          "value": 0.3,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        }
+      },
+      "roof": {
+        "visible_reflectance": {
+          "mode": "constant",
+          "value": 0.75,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        },
+        "u": {
+          "mode": "constant",
+          "value": 0.4,
+          "unit": "W/(m2 K)"
+        }
+      },
+      "window": {
+        "visible_transmittance": {
+          "mode": "constant",
+          "value": 0.7,
+          "unit": "1"
+        },
+        "opening_ratio": {
+          "mode": "constant",
+          "value": 0,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        },
+        "u": {
+          "mode": "constant",
+          "value": 1.8,
+          "unit": "W/(m2 K)"
+        },
+        "shgc": {
+          "mode": "constant",
+          "value": 0.2,
+          "unit": "1"
+        }
+      },
+      "skylight": {
+        "visible_transmittance": {
+          "mode": "constant",
+          "value": 0.7,
+          "unit": "1"
+        },
+        "opening_ratio": {
+          "mode": "constant",
+          "value": 0,
+          "unit": "1"
+        },
+        "air_leakage_per_area": {
+          "mode": "constant",
+          "value": 0.5,
+          "unit": "m3/(h m2)"
+        },
+        "u": {
+          "mode": "constant",
+          "value": 2.0,
+          "unit": "W/(m2 K)"
+        },
+        "shgc": {
+          "mode": "constant",
+          "value": 0.3,
+          "unit": "1"
+        }
+      }
+    }
+  }
+}

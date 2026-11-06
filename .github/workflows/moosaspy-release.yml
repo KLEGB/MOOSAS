@@ -88,7 +88,7 @@ jobs:
               missing = required - names
               if missing:
                   raise SystemExit("Wheel is missing native resources: " + ", ".join(sorted(missing)))
-              obsolete = ("MoosasPy/libs/rad/", "MoosasPy/libs/vent/",
+              obsolete = ("MoosasPy/db/template/", "MoosasPy/libs/rad/", "MoosasPy/libs/vent/",
                           "MoosasPy/libs/weather/", "MoosasPy/libs/energy/",
                           "MoosasPy/libs/cetus_energy/", "native/")
               if any(name.startswith(obsolete) or name.endswith((".bat", ".prj", ".rad", ".input")) for name in names):

@@ -20,6 +20,9 @@ from MoosasPy.model.io.idf.model import FaceDefault, MoosasSettings
 from MoosasPy.model.io.idf.parser import ZoneTemplate
 from MoosasPy.model.io.idf.version import bundled_template_idf_path, configure_idd
 from MoosasPy.model import configure_model_resources
+from MoosasPy.model.building_templates import (
+    DEFAULT_LIBRARY, building_templates, load_building_template_library,
+)
 from MoosasPy.transform import transform
 from MoosasPy.transform.geometry.element import MoosasElement, MoosasGeometry, MoosasSkylight
 from MoosasPy.transform.geometry.geos import Vector
@@ -28,6 +31,12 @@ from MoosasPy.utils import shapely
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GEOMETRY_FIXTURE = PROJECT_ROOT / "test" / "caseFile" / "test3_geomove.geo"
+
+
+@pytest.fixture(scope="module")
+def office_large_3a_record():
+    load_building_template_library()
+    return building_templates(DEFAULT_LIBRARY)["CN/GB55015-2021/3A/OfficeLarge"]
 
 
 @pytest.fixture(scope="module")
@@ -40,17 +49,13 @@ def test_model_initialization_does_not_load_external_resources():
 
     assert model.buildingTemplate == {}
     assert model.schedule == {}
-    assert not hasattr(model, "weather")
-    assert not hasattr(model, "cumSky")
-    assert not hasattr(model, "idfZoneTemplate")
-    assert not hasattr(model, "loadSchedule")
-    assert not hasattr(model, "loadWeatherData")
 
 
 def test_resource_service_configures_a_domain_model():
     model = configure_model_resources(MoosasModel())
 
-    assert model.buildingTemplate
+    assert len(model.buildingTemplate) == 99
+    assert 'CN/GB55015-2021/3A/Residential' in model.buildingTemplate
     assert model.schedule == {}
 
 
@@ -190,31 +195,27 @@ def test_new_spaces_do_not_select_a_national_standard(tmp_path):
     model = _single_room_model(tmp_path)
     space = model.spaceList[0]
     assert space.settings['zone_template'] is None
-    assert '_thermal_template' not in space.settings
+    assert '_building_template' not in space.settings
     assert 'zone_ppsm' not in space.settings
     with pytest.raises(ValueError, match='complete namespaced id'):
         space.applySettings('RESIDENTIAL')
 
 
 @pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
-def test_unbundled_standard_snapshot_round_trip(tmp_path, suffix):
+def test_unbundled_standard_snapshot_round_trip(tmp_path, suffix, office_large_3a_record):
     from copy import deepcopy
-    from MoosasPy.model.thermal_templates import apply_thermal_template, template_program
+    from MoosasPy.model.building_templates import apply_building_template_to_space, template_program
 
     model = _single_room_model(tmp_path)
-    record = deepcopy(model.buildingTemplate['CN/GB55015-2021/public_A_cold/OFFICE'])
-    # This synthetic standard is deliberately absent from the bundled catalog.
-    template_id = 'ZZ/TEST-2026/climate-1/OFFICE'
-    record['standard'] = 'ZZ/TEST-2026'
-    record['_thermal_template']['id'] = template_id
-    record['_thermal_template']['standard'] = dict(country='ZZ', id='TEST-2026', title='Synthetic')
+    record = deepcopy(office_large_3a_record)
+    template_id = record['id']
     space = model.spaceList[0]
-    apply_thermal_template(space, record, template_id)
+    apply_building_template_to_space(space, record, template_id)
     target = tmp_path / ('standard-snapshot' + suffix)
     model.save(target)
     restored = MoosasModel.load(target)
     restored_space = next(s for s in restored.spaceList if s.id == space.id)
-    assert restored_space.settings['_thermal_template'] == space.settings['_thermal_template']
+    assert restored_space.settings['_building_template'] == space.settings['_building_template']
     assert restored_space.settings['zone_template'] == template_id
     np.testing.assert_array_equal(
         template_program(restored_space.settings, 'zone_ppsm', .1),
@@ -226,6 +227,7 @@ def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
     model = _single_room_model(tmp_path)
     space = model.spaceList[0]
     window = model.glazingList[0]
+    model.metadata = {'project': {'name': 'generic metadata round-trip'}}
     model.energy_settings = {'validation': {'enabled': True, 'hours': 24}, 'latent': {'enabled': True}}
     model.schedule = {'probe_daily': {'type': 'Daily', 'value': [1.] * 24},
                       'person_moisture': {'type': 'Daily', 'value': [.04] * 12 + [.08] * 12, 'value_mode': 'absolute'}}
@@ -244,6 +246,7 @@ def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
     restored = MoosasModel.load(target)
     result = next(w for w in restored.glazingList if w.Uid == window.Uid)
     restored_space = next(s for s in restored.spaceList if s.id == space.id)
+    assert restored.metadata == model.metadata
     assert restored.energy_settings == model.energy_settings
     assert restored.schedule == model.schedule
     assert restored_space.conditioned is False

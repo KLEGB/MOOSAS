@@ -409,13 +409,16 @@ templates can still set the per-person rate explicitly.
 
 ### Apply Thermal Settings
 
-New spaces do not select a national standard or thermal template. Select a
-country, standard edition, envelope/climate, and building type explicitly:
+New spaces do not automatically select a building template. Select a climate
+zone and building type explicitly:
 
 ```python
 from MoosasPy.model import apply_building_template
 
-apply_building_template(model, "CN/GB55015-2021/public_A_cold/OFFICE")
+apply_building_template(
+    model,
+    "CN/GB55015-2021/3A/Residential",
+)
 
 model.spaceList[0].settings["zone_equipment"] = 8.8
 ```
@@ -439,47 +442,66 @@ Important energy-setting fields include:
 | `zone_pfav` | Outdoor-air requirement per person. |
 | `zone_popheat` | Sensible heat per person in W/person. |
 | `zone_equipment`, `zone_lighting` | Equipment and lighting loads in W/m². |
-| `zone_infiltration`, `zone_nightACH` | Infiltration and night ventilation rates. |
+| `zone_infiltration` | Infiltration rate, optionally varying through its 8760-hour schedule. |
 | `zone_template` | Applied template identifier. |
 
-Building templates use a version 2 catalog under `MoosasPy/db/template/`:
+Building templates use a version 4 catalog maintained in the independent
+[MOOSAS-BuildingTemplate repository](https://github.com/KLEGB/MOOSAS-BuildingTemplate)
+and a shared runtime adapter in `MoosasPy/model/building_templates.py`.
+The package bundles a version 4 catalog in `MoosasPy/db/template/` containing
+`CN/GB55015-2021/3A/OfficeLarge` and its referenced schedule. The default
+catalog loads locally without Git, network access, or a user cache. This is the
+only bundled template; new spaces do not automatically select or apply it.
+Select it explicitly with its identifier, or provide another local catalog via
+`template_path` to `apply_building_template` or `library_path` to
+`load_building_template_library`. The catalog loader resolves and validates
+referenced schedules when loading.
 
 ```text
-template/
+MoosasPy/db/template/
   library.json
-  CN/
-    GB55015-2021/
-      common.json
-      office.json
-      residential.json
-      commercial.json
-      school.json
-      hotel.json
+  CN_GB55015-2021/
+    OfficeLarge_3A.json
+    schedules/
+      office.sch
 ```
 
-`library.json` explicitly lists country/standard-edition packages; it has no
-default selection. Within each package, `common.json` owns standard provenance,
-SI units, engineering assumptions, envelope tables, the projection contract,
-and an explicit `building_types` file list. Type files own operation values,
-per-envelope `operation_overrides`, `wwr_scope` (`zone` or `building`), and
-dimensionless day profiles. Their seven `operation.week` references are
-Monday-first; weekend days are not hardcoded globally. Template IDs are
-`COUNTRY/STANDARD-EDITION/ENVELOPE/BUILDING-TYPE`.
+Each record contains `BuildingTemplate.Space` (`air_exchange`,
+`internal_gains`, `system`) and `BuildingTemplate.Envelope`, grouped by
+construction type. Parameters use `{mode: "constant", value, unit}` or
+`{mode: "schedule", file, name, unit}`. Schedule files are JSON `.sch`
+documents with named, unit-labelled arrays of exactly 8760 finite hourly
+values; paths are relative to the standard package. The loader validates and
+stores
+resolved arrays in the model snapshot. Each scheduled parameter directly points
+to its schedule entry; templates do not define day types, weekdays, or weekly
+profiles. The catalog files contain direct construction values; Energy maps
+U-value and SHGC into its surface model with the declared package assumptions.
+Visible reflectance/transmittance remain separate from solar optics.
+Construction leakage and opening-ratio properties are preserved in template
+records but are not consumed by AFN/Radiance yet. Explicit custom version 4
+catalogs remain loadable through `template_path`.
 
-To add a standard edition, add its package and register its namespace in
-`library.json`. Use its own climate identifiers and source evidence; the loader
-does not infer climate zones or borrow another country's assumptions. Normalize
-values to the supported SI `prescriptive-envelope-v1` projection contract.
-Conditional two-column values declare a `column_selector` parameter and
-threshold; directional glazing declares azimuth sectors explicitly. Unsupported
-projection contracts, rules, units, duplicate IDs, or broken references fail
-explicitly. Different standards need not share building-type names.
+The default catalog uses stable IDs of the form
+`CN/GB55015-2021/<climate-zone>/<building-type>`. It does not infer climate
+zones or borrow another country's assumptions.
+Templates contain direct construction values and operating schedules. The
+runtime does not support table projections, conditional rule selection, or
+prescriptive WWR/skylight checks. Different standards need not share
+building-type names.
 
 `template_path` now means a catalog directory containing `library.json`, not a
-single JSON file or a standard-package directory. Version 1 resources, old
+single JSON file or a standard-package directory. Version 1/2/3 resources, old
 unnamespaced IDs, and old template snapshots are not automatically migrated.
-Rebuild affected models from source and explicitly apply a namespaced template.
-Version 2 snapshots round-trip through RDF/XML/JSON without the source catalog.
+Upgrade template resources explicitly and reapply them to affected models.
+The bundled catalog is loaded directly from `MoosasPy/db/template/`; no
+download or user cache is needed. To use another catalog, supply its local
+checkout through `template_path` or `library_path`.
+Version 4 snapshots round-trip through RDF/XML/JSON without the source catalog
+or `.sch` files.
+The shared model metadata payload in `MoosasPy/model/metadata.py` also
+round-trips `model.metadata` alongside energy settings, schedules, and template
+snapshots.
 
 ### Weather Data
 
@@ -665,11 +687,11 @@ Common request options include:
 | `optical_overrides` | `None` | Per-element overrides for visible optical properties. |
 
 When no request mask is supplied, a space can define
-`settings["daylight_occupied_mask"]` with 8760 boolean values. Otherwise the
-existing `zone_work_start` and `zone_work_end` settings define a daily
-local-standard-time interval; this fallback emits a warning and does not infer
-weekdays or holidays. Zero occupied hours are reported as such, not as a zero
-performance score.
+`settings["daylight_occupied_mask"]` with 8760 boolean values. An applied
+building template instead uses its 8760 occupancy-density schedule. Non-template
+spaces may still use the legacy `zone_work_start` and `zone_work_end` daily
+interval fallback; it does not infer weekdays or holidays. Zero occupied hours
+are reported as such, not as a zero performance score.
 
 By default, DA counts occupied hours at or above 300 lux and cDA uses the
 occupied-hour average of illuminance divided by 300 lux, capped at 1. sDA is
@@ -807,7 +829,7 @@ unless another tool must exchange one of these files directly.
 The installed package expects the following directories to remain adjacent to
 the Python modules:
 
-- `db/`: building templates, weather records, material data, the
+- `db/`: weather records, material data, the
   EnergyPlus 26.1 IDD, and the default IDF template.
 - `libs/radiance/`: one Radiance installation shared by daylight and weather.
 - `libs/contam/`: CONTAM distributions and the simread response template.
@@ -815,6 +837,9 @@ the Python modules:
   native engines. Executables are under `<platform>/bin/`; Radiance function
   files are under `<platform>/lib/`.
 - `db/radiation/`, `db/airflow/`: solar directions and the pressure model.
+
+Building templates live in the independent repository and the per-user cache,
+not adjacent to the Python modules.
 
 Go source and build scripts live directly in `libs/moosas_rad/` and
 `libs/moosas_afn/` alongside their runtimes and are included in distributions.

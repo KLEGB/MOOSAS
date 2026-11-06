@@ -1,6 +1,6 @@
-# MOOSAS Energy 能耗模块与热工模板
+# MOOSAS Energy 能耗模块与建筑模板
 
-本文件统一说明能耗接口、CES3 v2 二进制协议、热工模板与验收方式。
+本文件统一说明能耗接口、CES3 v2 二进制协议、建筑模板与验收方式。
 代码及资源路径均相对于仓库根目录。
 `MoosasEnergy` 为原 CETUS 引擎的打包名称；本次仅重命名文件，
 不改变二进制内容、CES3 协议或计算算法。
@@ -12,9 +12,9 @@
 | `MoosasPy/simulation/energy/input.py` | SI 输入数据类型、校验、模型几何与运行日程解析 |
 | `MoosasPy/simulation/energy/runner.py` | CES3 编解码、持久 EXE 会话、预热、逐时运行、断点续算与结果汇总 |
 | `MoosasPy/model/io/gbxml/` | gbXML 导入导出与热工来源信息 |
-| `MoosasPy/model/thermal_templates.py` | 模型共享的模板读取、校验与应用 |
-| `MoosasPy/model/energy_metadata.py` | RDF/XML/JSON 模型持久化共享的能耗元数据 |
-| `MoosasPy/db/template/` | 按国家、标准版本和建筑类型组织的热工模板数据 |
+| `MoosasPy/model/building_templates.py` | 建筑模板目录、校验及运行时适配 |
+| `MoosasPy/model/metadata.py` | RDF/XML/JSON 模型持久化共享的模型元数据 |
+| [MOOSAS-BuildingTemplate](https://github.com/KLEGB/MOOSAS-BuildingTemplate) | 独立私有模板库，按固定提交自动拉取到用户缓存 |
 | `MoosasPy/libs/moosas_energy/` | Windows/Linux 引擎可执行文件（平台目录下的 `bin/`）及本说明 |
 
 公开接口继续从 `MoosasPy.simulation.energy` 导入。内部的 `requests.py`
@@ -60,15 +60,24 @@ element `settings` remain supported. Explicit run/side/element values take
 precedence over mapped zone parameters and `EnergyDefaults`. Each resolved
 surface records the source of its parameters in `sources`.
 
-The thermal catalog is `db/template/library.json`. No national standard or
-template is selected by default. Select a namespaced profile with `template_id`
-and an optional catalog-directory `template_path`; the Python adapter
-validates and resolves it before registering numeric models with MOOSAS Energy. Use
-`template_context` for known storeys, shape factor or inertia index.
+The building-template catalog is maintained in the private
+[MOOSAS-BuildingTemplate repository](https://github.com/KLEGB/MOOSAS-BuildingTemplate).
+On first default-catalog use, Git checks out a pinned commit using existing
+credentials with repository read access; the validated checkout is cached in
+`~/.cache/moosas/building-templates/<commit>/` for offline reuse.
+Fetching is non-interactive and does not store credentials. The old bundled
+`db/template/` path is removed. Its sole default runtime
+standard is GB 55015-2021, with IDs such as
+`CN/GB55015-2021/3A/Residential`. Select a profile explicitly with
+`template_id`; an optional catalog-directory `template_path` can provide a
+separate catalog. The Python adapter validates and resolves it before
+registering numeric models with MOOSAS Energy. Templates contain direct,
+climate/type-specific values; table-driven templates and contextual rule
+selection are not supported.
 `template_overrides_model=True` creates a template scenario without mutating the
-model; runtime overrides still win. Each surface carries template ID, selected
-limits and context as audit metadata, excluded from the native numeric schema.
-See the thermal template section below for units, sources, assumptions and precedence.
+model; runtime overrides still win. Each surface carries its template ID as
+audit metadata, excluded from the native numeric schema.
+See the building template section below for units, sources, assumptions and precedence.
 
 Construction resistance is in m² K/W, areal capacity in J/(m² K). Full-element
 layers follow the source element normal, from its back to its front. The adapter
@@ -208,23 +217,29 @@ The energy integration test checks the packaged executable against the full-year
 geometry fixture and validates all 70 zones, monthly totals and reference loads.
 Simulation outputs belong in caller-owned workspaces, not this tool directory.
 
-## 热工 JSON 模板（版本 2）
+## 建筑 JSON 模板（版本 4）
 
-现有中国标准包为 **GB 55015—2021《建筑节能与可再生能源利用通用规范》**，2022-04-01 实施。正式来源为[北京市政府公布的规范正文](https://www.beijing.gov.cn/zhengce/zhengcefagui/qtwj/202204/W020220412578195558564.pdf)。`db/template/CN/GB55015-2021/common.json` 保存来源链接、正文 SHA-256、表号和适用条件。这些来源和假设只属于该标准包，不作为其他国家的默认值。
+默认独立模板库仅注册 GB 55015—2021 标准，提供 99 个模板，覆盖 11 个气候区和 9 种建筑类型。首次加载需要 Git、联网及已有仓库读取凭据，成功后使用用户缓存；数据不再随包分发。运行时 ID 为 `CN/GB55015-2021/<climate-zone>/<building-type>`，例如 `CN/GB55015-2021/3A/Residential`。加载时校验标准元数据、文件名、参数和 schedule 引用，并将 schedule 展开为 8760 个值。
 
 ### 结构和范围
 
-`schema` 和 `version` 标识契约。入口 `library.json` 显式列出 `COUNTRY/STANDARD-EDITION` 标准包，不设置默认模板。每个包的 `common.json` 保存 `standard`、`envelopes`、`assumptions`、`unit_system: SI`、`projection` 和 `building_types` 文件列表；类型文件保存 `operation_id`、`operation`、适用 `envelopes`、逐围护组合的 `operation_overrides` 和 `wwr_scope`。模板 ID 为 `COUNTRY/STANDARD-EDITION/ENVELOPE/BUILDING-TYPE`。
+每个模板的 `BuildingTemplate` 包含 `Space`（`air_exchange`、`internal_gains`、`system`）和按构造分组的 `Envelope`（`exterior_wall`、`interior_wall`、`floor`、`ground`、`roof`、`window`、`skylight`）。空间 schedule 及围护结构的 U/SHGC 接入 Energy 适配器；可见光属性不作为太阳光学量使用。构造级 `air_leakage_per_area` 和 `opening_ratio` 保留于模板快照，目前 AFN/Radiance 求解器尚不消费这些字段。
 
-新增其他国家标准时，在独立目录编写该标准的数据并注册到入口列表，不修改中国标准包。不同标准、不同版本可使用相同局部名称而不冲突。数据须先归一为支持的 SI 投影契约 `prescriptive-envelope-v1`；尚不支持的投影、规则、单位、未知引用及重复命名均报错，不回落中国标准。本轮未引入未经核验的国外规范数据。
+模板参数使用统一值来源对象，逐个字段选择单值或外部 schedule：
 
-住宅对应表 3.1.8-1～11、3.1.9-1～5；甲类公共建筑对应表 3.1.10-1～6；乙类公共建筑对应表 3.1.11-1～2。共 55 个用途与围护组合。没有规范表格支持的公共建筑温和 B 区等组合不生成。乙类应按附录 B 的单体面积及建筑群面积条件另行选择，程序不从单个房间面积推断类别。隔墙及不采暖地下室上部楼板等限值作为扩展资料保留；当前相邻区域按绝热处理，不把这些限值用于区间传热。入口门及阳台栏板不属于本次适配范围。
+```json
+{"mode": "constant", "value": 30, "unit": "m3/h/person"}
+{"mode": "schedule", "file": "schedules/office.sch",
+ "name": "fresh_air", "unit": "m3/h/person"}
+```
 
-`roof_u`、`wall_u`、`exposed_floor_u` 和 `window_u` 单位均为 W/(m²·K)。条件数组的两列由 `column_selector.parameter` 和 `threshold` 定义，分别表示不超过/超过阈值。中国包声明的层数阈值为 3、体形系数为 0.30、热惰性指标为 2.5，这些值不写死在计算层。窗数组先按 `wwr_bins` 选择行，再选择列。`null` 表示本表未规定，不表示零。
+`.sch` 是 JSON 文件，包含具名且带单位的 8760 小时数组。文件路径相对模板包目录，禁止绝对路径和越界引用；参数与 schedule 单位必须一致。加载模板时会展开并校验 schedule，随建筑模板快照一并持久化，因此模型重新载入不依赖原 `.sch` 文件。Energy 不支持围护结构的动态 U/SHGC，若指定此类 schedule 会明确报错。
 
-SHGC 是整体太阳得热系数限值，独立于传给 MOOSAS Energy 的太阳透射率。方向分列由 `shgc_sectors` 声明起止方位角、端点包含关系、列索引和冬季限值适用性，未命中扇区使用显式的 `shgc_default_index`；外法线 +Y 为北，计算时应用 `EnergyDefaults.north_angle_degrees`。`wwr_scope` 控制按房间还是全模型同朝向合计，中国包的住宅用 `zone`、公建用 `building`，不根据建筑用途在代码中推断。选择房间子集不会改变全模型比值；地下部分和绝热部分不计入外立面窗墙比。
+模板数据保留 `visible_reflectance`、`visible_transmittance`、`air_leakage_per_area` 和 `opening_ratio`，但目前它们不改变 Radiance/AFN 模拟。`air_leakage_per_area` 是模板场景参数，不应与空间渗透 ACH 混淆。
 
-新建空间不自动选择任何国家标准或住宅模板，必须显式指定完整模板 ID。未选模板时，源模型参数和通用工程假设不代表任何国家的规范符合性。
+围护结构按构造组保存直接的 SI 数值：U 值使用 W/(m²·K)，SHGC 使用无量纲值。Energy 将这些直接输入映射到等效表面属性；模板不执行表格选列、方位适用性或 WWR 合规判断。
+
+新建空间不自动选择住宅/建筑模板，必须显式指定完整模板 ID。未选模板时，源模型参数和通用工程假设不代表任何国家的规范符合性。
 
 ### 使用接口
 
@@ -232,52 +247,43 @@ SHGC 是整体太阳得热系数限值，独立于传给 MOOSAS Energy 的太阳
 from MoosasPy.model import apply_building_template, building_templates
 from MoosasPy.simulation.energy import EnergyRunner
 
-# 查看可选名称；可用同版本目录格式的自定义目录替换 catalog。
+# 查看可选名称。
 records = building_templates()
 apply_building_template(
-    model, "CN/GB55015-2021/public_A_cold/OFFICE",
-    context={"shape_factor": 0.28},
+    model, "CN/GB55015-2021/3A/Residential",
 )
 result = EnergyRunner(model, weather).run()
 
 # 也可直接在运行时加载，既有模型及输入文件不被修改。
 result = EnergyRunner(
     model, weather,
-    template_path=r"E:\project\template",
-    template_id="CN/GB55015-2021/public_A_cold/OFFICE",
-    template_context={"shape_factor": 0.28},
+    template_id="CN/GB55015-2021/3A/Residential",
     template_overrides_model=True,
 ).run()
 ```
 
 `apply_building_template` 保存展开后的模板快照到空间，RDF/XML/模型 JSON 均可携带该快照；再次载入模型不依赖原来的自定义模板文件。该接口默认保留已有显式空间参数及构件参数。`preserve_explicit=False` 仅重置空间运行参数，构件仍保留。若要进行完整模板构件场景对比，使用运行参数 `template_overrides_model=True`；这也不修改模型。
 
-版本 1 文件、旧路径、非命名空间模板 ID 和旧快照不提供兼容分支。旧快照载入或求解时明确报错；需从源几何重建并显式应用版本 2 模板。`space.applySettings()` 的字符串参数也必须精确匹配完整 ID，不再使用正则模糊匹配。
+版本 1/2/3 模板文件、旧路径、非命名空间模板 ID 和旧快照不提供兼容分支。旧快照载入或求解时明确报错；需按版本 4 结构显式升级模板后重新应用。`space.applySettings()` 的字符串参数也必须精确匹配完整 ID，不再使用正则模糊匹配。
 
-默认优先级为运行/表面侧覆盖、显式模型参数、JSON 模板、通用默认假设。`template_overrides_model=True` 允许模板替代已有构件与空间值，但运行时覆盖仍优先。完整的 layers/R/U 视为一组，避免同时保留冲突的物理表示。可通过 `template_context` 提供 `storeys`、`shape_factor`、`thermal_inertia_D`、`window_wall_ratio`；后者是整次运行的显式比值覆盖。住宅层数默认由模型地面及以上空间的标高数估计，可显式修正。体形系数和热惰性指标未知时选择较严格的一列，程序不将热容量当作热惰性指标 D。
+默认优先级为运行/表面侧覆盖、显式模型参数、JSON 模板、通用默认假设。`template_overrides_model=True` 允许模板替代已有构件与空间值，但运行时覆盖仍优先。完整的 layers/R/U 视为一组，避免同时保留冲突的物理表示。catalog 仅接受直接建筑模板，不支持表驱动规则或模板上下文。
 
 ### 等效模型及假设
 
-以下具体数值描述现有中国标准包；其他标准包应声明自己的工程假设。
+以下说明区分直接模板值与 Energy 所需的等效模型假设；二者都不构成规范符合性认证或产品数据。
 
-- 规范规定的是性能限值，不提供完整材料层。模板按限值建立等效构件；热容量、发射率、吸收率及接地基层热阻等来自 `assumptions`，并非规范规定值。墙/楼板热容量为完整构件值；相邻房间各分配半厚度，在中面绝热，保留室内蓄热。
-- 接地表中的 R 是**保温材料层热阻下限**，不直接充当完整构件热阻。计算加入假设的基层 R；周边地面保温下限用于整个地板是已声明的简化场景。没有给定限值的构件使用单独的假设 R。
-- 空气到空气 U 值扣除参考表面热阻后传给 MOOSAS Energy，避免重复计入表面换热。等效 U 包含结构性热桥影响；模型不生成实际热桥节点。
-- 夏季等效玻璃采用假设吸收率 0.1，`tau=max(SHGC上限-0.1,0)`，`rho=1-SHGC上限`，使 `tau+alpha` 不超过上限。该模型不代表具体玻璃产品，也不证明冬季 SHGC 下限成立。冬季要求单独记录并给出提示；真实项目可用产品光学参数及逐时遮阳辐照覆盖。
-- 中国包运行参数选取附录 C 的参考照明、设备、人员、新风和部分日程。JSON 中的日程是 0～1 系数，Python 侧显式乘以强度转为逐时绝对值；既有命名日程仍按绝对值解释。`operation.week` 用七个日型引用声明周一至周日的安排，不假设各国周末相同。中国包仍使用五个工作日、两个休息日，未实现法定节假日、温控升降温过渡及住宅卧室/起居室加权。住宅采用起居室作为代表单区，冷热设定为 18/26℃。
-- 人员显热 75 W/人、公共建筑背景渗透 0.5 ACH、热泵制热 COP 2.6 是工程场景假设。制冷 COP 使用参考折算值，不代表选型设备效率；严寒 A/B/C、寒冷 A 住宅统一采用 3.6 是扩展假设，规范表 C.0.7-2 的住宅 3.6 参考值适用范围须另行核对。住宅规范参考换气次数按寒冷地区 0.5、其他地区 1.0 ACH 取值，不重复添加人均新风。
+- GB values are direct simulation inputs, not compliance limits. Energy still uses declared package assumptions for construction properties not present in the records and for mapping SHGC to equivalent solar optics.
+- Ground-contact construction without a direct U value uses its declared engineering resistance.
+- SHGC 与 MOOSAS Energy 使用的太阳透射率不同。适配器使用模板包声明的玻璃吸收率映射等效太阳光学参数；不表示具体产品，也不替代逐时遮阳或规范符合性核算。
+- 逐时参数应直接引用具有 8760 个值的 `.sch`；模板不隐含工作日、周末、节假日或工作时段。材料、系统效率、新风、渗透及设定点均由所加载的模板或显式模型设置提供。
 
-解析结果中每个表面提供 `template_id`、`template_limits`、`template_context` 和逐字段 `sources`。前述限值是选中的规范目标，显式构件覆盖后不表示该构件满足限值。超出窗墙比、体形系数或屋顶透光比例适用范围会给出提示。模板不替代整栋建筑的规范符合性核算。
+解析结果中每个表面提供 `template_id` 和逐字段 `sources`。模板记录所选构造输入，但不替代整栋建筑的规范符合性核算。
 
 ### 实际导入链路与验收
 
 导入链路为 **JSON → MoosasPy 模板校验与参数解析 → CES3 v2 数值二进制 → MOOSAS Energy**。Go 引擎接收解析后的构件与运行参数，不直接读取这份模板库；没有恢复旧 i/o 协议。
 
-```powershell
-D:\miniconda3\Scripts\conda.exe run -n moosas python -B -m pytest test\test_example_integration.py -k energy_engine -q
-```
-
-能耗集成测试显式选择中国住宅模板检查全年计算，不等同于对所有 55 个模板逐一执行二进制验收。
+默认 catalog tests cover template selection and input mapping. Slow native-engine integration tests additionally require the packaged Energy executable and the Beijing weather fixture.
 
 ## 建筑侧理想潜热负荷（可选）
 

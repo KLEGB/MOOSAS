@@ -60,6 +60,19 @@ model.save("building.ttl")
 For model formats, thermal settings, simulation workflows, and supported
 exporters—including OpenFOAM—see the [MoosasPy usage documentation](doc/document.md).
 
+## Building Templates
+
+The template catalog is maintained separately in
+[MOOSAS-BuildingTemplate](https://github.com/KLEGB/MOOSAS-BuildingTemplate).
+MoosasPy bundles the `CN/GB55015-2021/3A/OfficeLarge` template and its schedule
+in `MoosasPy/db/template/`, so the default catalog works offline without Git or
+network access. New spaces do not automatically apply this template; select a
+template explicitly when needed.
+
+A local catalog checkout can instead be passed as `template_path` to
+`apply_building_template`, or as `library_path` to
+`load_building_template_library`.
+
 ## Development
 
 Run the fast test suite from the repository root (heavy integration and

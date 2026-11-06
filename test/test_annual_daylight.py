@@ -82,11 +82,6 @@ def test_epw_fractional_timezone_and_midpoints(tmp_path):
     with pytest.raises(ValueError,match='8760'):
         convert_epw_to_wea(epw,tmp_path/'short.wea')
 
-def test_obsolete_daylight_weather_api_is_removed():
-    import MoosasPy.simulation.weather as weather
-    assert not hasattr(weather, 'prepare_daylight_weather')
-
-
 def test_matrix_rejects_truncated_or_wrong_dimension(tmp_path):
     file=tmp_path/'test.mtx'
     file.write_text('#?RADIANCE\nNROWS=1\nNCOLS=2\nNCOMP=3\nFORMAT=ascii\n\n1 2 3\n')

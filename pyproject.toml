@@ -76,6 +76,8 @@ MoosasPy = [
 
 [tool.setuptools.exclude-package-data]
 "*" = [
+  "db/template/CN/*",
+  "db/template/CN/**/*",
   "__pycache__/*",
   "*.py[cod]",
   ".idea/*",

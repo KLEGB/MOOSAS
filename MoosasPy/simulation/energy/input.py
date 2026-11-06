@@ -1,6 +1,7 @@
 """SI input contracts and model-to-surface resolution for MOOSAS Energy."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from hashlib import sha256
@@ -10,9 +11,9 @@ import math
 import numpy as np
 import shapely
 
-from ...model.thermal_templates import (
+from ...model.building_templates import (
     building_templates, resolve_surface_template, merge_surface_template,
-    template_program, validate_template_snapshot,
+    template_parameter, template_program, validate_template_snapshot,
 )
 from ...transform.geometry.geos import Projection, Vector
 
@@ -46,7 +47,6 @@ class EnergyDefaults:
     equipment_w_m2: float = 4.3
     lighting_w_m2: float = 5.
     infiltration_ach: float = .5
-    night_ach: float = .5
     occupant_moisture_kg_h: float = .06
     cooling_rh_fraction: float = .6
 
@@ -57,7 +57,7 @@ class EnergyDefaults:
         for key in ('wall_u_value','window_u_value','inside_film_w_m2k','ground_contact_w_m2k','cooling_cop','heating_cop'):
             if getattr(self,key)<=0:
                 raise ValueError(f'EnergyDefaults.{key} must be positive')
-        for key in ('opaque_capacity_j_m2k','slab_capacity_j_m2k','occupant_density','occupant_heat_w','fresh_air_m3_h_person','equipment_w_m2','lighting_w_m2','infiltration_ach','night_ach','occupant_moisture_kg_h'):
+        for key in ('opaque_capacity_j_m2k','slab_capacity_j_m2k','occupant_density','occupant_heat_w','fresh_air_m3_h_person','equipment_w_m2','lighting_w_m2','infiltration_ach','occupant_moisture_kg_h'):
             if getattr(self,key)<0:
                 raise ValueError(f'EnergyDefaults.{key} must be nonnegative')
         for key in ('opaque_emissivity','glass_emissivity','solar_reflectance','glass_solar_reflectance','solar_transmittance','internal_radiant_fraction','solar_floor_fraction','ground_albedo','cooling_rh_fraction'):
@@ -103,8 +103,6 @@ class SurfaceRequest:
     sources: tuple[tuple[str, str], ...] = ()
     wind_driven_film: bool = True
     template_id: str = ''
-    template_limits: tuple[tuple[str, float], ...] = ()
-    template_context: tuple[tuple[str, str], ...] = ()
     radiation_geometry: tuple = ()  # world-space (exterior ring, holes), never on the wire
 
     def __post_init__(self):
@@ -140,7 +138,7 @@ class SurfaceRequest:
 
     def native_model(self):
         values = asdict(self)
-        for key in ('surface_id','zone_id','role','normal','sources','wind_driven_film','template_id','template_limits','template_context','radiation_geometry'):
+        for key in ('surface_id','zone_id','role','normal','sources','wind_driven_film','template_id','radiation_geometry'):
             values.pop(key)
         values['name'] = self.surface_id
         values['kind'] = self.role
@@ -520,7 +518,7 @@ def _construct_surface(element, zone, role, boundary, area, normal, owners, sett
                        radiation_geometry=()):
     label = f'{zone.id}/{element.Uid}/{role}{suffix}'
     glass = role in {'window','skylight'}
-    sources = [('template', settings['_template_id']), ('template_table',settings['_template_source'])] if '_template_id' in settings else []
+    sources = [('template', settings['_template_id']), ('template_direct',settings['_template_source'])] if '_template_id' in settings else []
     if settings.get('_gbxml_source_sha256'):
         sources.append(('external_gbxml_sha256',settings['_gbxml_source_sha256']))
     def get(key, fallback, alias=None):
@@ -602,8 +600,7 @@ def _construct_surface(element, zone, role, boundary, area, normal, owners, sett
         float(get('ground_contact_w_m2k',defaults.ground_contact_w_m2k)) if boundary=='ground' else 0.,
         float(get('absorbed_inside_fraction',0.)),tuple(layers),tuple(normal),tuple(sources),
         outside and settings.get('ho_w_m2k') is None,
-        settings.get('_template_id',''),tuple(sorted(settings.get('_template_limits',{}).items())),
-        tuple(sorted(settings.get('_template_context',{}).items())),radiation_geometry)
+        settings.get('_template_id',''),radiation_geometry)
 
 
 def _radiation_geometry(geometry, projection):
@@ -629,59 +626,11 @@ def _solar_vectors(weather, defaults):
     return np.stack((east,north,up))
 
 
-def _facade_window_ratios(spaces, owners, ground, overrides):
-    """Public-building WWR: whole building, same outward facade normal.
-
-    Include all rooms even when only one zone is simulated. Reuse the exact
-    shared-boundary and ground clipping rules used by the surface adapter.
-    """
-    totals, room_totals = {}, {}
-    for space in spaces.values():
-        seen = set()
-        for element in space.getAllFaces(to_dict=True).get('MoosasWall', ()):
-            uid = str(element.Uid)
-            if uid in seen: continue
-            seen.add(uid)
-            normal = np.asarray(element.normal,dtype=float)
-            normal /= np.linalg.norm(normal)
-            center = np.asarray(element.getWeightCenter(),dtype=float).reshape(-1)
-            if np.dot(normal,center-np.asarray(space.getWeightCenter(),dtype=float).reshape(-1))<0:
-                normal = -normal
-            projection = Projection(Vector(center),Vector(normal))
-            faces = [shapely.force_2d(projection.toUV(f)) for f in np.asarray(element.face).flatten()]
-            footprint = shapely.union_all([shapely.Polygon(f.exterior) for f in faces])
-            aperture = shapely.intersection(footprint,shapely.union_all([
-                shapely.force_2d(projection.toUV(f)) for opening in element.glazingElement if opening.category!=2
-                for f in np.asarray(opening.face).flatten()]))
-            es = {**element.settings, **overrides.get(uid,{})}
-            es.update(es.get('side_overrides',{}).get(str(space.id),{}))
-            es.update(overrides.get(f'{space.id}/{uid}/wall',{}))
-            boundary = es.get('boundary_condition')
-            eo = owners[uid]
-            if boundary is None and not element.isOuter and len(eo)==1: boundary='adiabatic'
-            adjacency = _adjacency_parts(space,eo,spaces,footprint,projection,normal,center) if len(eo)>1 else ((None,footprint,eo),)
-            for index,(inferred,patch,_) in enumerate(adjacency):
-                bc = boundary or inferred
-                parts = ((bc,patch),) if bc else _ground_parts(patch,projection,ground)
-                for bc,part in parts:
-                    if bc!='outdoors': continue
-                    # Normative opening ratio includes the gross wall opening.
-                    key = tuple(np.round(normal,6))
-                    gross,glass = totals.get(key,(0.,0.))
-                    opening_area = shapely.intersection(aperture,part).area
-                    totals[key] = (gross+part.area,glass+opening_area)
-                    room_key = (str(space.id), key)
-                    gross,glass = room_totals.get(room_key,(0.,0.))
-                    room_totals[room_key] = (gross+part.area,glass+opening_area)
-    ratios = lambda values: {key: glass/gross for key,(gross,glass) in values.items() if gross>1e-9}
-    return ratios(totals),ratios(room_totals)
-
-
 def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_hour=0, hours=8760,
                        ground_level_m=None, surface_overrides=None, zone_overrides=None,
                        irradiance_by_surface=None, require_radiation=False,
                        core=None, temporal_scale=None, spatial_scale=None,
-                       template_id=None, template_path=None, template_context=None,
+                       template_id=None, template_path=None,
                        template_overrides_model=False, latent=None):
     """Build CES3 v2 requests; shared surfaces are resolved independently per owner.
 
@@ -696,8 +645,10 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     template_records = building_templates(template_path) if template_id is not None or template_path is not None else None
     if template_path is not None and template_id is None:
         raise ValueError('template_path requires template_id to select a template explicitly')
-    if template_id is not None and (template_id not in template_records or '_thermal_template' not in template_records[template_id]):
-        raise ValueError(f'Unknown structured thermal template {template_id!r}')
+    if template_id is not None and (
+            template_id not in template_records
+            or template_records[template_id].get('schema') != 'moosas.building-template'):
+        raise ValueError(f'Unknown structured building template {template_id!r}')
     if int(start_hour)!=start_hour or int(hours)!=hours or hours<=0 or start_hour<0 or start_hour+hours>8760:
         raise ValueError('start_hour/hours must define a nonempty window within 0..8759')
     if require_radiation and not irradiance_by_surface:
@@ -725,7 +676,6 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     selected = {str(v) for v in zone_ids} if zone_ids is not None else {str(s.id) for s in model.spaceList}
     if selected - {str(s.id) for s in model.spaceList}:
         raise ValueError('Unknown zone_ids: ' + ', '.join(sorted(selected-{str(s.id) for s in model.spaceList})))
-    facade_ratios = None
     sun = _solar_vectors(weather, defaults)
     ghi = np.maximum(np.asarray(weather.global_radiation),0)
     dhi = np.clip(np.asarray(weather.diffuse_radiation),0,ghi)
@@ -741,35 +691,15 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
             continue
         settings = dict(space.settings)
         if template_id is not None:
-            explicit = set() if template_overrides_model else set(getattr(space,'explicit_settings',()))
-            settings.update({k:v for k,v in template_records[template_id].items() if k not in explicit})
+            settings['_building_template'] = deepcopy(template_records[template_id])
             settings['zone_template'] = template_id
         settings.update(zone_overrides.get(str(space.id),{}))
         validate_template_snapshot(settings)
-        profile = settings.get('_thermal_template')
-        context = {**(profile or {}).get('context',{}), **(template_context or {})}
+        profile = settings.get('_building_template')
         if profile:
-            if facade_ratios is None:
-                facade_ratios = _facade_window_ratios(spaces,owners,ground_level_m,surface_overrides)
-            if 'storeys' not in context:
-                context['storeys'] = len({round(float(s.level),3) for s in model.spaceList if float(s.level)>=ground_level_m-1e-6})
-            notes.extend((f"Template {profile['id']}: {profile['operation']['assumptions']}",
-                          'Unknown storeys/shape/inertia use the stricter table column; U targets are equivalent constructions, not certified material recipes.'))
-        def templated(element, values, role, boundary, normal, wwr, override_ids=()):
-            if profile and role=='window':
-                facade_key = tuple(np.round(normal,6))
-                if profile['wwr_scope'] == 'zone':
-                    wwr = facade_ratios[1].get((str(space.id),facade_key),wwr)
-                else:
-                    wwr = facade_ratios[0].get(facade_key,wwr)
-            if profile and role=='skylight' and boundary=='outdoors':
-                maximum = profile['envelope'].get('maximum_skylight_ratio')
-                if maximum is not None and wwr>maximum+1e-9:
-                    notes.append('Roof glazing ratio exceeds prescriptive table applicability; this scenario does not establish compliance.')
-            true_normal = np.asarray(normal,dtype=float).copy()
-            theta = np.radians(defaults.north_angle_degrees)
-            true_normal[:2] = [true_normal[0]*np.cos(theta)+true_normal[1]*np.sin(theta),-true_normal[0]*np.sin(theta)+true_normal[1]*np.cos(theta)]
-            resolved, warnings = resolve_surface_template(settings,role,boundary,true_normal,wwr=context.get('window_wall_ratio',wwr),context=context)
+            notes.append(f"Building template {profile['id']}: direct construction values are simulation inputs, not a compliance certification.")
+        def templated(element, values, role, boundary, override_ids=()):
+            resolved, warnings = resolve_surface_template(settings,role,boundary)
             notes.extend(warnings)
             if not resolved: return values
             protected = set(values.get('side_overrides',{}).get(str(space.id),{}))
@@ -820,7 +750,6 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                 # Preserve geometric holes even when no separate glazing/air
                 # object has been attached; never manufacture opaque material.
                 opaque=shapely.difference(shapely.normalize(shapely.union_all(uv)),shapely.normalize(shapely.union_all(list(aperture.values()))))
-                host_wwr = float(shapely.union_all(list(aperture.values())).area / footprint.area) if footprint.area else 0.
                 es = {**element.settings, **surface_overrides.get(str(element.Uid),{})}
                 es.update(es.get('side_overrides',{}).get(str(space.id),{}))
                 side_id = f'{space.id}/{element.Uid}/{role}'
@@ -845,7 +774,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                         resolved_role = 'roof' if role=='ceiling' and bc=='outdoors' else role
                         side_settings = {**es, **surface_overrides.get(f'{space.id}/{element.Uid}/{resolved_role}{suffix}',{})}
                         opaque_boundary = side_settings.get('boundary_condition',bc)
-                        side_settings = templated(element,side_settings,resolved_role,opaque_boundary,normal,host_wwr,
+                        side_settings = templated(element,side_settings,resolved_role,opaque_boundary,
                             (side_id,f'{space.id}/{element.Uid}/{resolved_role}{suffix}'))
                         if str(element.Uid) in mass_ids and len(eo)==1:
                             for side in (0,1):
@@ -864,26 +793,40 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                         gr = 'wall' if gs.get('opaque_opening') else 'window' if role=='wall' else 'skylight'
                         gs.update(surface_overrides.get(f'{space.id}/{opening.Uid}/{gr}',{}))
                         gs.update(surface_overrides.get(f'{space.id}/{opening.Uid}/{gr}{suffix}',{}))
-                        gs = templated(opening,gs,gr,gs.get('boundary_condition',bc),normal,host_wwr,
+                        gs = templated(opening,gs,gr,gs.get('boundary_condition',bc),
                             (f'{space.id}/{opening.Uid}/{gr}',f'{space.id}/{opening.Uid}/{gr}{suffix}'))
                         surfaces.append(_construct_surface(opening,space,gr,gs.get('boundary_condition',bc),ga,normal,owners[str(opening.Uid)],gs,defaults,suffix,
                             radiation_geometry=_radiation_geometry(shapely.intersection(aperture[str(opening.Uid)],patch),projection)))
         surfaces.sort(key=lambda surface:surface.surface_id)
         if not surfaces:
             raise ValueError(f'{space.id}: no thermal surfaces after excluding air openings')
-        def program(key, fallback):
+        def configured_value(key, fallback):
             value = settings.get(key, fallback)
             if value is None: value=fallback
             overridden = key in zone_overrides.get(str(space.id),{}) or (not template_overrides_model and key in getattr(space,'explicit_settings',()))
-            absolute = template_program(settings,key,value) if not overridden else None
-            if absolute is not None:
-                value = absolute
+            if not overridden:
+                configured = template_parameter(settings, key)
+                if configured is not None:
+                    value = configured
+                absolute = template_program(settings,key,value)
+                if absolute is not None:
+                    value = absolute
+            return value, overridden
+        def program(key, fallback):
+            value, _ = configured_value(key, fallback)
             result = expand_schedule(model,value,f'{space.id}/{key}',schedule_cache)
             if key not in {'zone_h_temp','zone_c_temp'} and np.any(result<0):
                 raise ValueError(f'{space.id}/{key}: schedule values must be nonnegative')
             return result
+        def scalar_parameter(key, fallback, label):
+            value, _ = configured_value(key, fallback)
+            if np.ndim(value) != 0:
+                raise ValueError(f'{space.id}/{key}: the energy model does not support a scheduled value')
+            return number(value, f'{space.id}/{label}', strictly_positive=key in {'zone_collingEER', 'zone_HeatingEER'})
         area = number(settings.get('floor_area_m2',space.area),f'{space.id}/area',strictly_positive=True)
         volume = number(settings.get('volume_m3',area * space.height),f'{space.id}/volume',strictly_positive=True)
+        cooling_cop = scalar_parameter('zone_collingEER', defaults.cooling_cop, 'cooling COP')
+        heating_cop = scalar_parameter('zone_HeatingEER', defaults.heating_cop, 'heating COP')
         density = program('zone_ppsm',defaults.occupant_density)
         people = program('zone_popheat',defaults.occupant_heat_w)
         equipment = program('zone_equipment',defaults.equipment_w_m2)*area
@@ -891,20 +834,14 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         heat = program('zone_h_temp',defaults.heating_setpoint_c)
         cool = program('zone_c_temp',defaults.cooling_setpoint_c)
         if np.any(heat>cool): raise ValueError(f'{space.id}: heating setpoint exceeds cooling')
-        clock = np.arange(8760)%24
-        start = number(settings.get('zone_work_start',0),f'{space.id}/work start')
-        end = number(settings.get('zone_work_end',24),f'{space.id}/work end')
-        if start>24 or end>24: raise ValueError(f'{space.id}: work hours outside 0..24')
-        occupied = (clock>=start)&(clock<end) if start<end else (clock>=start)|(clock<end)
-        ach = np.where(occupied,program('zone_infiltration',defaults.infiltration_ach),program('zone_nightACH',defaults.night_ach))
+        ach = program('zone_infiltration',defaults.infiltration_ach)
         mechanical_ach = program('zone_mechanical_ach',0.)
         vent = (ach+mechanical_ach)*volume + density*program('zone_pfav',defaults.fresh_air_m3_h_person)*area
         internal = density*people*area+equipment+lighting
         if np.any(internal<0) or np.any(vent<0) or np.any(lighting<0) or np.any(equipment<0):
             raise ValueError(f'{space.id}: negative internal load or ventilation')
         zone = ZoneRequest(str(space.id),str(settings.get('zone_name') or space.id),area,volume,tuple(surfaces),
-            number(settings.get('zone_collingEER',defaults.cooling_cop),f'{space.id}/cooling COP',strictly_positive=True),
-            number(settings.get('zone_HeatingEER',defaults.heating_cop),f'{space.id}/heating COP',strictly_positive=True),
+            cooling_cop, heating_cop,
             float(settings.get('initial_temperature_c',(heat[0]+cool[0])/2)),
             float(settings.get('internal_radiant_fraction',defaults.internal_radiant_fraction)),
             float(settings.get('solar_floor_fraction',defaults.solar_floor_fraction)),readonly(internal),readonly(lighting),readonly(equipment),
