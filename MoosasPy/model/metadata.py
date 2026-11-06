@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from .building_templates import validate_template_snapshot
+from .building_templates import validate_template_snapshot, space_template, _validate_template_snapshot
 
 
 def _json_value(value):
@@ -15,7 +15,12 @@ def _json_value(value):
 def encode_energy_metadata(model, *, include_settings: bool = True):
     elements = {}
     spaces = {}
+    templates = {}
     for space in list(model.spaceList) + list(model.voidList):
+        validate_template_snapshot(space.settings)
+        if space.settings.get('zone_template'):
+            profile = space_template(model, space)
+            templates[profile['id']] = profile
         record = dict(conditioned=space.conditioned)
         if include_settings:
             record.update(explicit_settings=list(space.explicit_settings),
@@ -27,7 +32,7 @@ def encode_energy_metadata(model, *, include_settings: bool = True):
                 record.update(settings=element.settings,
                     explicit_settings=sorted(element.explicit_settings))
             elements[str(element.Uid)] = record
-    return json.dumps(dict(schema_version=2,metadata=getattr(model,'metadata',{}),
+    return json.dumps(dict(schema_version=3,building_templates=templates,metadata=getattr(model,'metadata',{}),
         energy_settings=getattr(model,'energy_settings',{}),schedules=model.schedule,
         spaces=spaces,elements=elements),ensure_ascii=False,allow_nan=False,default=_json_value)
 
@@ -36,8 +41,16 @@ def apply_energy_metadata(model, value, *, include_settings: bool = True):
     if not value:
         return
     data = json.loads(value)
-    if data.get('schema_version') not in {1, 2}:
+    if data.get('schema_version') != 3:
         raise ValueError('Unsupported energy model metadata version')
+    templates = data['building_templates']
+    if not isinstance(templates, dict):
+        raise ValueError('building_templates must be an object')
+    for name, profile in templates.items():
+        _validate_template_snapshot(profile)
+        if name != profile['id']:
+            raise ValueError('BuildingTemplate id does not match its registry key')
+    model.buildingTemplate = templates
     model.metadata = data.get('metadata', {})
     model.energy_settings = data.get('energy_settings',{})
     model.schedule = data.get('schedules',model.schedule)
@@ -48,6 +61,8 @@ def apply_energy_metadata(model, value, *, include_settings: bool = True):
             space.settings.update(record.get('settings',{}))
             validate_template_snapshot(space.settings)
             space.explicit_settings = record.get('explicit_settings',space.explicit_settings)
+        if space.settings.get('zone_template'):
+            space_template(model, space)
         for element in space.getAllFaces(to_dict=False):
             record = data.get('elements',{}).get(str(element.Uid),{})
             if include_settings:

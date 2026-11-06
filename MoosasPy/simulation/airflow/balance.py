@@ -12,6 +12,7 @@ from math import isfinite
 import numpy as np
 
 from ...utils.constant import afn
+from ..contracts import OCCUPANT_SENSIBLE_HEAT_W
 
 
 @dataclass(frozen=True)
@@ -221,9 +222,12 @@ class BalanceModel:
                        if self.cm[i] <= 0 or self.am[i] <= 0 or self.at[i] <= 0]
             raise ValueError('5R1C requires positive actual thermal areas and capacities: ' + ', '.join(invalid))
         self.programs = {}
+        self.model = model
+        from ...model.building_templates import space_template, resolve_zone_settings
         for key, zone in network_dict.get('zones', {}).items():
             name = str(zone.get('userName', key))
-            self.programs[name] = {**spaces[name].settings, **zone}
+            settings = resolve_zone_settings(spaces[name], space_template(model, spaces[name]))
+            self.programs[name] = {**settings, **zone}
         self.gain_resolver = gain_resolver
         self.prj_order = tuple(p for p, _ in mapping)
         return self
@@ -249,7 +253,7 @@ class BalanceModel:
         """Detect in-place physical/program edits, excluding hourly derived loads."""
         import hashlib
         import json
-        fields = ('userName', 'prjIndex', 'volume', 'zone_ppsm', 'zone_popheat',
+        fields = ('userName', 'prjIndex', 'volume', 'zone_ppsm',
                   'zone_equipment', 'zone_lighting', 'zone_h_temp', 'zone_c_temp')
         zones = {str(k): {f: z.get(f) for f in fields}
                  for k, z in network.get('zones', {}).items()}
@@ -282,7 +286,7 @@ class BalanceModel:
                     values[field] = (0.0 if not internal or self.programs[z].get(field) == 'ALL_ZERO'
                                      else self._program_value(z, field, hoy, 0.0))
                 internal_w[z] = self.area[i] * (
-                    values['zone_ppsm'] * self._program_value(z, 'zone_popheat', hoy, 75.0)
+                    values['zone_ppsm'] * OCCUPANT_SENSIBLE_HEAT_W
                     + values['zone_lighting'] + values['zone_equipment'])
         solar_w = solar_w or {}
         return {z: {'internal_w': float(internal_w.get(z, 0.0)), 'solar_w': float(solar_w.get(z, 0.0))}
@@ -316,7 +320,9 @@ class BalanceModel:
             return float(value)
         except (TypeError, ValueError):
             if self.gain_resolver is None:
-                return float(default)
+                from ...model.building_templates import expand_schedule
+                return float(expand_schedule(
+                    self.model, value, f'{zone}/{field}', allow_nan=field in {'zone_h_temp','zone_c_temp'})[hoy])
             return float(self.gain_resolver(value, hoy, field, zone))
 
     def step(self, state, hoy, outdoor_temperature_c, gains, ventilation, ideal_hvac=True):
@@ -345,15 +351,16 @@ class BalanceModel:
                     p.surface_air_heat_transfer_w_m2k, p.internal_gain_air_fraction)
                 tm[i], ta[i], ts[i] = self._zone(*args)
                 program = self.programs.get(z, {})
-                occupied = self._program_value(z, 'zone_ppsm', hoy, 0.0) > afn.OCCUPANCY_ACTIVE_THRESHOLD
-                if ideal_hvac and occupied:
+                if ideal_hvac:
                     setpoint = None
-                    heat = program.get('zone_h_temp')
-                    cool = program.get('zone_c_temp')
-                    if heat is not None and ta[i] < self._program_value(z, 'zone_h_temp', hoy, ta[i]):
-                        setpoint = self._program_value(z, 'zone_h_temp', hoy, ta[i])
-                    elif cool is not None and ta[i] > self._program_value(z, 'zone_c_temp', hoy, ta[i]):
-                        setpoint = self._program_value(z, 'zone_c_temp', hoy, ta[i])
+                    heat = self._program_value(z, 'zone_h_temp', hoy, float('nan'))
+                    cool = self._program_value(z, 'zone_c_temp', hoy, float('nan'))
+                    heat_available = self._program_value(z, 'zone_heating_availability', hoy, 0.) > 0
+                    cool_available = self._program_value(z, 'zone_cooling_availability', hoy, 0.) > 0
+                    if heat_available and np.isfinite(heat) and ta[i] < heat:
+                        setpoint = heat
+                    elif cool_available and np.isfinite(cool) and ta[i] > cool:
+                        setpoint = cool
                     if setpoint is not None:
                         probe = self._zone(*args, 10.0 * self.area[i])
                         if abs(probe[1] - ta[i]) < 1e-12:

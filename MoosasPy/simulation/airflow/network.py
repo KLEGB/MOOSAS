@@ -13,6 +13,7 @@ from ...transform.geometry.geos import Vector
 from ...utils.constant import geom
 from ...utils.tools import path, generate_code, parseFile, native_platform
 from ..runner import Runner
+from ..contracts import OCCUPANT_SENSIBLE_HEAT_W
 
 
 NETWORK_SCHEMA_VERSION = 1
@@ -456,143 +457,29 @@ class AfnZone(object):
         return z
 
     def calculateHeatLoad(self):
-        """
-        Calculate the total heat load for a thermal zone.
-        
-        Parameters
-        ----------
-        self : object
-            The instance of the class containing the settings and area attributes.
-            - self.settings (dict): A dictionary containing various zone settings including:
-                - 'zone_summerrad' (float): Summer radiation value for the zone.
-                - 'zone_ppsm' (float): People per square meter in the zone.
-                - 'zone_popheat' (float): Heat gain per person (W/person).
-                - 'zone_equipment' (float): Equipment power density (W/m²).
-                - 'zone_lighting' (float): Lighting power density (W/m²).
-            - self.area (float): Floor area of the zone in square meters.
-        
-        Returns
-        -------
-        float
-            The total heat load in watts (W), calculated as the sum of solar, occupant,
-            equipment, and lighting heat gains.
-        """
-        def _safe_float(value, default=0.0):
-            if value is None:
-                return default
-            if isinstance(value, str) and value.strip().lower() in ("", "none", "null", "nan"):
-                return default
-            try:
-                return float(value)
-            except Exception:
-                return default
+        """Annual-mean internal gains plus the precomputed seasonal solar load."""
+        return sum(self._heat_load_components().values())
 
-        def _resolve_setting(value, default=0.0):
-            numeric = _safe_float(value, None)
-            if numeric is not None:
-                return numeric
-            if not isinstance(value, str):
-                return default
-            schedule = getattr(getattr(self.element, "parent", None), "schedule", {}) or {}
-            schedule_item = schedule.get(value)
-            if not isinstance(schedule_item, dict):
-                return default
-            schedule_type = str(schedule_item.get("type", "")).strip().lower()
-            if schedule_type == "daily":
-                daily_values = [_safe_float(v, 0.0) for v in schedule_item.get("value", [])]
-                return sum(daily_values) / len(daily_values) if daily_values else default
-            if schedule_type == "weekly":
-                daily_values = []
-                for daily_name in schedule_item.get("value", []):
-                    daily_item = schedule.get(str(daily_name))
-                    if not isinstance(daily_item, dict):
-                        continue
-                    if str(daily_item.get("type", "")).strip().lower() != "daily":
-                        continue
-                    vals = [_safe_float(v, 0.0) for v in daily_item.get("value", [])]
-                    if vals:
-                        daily_values.append(sum(vals) / len(vals))
-                return sum(daily_values) / len(daily_values) if daily_values else default
-            return default
-
-        heat = 0
-        heat += _resolve_setting(self.element.settings.get('zone_summerrad')) / (
-                SUMMER_RADIATION_PERIOD_HOURS) * 1000 * _resolve_setting(
-            self.element.settings.get('zone_win_SHGC'))
-        heat += _resolve_setting(self.element.settings.get('zone_ppsm')) * _resolve_setting(
-            self.element.settings.get('zone_popheat')) * self.element.area
-        heat += _resolve_setting(self.element.settings.get('zone_equipment')) * self.element.area
-        heat += _resolve_setting(self.element.settings.get('zone_lighting')) * self.element.area
-        return heat
+    def _heat_load_components(self):
+        from ...model.building_templates import space_template, resolve_zone_settings, expand_schedule
+        space = self.element
+        model = space.parent
+        settings = resolve_zone_settings(space, space_template(model, space))
+        def program(key):
+            return expand_schedule(model, settings[key], f'{space.id}/{key}')
+        return {
+            'solar heat': float(settings['zone_summerrad']) / SUMMER_RADIATION_PERIOD_HOURS * 1000
+                          * float(settings.get('zone_win_SHGC', 0.)),
+            'people': float(np.mean(program('zone_ppsm'))) * OCCUPANT_SENSIBLE_HEAT_W * space.area,
+            'equipment': float(np.mean(program('zone_equipment'))) * space.area,
+            'lighting': float(np.mean(program('zone_lighting'))) * space.area,
+        }
 
     def printHeatLoad(self):
-        """
-        Prints the breakdown of heat load components for the zone.
-        
-        Parameters
-        ----------
-        self : object
-            The instance of the class containing the method. It is expected to have
-            attributes `settings`, `area`, and a method `calculateHeatLoad`. The `settings`
-            dictionary should contain keys 'zone_summerrad', 'zone_ppsm', 'zone_popheat',
-            'zone_equipment', and 'zone_lighting'.
-        
-        Returns
-        -------
-        None
-            This function does not return any value. It prints the heat load details to stdout.
-        """
-        def _safe_float(value, default=0.0):
-            if value is None:
-                return default
-            if isinstance(value, str) and value.strip().lower() in ("", "none", "null", "nan"):
-                return default
-            try:
-                return float(value)
-            except Exception:
-                return default
-
-        def _resolve_setting(value, default=0.0):
-            numeric = _safe_float(value, None)
-            if numeric is not None:
-                return numeric
-            if not isinstance(value, str):
-                return default
-            schedule = getattr(getattr(self.element, "parent", None), "schedule", {}) or {}
-            schedule_item = schedule.get(value)
-            if not isinstance(schedule_item, dict):
-                return default
-            schedule_type = str(schedule_item.get("type", "")).strip().lower()
-            if schedule_type == "daily":
-                vals = [_safe_float(v, 0.0) for v in schedule_item.get("value", [])]
-                return sum(vals) / len(vals) if vals else default
-            if schedule_type == "weekly":
-                vals = []
-                for daily_name in schedule_item.get("value", []):
-                    daily_item = schedule.get(str(daily_name))
-                    if not isinstance(daily_item, dict):
-                        continue
-                    if str(daily_item.get("type", "")).strip().lower() != "daily":
-                        continue
-                    daily_vals = [_safe_float(v, 0.0) for v in daily_item.get("value", [])]
-                    if daily_vals:
-                        vals.append(sum(daily_vals) / len(daily_vals))
-                return sum(vals) / len(vals) if vals else default
-            return default
-
-        solar = _resolve_setting(self.element.settings.get('zone_summerrad')) / (
-            SUMMER_RADIATION_PERIOD_HOURS
-        ) * 1000 * _resolve_setting(self.element.settings.get('zone_win_SHGC'))
-        people = _resolve_setting(self.element.settings.get('zone_ppsm')) * _resolve_setting(
-            self.element.settings.get('zone_popheat')
-        ) * self.element.area
-        equipment = _resolve_setting(self.element.settings.get('zone_equipment')) * self.element.area
-        lighting = _resolve_setting(self.element.settings.get('zone_lighting')) * self.element.area
-        print('\nzone total', solar + people + equipment + lighting)
-        print('solar heat', solar)
-        print('people', people)
-        print('equipment', equipment)
-        print('lighting', lighting)
+        components = self._heat_load_components()
+        print('\nzone total', sum(components.values()))
+        for name, value in components.items():
+            print(name, value)
         print('area', self.element.area)
 
     def toDict(self) -> dict:
@@ -857,39 +744,11 @@ class AfnNetwork:
             self.levels = _build_level_objects(getattr(model, "levelList", [0.0]))
             self.paths: list[AfnPath] = []
             self.zones: list[AfnZone] = []
-            spaces = sorted(
-                list(model.spaceList),
-                key=lambda s: (
-                    _safe_float(getattr(s, "level", 0.0), 0.0),
-                    str(getattr(s, "id", getattr(s, "Uid", getattr(s, "userName", "")))),
-                ),
-            )
-            for s in spaces:
-                self.zones.append(AfnZone.fromElement(s))
-                self.zones[-1].prjIndex = len(self.zones)
-                self.zones[-1].prjName = 'z' + '%03d' % int(self.zones[-1].prjIndex)
-                zone_paths: list[AfnPath] = []
-                for gls in s.getAllFaces(to_dict=False):
-                    if isinstance(gls, MoosasGlazing) or isinstance(gls, MoosasSkylight):
-                        zone_paths.append(AfnPath.fromElement(gls))
-                leak_path = _build_leakage_path_from_space(s, self.zones[-1])
-                if leak_path is not None:
-                    zone_paths.append(leak_path)
-                zone_paths.sort(
-                    key=lambda p: (
-                        _safe_int(getattr(p, "levelIndex", 1), 1),
-                        1 if str(getattr(p, "pathType", "")).strip().lower() == "leakage" else 0,
-                        str(getattr(p, "userName", "")),
-                    )
-                )
-                for p in zone_paths:
-                    self.paths.append(p)
-                    self.paths[-1].prjIndex = len(self.paths)
+            self.zones, self.paths = getZoneAndPath(model)
         elif (paths and zones):
-            self.paths = paths
+            self.paths = pathTopology(paths, zones)
             self.zones = zones
             self.levels = _infer_levels_from_zones(zones)
-        self.paths = pathTopology(self.paths, self.zones)
         self.paths, self.zones = cleanseNetwork(self.paths, self.zones)
         if not hasattr(self, "levels"):
             self.levels = _infer_levels_from_zones(self.zones)
@@ -1062,6 +921,8 @@ def getZoneAndPath(model, calculate_heat=True):
         ),
     )
     for s in spaces:
+        from ...model.building_templates import space_template
+        space_template(model, s)
         zoneList.append(AfnZone.fromElement(s, calculate_heat=calculate_heat))
         zoneList[-1].prjIndex = len(zoneList)
         zoneList[-1].prjName = 'z' + '%03d' % int(zoneList[-1].prjIndex)

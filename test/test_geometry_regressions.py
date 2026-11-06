@@ -866,8 +866,7 @@ def test_select_wall_does_not_create_missing_air_boundaries():
     assert len(model.wallList) == wall_count
 
 
-def test_template_application_keeps_load_intensities_numeric():
-    """A schedule reference must not replace the numeric IDF load value."""
+def test_template_application_rejects_flat_legacy_templates():
     template = {
         "type": "RESIDENTIAL",
         "zone_ppsm": "0.031",
@@ -881,13 +880,7 @@ def test_template_application_keeps_load_intensities_numeric():
     space.edge = SimpleNamespace(parent=model)
     space.settings = {}
 
-    space.applySettings(template)
-
-    assert space.settings["zone_ppsm"] == 0.031
-    assert space.settings["zone_equipment"] == 4.2
-    assert space.settings["zone_lighting"] == 6.5
-
-    invalid_template = {"type": "RESIDENTIAL", "zone_ppsm": "RES_OccDens_Weekly"}
-    model.buildingTemplate = {"invalid-residential": invalid_template}
-    with pytest.raises(ValueError, match="zone_ppsm.*must be numeric"):
-        space.applySettings(invalid_template)
+    with pytest.raises(ValueError, match="namespaced id"):
+        space.applySettings(template)
+    with pytest.raises(ValueError, match="version 5"):
+        space.applySettings("test-residential")

@@ -318,8 +318,6 @@ class MoosasRDF(Graph):
         from .gbxml.energy import encode
         encode(model, self)
         self.encodeStorey(model)
-        for tmp in model.buildingTemplate.keys():
-            self.encodeProgram(tmp, model.buildingTemplate[tmp])
         spaces = []
         self.skipped_spaces = []
         for space in model.spaceList + model.voidList:
@@ -541,13 +539,6 @@ class MoosasRDF(Graph):
         """constructing hierarchy for class in moosas
         """
         # program
-        if model.buildingTemplate:
-            item = list(model.buildingTemplate.keys())[0]
-            for zInfo in model.buildingTemplate[item].keys():
-                self.add((self.moosas.term(zInfo), self.rdfs.subPropertyOf, self.moosas.Program))
-                self.add((self.moosas.term(zInfo), self.rdf.type, self.moosas.ZoneInfo))
-                self.add((self.moosas.term(zInfo), self.moosas.Uid, Literal(zInfo)))
-
         # geometry
         self.add((self.geo.hasGeometry, self.rdfs.subPropertyOf, self.moosas.Geometry))
         self.add((self.moosas.Category, self.rdfs.subPropertyOf, self.moosas.Geometry))
@@ -678,31 +669,6 @@ class MoosasRDF(Graph):
         # the boundary object on the other side
         self.add((self.ifc.CorrespondingBoundary, self.rdfs.subPropertyOf, self.ifc.IfcRelSpaceBoundary2ndLevel))
         self.add((self.ifc.CorrespondingBoundary, self.rdfs.range, self.ifc.IfcRelSpaceBoundary2ndLevel))
-
-    def encodeProgram(self, pgName: str, pgDict: dict):
-        """
-        Encode a program into the RDF graph with associated metadata.
-        
-        Parameters
-        ----------
-        pgName : str
-            The name of the program, used as a term and UID in the RDF graph.
-        pgDict : dict
-            A dictionary containing metadata or properties of the program, where keys are 
-            predicate names and values are corresponding literals to be added as triples.
-        
-        Returns
-        -------
-        None
-            This function modifies the instance's RDF graph in place and does not return a value.
-        """
-        self.add((self.moosas.term(pgName), self.rdf.type, self.moosas.Program))
-        self.add((self.moosas.term(pgName), self.moosas.Uid, Literal(pgName)))
-        for zInfo in pgDict.keys():
-            value = pgDict[zInfo]
-            literal = (Literal(json.dumps(value, ensure_ascii=False, allow_nan=False), datatype=URIRef('urn:moosas:json'))
-                       if isinstance(value, (dict, list)) else Literal(value))
-            self.add((self.moosas.term(pgName), self.moosas.term(zInfo), literal))
 
     def encodeGeo(self, geo: MoosasGeometry):
         """
@@ -1364,7 +1330,6 @@ def _import_schedule_nodes(rdfGraph: MoosasRDF, model: MoosasModel):
 
 
 def _decode_space_settings(rdfGraph: MoosasRDF, spaceUri, spc: MoosasSpace):
-    spc.settings.pop('_building_template', None)
     spcSettings = mixItemListToList(rdfGraph.getObject(spaceUri, rdfGraph.moosas.hasSetting))
     for key in spcSettings:
         if str(key) == 'zone_inflitration':

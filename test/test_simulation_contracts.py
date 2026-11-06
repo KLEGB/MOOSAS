@@ -292,19 +292,23 @@ class SimulationContractTests(unittest.TestCase):
 
     def test_energy_airflow_coupler_resolves_gains_from_template_schedules(self):
         from MoosasPy.model.building_templates import building_templates, template_parameter
+        from MoosasPy.simulation.airflow.network import AfnZone
 
-        record = building_templates()["CN/GB55015-2021/3A/OfficeLarge"]
-        settings = {"_building_template": record}
-        space = SimpleNamespace(id="z1", settings=settings, explicit_settings=set())
+        record = building_templates()["CN/GB55015-2021/3A/Office"]
+        settings = {"zone_template": record['id']}
+        space = SimpleNamespace(id="z1", area=100., settings=settings, explicit_settings=set())
         coupler = object.__new__(EnergyAirflowCoupler)
-        coupler.model = SimpleNamespace(schedule={"probe": {"type": "Daily", "value": [2.0] * 24}})
+        coupler.model = SimpleNamespace(buildingTemplate={record['id']: record},
+                                       schedule={"probe": {"type": "Daily", "value": [2.0] * 24}})
         coupler._spaces_by_id = {"z1": space}
         coupler._gain_cache = {}
-        occupancy = template_parameter(settings, "zone_ppsm")
+        occupancy = template_parameter(record, "zone_ppsm")
         self.assertEqual(len(occupancy), 8760)
-
+        network = SimpleNamespace(zones=[AfnZone(userName='z1', prjIndex=1, element=space)], paths=[], levels=[])
+        zone = coupler.buildNetwork(network)['zones']['z1']
+        self.assertIsNot(zone['zone_ppsm'], occupancy)
         self.assertAlmostEqual(
-            coupler._resolve_gain_value(.125, 9, "zone_ppsm", "z1"),
+            coupler._resolve_gain_value(zone['zone_ppsm'], 9, "zone_ppsm", "z1"),
             occupancy[9])
         space.explicit_settings.add("zone_ppsm")
         self.assertEqual(coupler._resolve_gain_value(0.25, 9, "zone_ppsm", "z1"), 0.25)
@@ -312,7 +316,17 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(coupler._resolve_gain_value("probe", 100, "zone_equipment", "z1"), 2.0)
         with self.assertRaisesRegex(ValueError, "unknown schedule"):
             coupler._resolve_gain_value("OFF_EquipHeat_Weekly", 9, "zone_equipment", "z1")
-        self.assertEqual(coupler._resolve_gain_value(None, 9, "zone_ppsm", "z1"), 0.0)
+        with self.assertRaisesRegex(ValueError, "missing resolved"):
+            coupler._resolve_gain_value(None, 9, "zone_ppsm", "z1")
+        coupler.paths = []
+        coupler.pathRadIntensity = {}
+        space.explicit_settings.clear()
+        coupler.networkDict = coupler.buildNetwork(network)
+        expected_gain = 100. * (
+            template_parameter(record, 'zone_ppsm')[9] * 75.
+            + template_parameter(record, 'zone_equipment')[9]
+            + template_parameter(record, 'zone_lighting')[9])
+        self.assertAlmostEqual(coupler.updateHeatLoad(9)['zones']['z1']['heatLoad'], expected_gain)
 
     def test_energy_airflow_coupler_delegates_iteration_to_airflow_runner(self):
         coupler = object.__new__(EnergyAirflowCoupler)

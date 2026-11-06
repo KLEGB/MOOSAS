@@ -241,18 +241,38 @@ def _daylight_scene(model, *, black=False, overrides=None, split_transport=False
     spectral band and are not silently reinterpreted as visible properties.
     """
     from .radiance import _visible_material
+    from ...model.building_templates import space_template, surface_template_parameters
+    overrides = overrides or {}
     elements = {}
     roles = {}
+    template_optics = {}
     for space in model.spaceList:
+        profile = space_template(model, space)
         faces = space.getAllFaces(to_dict=True)
-        for key, role in [('MoosasCeiling', 'ceiling'), ('MoosasFloor', 'floor')]:
-            for element in faces[key]:
-                elements[str(element.Uid)] = element
-                roles[str(element.Uid)] = role
+        for group, role in [('MoosasWall', 'wall'), ('MoosasFloor', 'floor'),
+                            ('MoosasCeiling', 'ceiling'), ('MoosasGlazing', 'window'),
+                            ('MoosasSkylight', 'skylight'), ('InternalMass', 'wall')]:
+            for element in faces.get(group, ()):
+                uid = str(element.Uid)
+                elements[uid] = element
+                roles[uid] = role
+                if element.category in (2, -2):
+                    continue
+                glass = element.category in (1, 5, 6)
+                key = 'visible_transmittance' if glass else 'visible_reflectance'
+                if key in overrides.get(uid, {}) or key in getattr(element, 'explicit_settings', ()):
+                    continue
+                boundary = element.settings.get('boundary_condition', 'outdoors' if element.isOuter else 'adiabatic')
+                source = surface_template_parameters(profile, role, boundary).get(key)
+                if source is None or source['mode'] != 'constant':
+                    raise ValueError(f'{space.id}/{uid}: daylight requires constant template {key}')
+                value = source['value']
+                if uid in template_optics and template_optics[uid] != {key: value}:
+                    raise ValueError(f'{uid}: conflicting visible properties from adjacent space templates; set an explicit optical override')
+                template_optics[uid] = {key: value}
     for collection in (model.wallList, model.glazingList, model.skylightList, model.shadingList):
         for element in collection:
             elements[str(element.Uid)] = element
-    overrides = overrides or {}
     unknown = set(overrides) - set(elements)
     if unknown:
         raise ValueError(f'Optical overrides reference unknown elements: {sorted(unknown)}')
@@ -261,9 +281,9 @@ def _daylight_scene(model, *, black=False, overrides=None, split_transport=False
         if element.category in (2, -2):
             continue
         glass = element.category in (1, 5, 6)
-        settings = {**getattr(element, 'settings', {}), **overrides.get(uid, {})}
+        settings = {**getattr(element, 'settings', {}), **template_optics.get(uid, {}), **overrides.get(uid, {})}
         material, record = _visible_material(settings, roles.get(uid, 'wall'), glass, f'mat_{index}', black, split_transport)
-        record.update(uid=uid, source='override' if uid in overrides else 'settings_or_default')
+        record.update(uid=uid, source='override' if uid in overrides else 'template' if uid in template_optics else 'settings_or_default')
         optics.append(record)
         geometry = element.face if glass else _triangulate_opaque(element)
         if not glass and not geometry:

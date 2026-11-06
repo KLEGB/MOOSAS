@@ -5,6 +5,7 @@ from copy import deepcopy
 import json
 import math
 from pathlib import Path
+import numpy as np
 
 
 DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'template'
@@ -12,7 +13,7 @@ DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'template'
 
 def _read_catalog_manifest(filename):
     data = json.loads(filename.read_text(encoding='utf-8'))
-    if data.get('schema') != 'moosas.building-template-library' or data.get('version') != 4:
+    if data.get('schema') != 'moosas.building-template-library' or data.get('version') != 5:
         raise ValueError(f'Unsupported building template catalog schema/version in {filename.name}')
     return data
 
@@ -29,18 +30,23 @@ def load_building_template_library(library_path=None):
             raise ValueError(f'Invalid template package path {namespace!r}')
         standard = manifest.get('standard_metadata')
         assumptions = manifest.get('template_assumptions')
-        if not isinstance(standard, dict) or not isinstance(assumptions, dict):
-            raise ValueError(f'{namespace}: direct template package metadata is required')
+        operational = manifest.get('operational_metadata')
+        if not isinstance(standard, dict) or not isinstance(assumptions, dict) or not isinstance(operational, dict):
+            raise ValueError(f'{namespace}: version 5 catalog metadata is required')
         standard_namespace = f"{standard.get('country')}/{standard.get('id')}"
-        if not standard.get('country') or not standard.get('id') or standard_namespace in library['standards']:
+        if (not standard.get('country') or not standard.get('id') or not standard.get('source_url')
+                or namespace != f"{standard['country']}_{standard['id']}"
+                or standard_namespace in library['standards']):
             raise ValueError(f'{namespace}: invalid or duplicate standard metadata')
         package = folder / namespace
         files = sorted(package.glob('*.json'))
         if not files:
             raise ValueError(f'{namespace}: no direct building templates found')
         templates = {}
+        schedules = {}
         for filename in files:
-            template_id, record = _read_direct_template(filename, package, standard, assumptions)
+            template_id, record = _read_direct_template(
+                filename, package, standard, assumptions, operational, schedules)
             if template_id in templates:
                 raise ValueError(f'Duplicate template id {template_id!r}')
             templates[template_id] = record
@@ -48,7 +54,7 @@ def load_building_template_library(library_path=None):
     return library
 
 
-def _read_direct_template(filename, package, standard, assumptions):
+def _read_direct_template(filename, package, standard, assumptions, operational, schedules):
     source = json.loads(filename.read_text(encoding='utf-8'))
     if not isinstance(source, dict) or set(source) != {'BuildingTemplate'}:
         raise ValueError(f'{filename.name}: direct building template requires only BuildingTemplate')
@@ -73,26 +79,10 @@ def _read_direct_template(filename, package, standard, assumptions):
         raise ValueError(f'{filename.name}: invalid template metadata id')
     namespace = f"{standard['country']}/{standard['id']}"
     template_id = f"{namespace}/{metadata['climate_zone']}/{metadata['building_type']}"
-    resolved = _load_schedule_sources(original, package, template_id)
-    if set(resolved['Space']) != {'air_exchange', 'internal_gains', 'system'}:
-        raise ValueError(f'{filename.name}: invalid Space domains')
-    for domain in ('air_exchange', 'internal_gains', 'system'):
-        _validate_parameter_sources(resolved['Space'][domain], f'{template_id}/Space/{domain}', resolved=True)
-    expected_groups = {
-        'exterior_wall', 'interior_wall', 'floor', 'ground', 'roof', 'window', 'skylight'}
-    if set(resolved['Envelope']) != expected_groups:
-        raise ValueError(f'{filename.name}: invalid Envelope construction groups')
-    allowed_parameters = {
-        'u', 'shgc', 'visible_reflectance', 'visible_transmittance',
-        'air_leakage_per_area', 'opening_ratio'}
-    for construction, parameters in resolved['Envelope'].items():
-        if not isinstance(parameters, dict) or set(parameters) - allowed_parameters:
-            raise ValueError(f'{template_id}/Envelope/{construction}: invalid construction properties')
-        _validate_parameter_sources(
-            parameters, f'{template_id}/Envelope/{construction}', resolved=True)
+    resolved = _load_schedule_sources(original, package, template_id, schedules=schedules)
     profile = {
         'schema': 'moosas.building-template',
-        'version': 4,
+        'version': 5,
         'id': template_id,
         'standard': deepcopy(standard),
         'BuildingTemplate': {'Space': resolved['Space'], 'Envelope': resolved['Envelope']},
@@ -100,9 +90,15 @@ def _read_direct_template(filename, package, standard, assumptions):
             'standard_source': deepcopy(standard),
             'template_metadata': deepcopy(metadata),
             'energy_assumptions': deepcopy(assumptions),
+            'operational_metadata': deepcopy(operational),
         },
     }
+    _validate_template_snapshot(profile)
     return template_id, profile
+
+
+def _nullable_schedule(label):
+    return label.endswith('/heating_setpoint') or label.endswith('/cooling_setpoint')
 
 
 def _validate_value_source(value, label, *, resolved=False):
@@ -129,8 +125,9 @@ def _validate_value_source(value, label, *, resolved=False):
                 or not isinstance(value['unit'], str) or not value['unit']):
             raise ValueError(f'{label}: invalid relative .sch schedule reference')
         if resolved and (not isinstance(value['values'], list) or len(value['values']) != 8760
-                         or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
-                                for v in value['values'])):
+                         or any(v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                                                   or not math.isfinite(v)) for v in value['values'])
+                         or (not _nullable_schedule(label) and any(v is None for v in value['values']))):
             raise ValueError(f'{label}: resolved schedule must contain exactly 8760 finite values')
     else:
         raise ValueError(f'{label}: mode must be constant or schedule')
@@ -145,7 +142,8 @@ def _validate_parameter_sources(parameters, label, *, resolved=False):
         _validate_value_source(value, f'{label}/{name}', resolved=resolved)
 
 
-def _load_schedule_sources(value, package_path, label):
+def _load_schedule_sources(value, package_path, label, *, schedules=None):
+    schedules = {} if schedules is None else schedules
     if isinstance(value, dict) and value.get('mode') in {'constant', 'schedule'}:
         _validate_value_source(value, label)
         if value['mode'] == 'constant':
@@ -154,31 +152,47 @@ def _load_schedule_sources(value, package_path, label):
         resolved = (package_path / schedule_file).resolve()
         if package_path.resolve() not in resolved.parents:
             raise ValueError(f'{label}: schedule path escapes its template package')
-        document = json.loads(resolved.read_text(encoding='utf-8'))
-        if (not isinstance(document, dict) or document.get('schema') != 'moosas.schedule'
-                or document.get('version') != 1):
-            raise ValueError(f'{label}: unsupported .sch schema/version')
-        schedules = document.get('schedules', {})
-        if not isinstance(schedules, dict):
-            raise ValueError(f'{label}: .sch schedules must be an object')
-        if value['name'] not in schedules:
+        if resolved not in schedules:
+            document = json.loads(resolved.read_text(encoding='utf-8'))
+            if (not isinstance(document, dict) or set(document) != {'schema', 'version', 'schedules'}
+                    or document.get('schema') != 'moosas.schedule' or document.get('version') != 2):
+                raise ValueError(f'{label}: unsupported .sch schema/version')
+            document_schedules = document.get('schedules')
+            if not isinstance(document_schedules, dict):
+                raise ValueError(f'{label}: .sch schedules must be an object')
+            for name, entry in document_schedules.items():
+                if not isinstance(name, str) or not name:
+                    raise ValueError(f'{label}: schedule names must be nonempty strings')
+                nullable = name.endswith(('_heating_setpoint', '_cooling_setpoint'))
+                values = entry.get('values') if isinstance(entry, dict) else None
+                if (not isinstance(entry, dict) or set(entry) != {'unit', 'values'}
+                        or not isinstance(entry['unit'], str)
+                        or not entry['unit'] or not isinstance(values, list) or len(values) != 8760
+                        or any(value is not None and (isinstance(value, bool)
+                               or not isinstance(value, (int, float)) or not math.isfinite(value))
+                               for value in values)
+                        or (not nullable and any(value is None for value in values))):
+                    raise ValueError(f'{label}: invalid version 2 schedule entry {name!r}')
+            schedules[resolved] = document_schedules
+        document_schedules = schedules[resolved]
+        if value['name'] not in document_schedules:
             raise ValueError(f'{label}: schedule {value["name"]!r} is missing from {value["file"]}')
-        item = schedules[value['name']]
-        if not isinstance(item, dict):
+        item = document_schedules[value['name']]
+        if not isinstance(item, dict) or set(item) != {'unit', 'values'}:
             raise ValueError(f'{label}: schedule entry must be an object')
         values = item.get('values')
         if item.get('unit') != value['unit']:
             raise ValueError(f'{label}: schedule unit does not match template parameter unit')
         if (not isinstance(values, list) or len(values) != 8760 or any(
-                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
-                for v in values)):
+                v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v))
+                for v in values) or (not _nullable_schedule(label) and any(v is None for v in values))):
             raise ValueError(f'{label}: schedule must contain exactly 8760 finite values')
-        return {**deepcopy(value), 'values': values}
+        return {**deepcopy(value), 'values': deepcopy(values)}
     if isinstance(value, dict):
-        return {key: _load_schedule_sources(item, package_path, f'{label}/{key}')
+        return {key: _load_schedule_sources(item, package_path, f'{label}/{key}', schedules=schedules)
                 for key, item in value.items()}
     if isinstance(value, list):
-        return [_load_schedule_sources(item, package_path, f'{label}/{index}')
+        return [_load_schedule_sources(item, package_path, f'{label}/{index}', schedules=schedules)
                 for index, item in enumerate(value)]
     return deepcopy(value)
 
@@ -193,46 +207,50 @@ def building_templates(library_path=None):
     library = load_building_template_library(library_path)
     result = {}
     for package in library['standards'].values():
-        result.update(deepcopy(package['templates']))
+        result.update(package['templates'])
     return result
 
 
 def validate_template_snapshot(settings):
-    """Reject obsolete snapshots rather than silently reinterpreting their rules."""
-    if '_thermal_template' in settings:
-        raise ValueError('Legacy thermal template snapshots are unsupported; reapply the building template explicitly')
-    profile = settings.get('_building_template')
-    if profile is None:
-        return
-    if profile.get('schema') != 'moosas.building-template' or profile.get('version') != 4:
-        raise ValueError('Unsupported building template snapshot; explicitly reapply a COUNTRY/STANDARD/template/type template')
-    if 'schedules' in profile.get('BuildingTemplate', {}).get('Space', {}):
-        raise ValueError('BuildingTemplate v4 stores schedules on individual parameters; reapply the template explicitly')
-    standard = profile['standard']
-    if not profile['id'].startswith(f"{standard['country']}/{standard['id']}/"):
-        raise ValueError('Building template snapshot id does not match its standard namespace')
-    if 'zone_template' in settings and settings['zone_template'] != profile['id']:
-        raise ValueError('zone_template does not match its building template snapshot; reapply the template explicitly')
-    _validate_template_snapshot(profile)
+    """Reject obsolete per-space snapshots; templates now belong to the model."""
+    if '_thermal_template' in settings or '_building_template' in settings:
+        raise ValueError('Per-space template snapshots are unsupported; reapply the building template explicitly')
 
 
 def _validate_template_snapshot(profile):
+    if (not isinstance(profile, dict) or profile.get('schema') != 'moosas.building-template'
+            or profile.get('version') != 5 or not isinstance(profile.get('id'), str)):
+        raise ValueError('A version 5 BuildingTemplate record is required')
     template = profile.get('BuildingTemplate', {})
-    if set(template) != {'Space', 'Envelope'}:
+    if not isinstance(template, dict) or set(template) != {'Space', 'Envelope'}:
         raise ValueError('Direct BuildingTemplate snapshot requires Space and Envelope domains')
     space = template['Space']
-    if set(space) != {'air_exchange', 'internal_gains', 'system'}:
-        raise ValueError('Direct BuildingTemplate Space snapshot has invalid domains')
-    for domain in ('air_exchange', 'internal_gains', 'system'):
-        _validate_parameter_sources(space[domain], f'Space/{domain}', resolved=True)
+    if not isinstance(space, dict) or not space:
+        raise ValueError('Direct BuildingTemplate Space must contain room groups')
+    required = {
+        'air_exchange': {'infiltration'},
+        'internal_gains': {'occupancy_density', 'equipment_power_density', 'lighting_power_density',
+                           'occupancy_fraction', 'equipment_usage', 'lighting_usage'},
+        'system': {'heating_availability', 'cooling_availability', 'hvac_availability'},
+    }
+    for room, values in space.items():
+        if not isinstance(room, str) or not room or not isinstance(values, dict) or set(values) != set(required):
+            raise ValueError(f'Space/{room}: invalid room domains')
+        for domain, names in required.items():
+            parameters = values[domain]
+            if not isinstance(parameters, dict) or names - set(parameters):
+                raise ValueError(f'Space/{room}/{domain}: missing required parameters')
+            if domain == 'internal_gains' and 'occupant_heat' in parameters:
+                raise ValueError(f'Space/{room}/internal_gains/occupant_heat is not a template parameter')
+            _validate_parameter_sources(parameters, f'Space/{room}/{domain}', resolved=True)
     envelope = template['Envelope']
     expected_groups = {
         'exterior_wall', 'interior_wall', 'floor', 'ground', 'roof', 'window', 'skylight'}
-    if set(envelope) != expected_groups:
-        raise ValueError('Direct BuildingTemplate Envelope snapshot has invalid construction groups')
+    if not isinstance(envelope, dict) or set(envelope) != expected_groups:
+        raise ValueError('Direct BuildingTemplate snapshot has invalid Envelope construction groups')
     allowed_parameters = {
         'u', 'shgc', 'visible_reflectance', 'visible_transmittance',
-        'air_leakage_per_area', 'opening_ratio'}
+        'air_leakage_per_area', 'opening_ratio', 'r'}
     for construction, parameters in envelope.items():
         if not isinstance(parameters, dict) or set(parameters) - allowed_parameters:
             raise ValueError(f'Envelope/{construction}: invalid direct construction properties')
@@ -251,18 +269,25 @@ def _validate_template_snapshot(profile):
                 f"{standard['country']}/{standard['id']}/"
                 f"{source_metadata.get('climate_zone')}/{source_metadata.get('building_type')}")):
         raise ValueError('Direct BuildingTemplate snapshot id does not match its source metadata')
+    if not isinstance(metadata.get('energy_assumptions'), dict) or not isinstance(metadata.get('operational_metadata'), dict):
+        raise ValueError('Version 5 BuildingTemplate snapshot is missing catalog assumptions')
 
 
-def apply_building_template_to_space(space, record, name, *, preserve_explicit=True):
-    """Apply a JSON record; keep the expanded snapshot portable in model IO."""
-    if record.get('schema') != 'moosas.building-template' or record.get('version') != 4:
-        raise ValueError('This API requires a version 4 BuildingTemplate record')
-    if record.get('id') != name:
+def space_template(model, space, template_id=None, *, templates=None):
+    """Resolve and validate the space's model-owned template."""
+    validate_template_snapshot(space.settings)
+    name = template_id if template_id is not None else space.settings.get('zone_template')
+    if not name:
+        raise ValueError(f'{space.id}: explicitly select a BuildingTemplate before simulation')
+    records = model.buildingTemplate if templates is None else templates
+    if name not in records:
+        raise ValueError(f'{space.id}: unknown building template {name!r}; use a complete namespaced id')
+    profile = records[name]
+    _validate_template_snapshot(profile)
+    if profile['id'] != name:
         raise ValueError('BuildingTemplate id does not match the selected template')
-    if not preserve_explicit and hasattr(space, 'explicit_settings'):
-        space.explicit_settings = [k for k in space.explicit_settings if not k.startswith('zone_')]
-    space.settings['_building_template'] = deepcopy(record)
-    space.settings['zone_template'] = name
+    _space_room(space, profile)
+    return profile
 
 
 def apply_building_template(model, template_id, *, template_path=None, zone_ids=None,
@@ -276,61 +301,214 @@ def apply_building_template(model, template_id, *, template_path=None, zone_ids=
     if template_id not in records:
         raise ValueError(f'Unknown building template {template_id!r}')
     record = records[template_id]
-    if record.get('schema') != 'moosas.building-template':
-        raise ValueError('This API requires a structured JSON building template')
+    _validate_template_snapshot(record)
     selected = set(map(str, zone_ids)) if zone_ids is not None else {str(s.id) for s in model.spaceList}
     if selected - {str(s.id) for s in model.spaceList}:
         raise ValueError('Unknown zone_ids in template application')
-    model.buildingTemplate.update(records)
-    for space in model.spaceList:
-        if str(space.id) in selected:
-            apply_building_template_to_space(
-                space, record, template_id, preserve_explicit=preserve_explicit)
+    spaces = [space for space in model.spaceList if str(space.id) in selected]
+    for space in spaces:
+        validate_template_snapshot(space.settings)
+        _space_room(space, record)
+    model.buildingTemplate[template_id] = record
+    for space in spaces:
+        if not preserve_explicit:
+            replaced = set(SPACE_PARAMETERS)
+            space.explicit_settings = [k for k in space.explicit_settings if k not in replaced]
+            for key in replaced:
+                space.settings.pop(key, None)
+        space.settings['zone_template'] = template_id
     return model
 
 
-def template_program(settings, key, base):
-    """Return an individual parameter's explicit 8760-hour schedule."""
-    value = template_parameter(settings, key)
-    if isinstance(value, list) and len(value) == 8760:
-        import numpy as np
-        return np.asarray(value, dtype=float)
-    return None
+SPACE_PARAMETERS = {
+    'zone_pfav': ('air_exchange', 'fresh_air'),
+    'zone_infiltration': ('air_exchange', 'infiltration'),
+    'zone_ppsm': ('internal_gains', 'occupancy_density'),
+    'zone_lighting': ('internal_gains', 'lighting_power_density'),
+    'zone_equipment': ('internal_gains', 'equipment_power_density'),
+    'zone_h_temp': ('system', 'heating_setpoint'),
+    'zone_c_temp': ('system', 'cooling_setpoint'),
+    'zone_collingEER': ('system', 'cooling_cop'),
+    'zone_HeatingEER': ('system', 'heating_cop'),
+    'hvac_enabled': ('system', 'hvac_availability'),
+}
 
 
-def template_parameter(settings, key):
-    """Return a template parameter's constant or resolved hourly values."""
-    validate_template_snapshot(settings)
-    profile = settings.get('_building_template')
-    if not profile:
-        return None
-    paths = {
-        'zone_pfav': ('air_exchange', 'fresh_air'),
-        'zone_infiltration': ('air_exchange', 'infiltration'),
-        'zone_ppsm': ('internal_gains', 'occupancy_density'),
-        'zone_popheat': ('internal_gains', 'occupant_heat'),
-        'zone_lighting': ('internal_gains', 'lighting_power_density'),
-        'zone_equipment': ('internal_gains', 'equipment_power_density'),
-        'zone_h_temp': ('system', 'heating_setpoint'),
-        'zone_c_temp': ('system', 'cooling_setpoint'),
-        'zone_collingEER': ('system', 'cooling_cop'),
-        'zone_HeatingEER': ('system', 'heating_cop'),
-        'hvac_enabled': ('system', 'hvac_availability'),
-    }
-    if key not in paths:
-        return None
-    domain, name = paths[key]
-    source = profile['BuildingTemplate']['Space'][domain][name]
+def _space_room(space, profile):
+    rooms = profile['BuildingTemplate']['Space']
+    room = space.settings.get('zone_room')
+    if room is None and set(rooms) == {'default'}:
+        room = 'default'
+    if room not in rooms:
+        raise ValueError(f'{space.id}: set zone_room to one of {sorted(rooms)}')
+    return room
+
+
+def _source_values(source):
     return source['value'] if source['mode'] == 'constant' else source['values']
 
 
-def resolve_surface_template(settings, role, boundary):
-    """Map the selected construction group's direct values to an Energy surface."""
-    validate_template_snapshot(settings)
-    profile = settings.get('_building_template')
-    if not profile:
-        return {}, ()
-    assumptions = profile['metadata']['energy_assumptions']
+def _room_source(profile, room, domain, name):
+    source = profile['BuildingTemplate']['Space'][room][domain].get(name)
+    if source is None:
+        return None
+    return _source_values(source)
+
+
+def _multiply_values(*values):
+    if all(np.isscalar(value) for value in values):
+        return math.prod(values)
+    arrays = [np.full(8760, value, dtype=float) if np.isscalar(value)
+              else np.asarray(value, dtype=float) for value in values]
+    if any(array.shape != (8760,) for array in arrays):
+        raise ValueError('Template schedules must contain exactly 8760 values')
+    return np.prod(arrays, axis=0).tolist()
+
+
+def template_parameter(profile, key, room='default'):
+    """Resolve a version 5 room parameter into a model simulation setting."""
+    room_values = profile['BuildingTemplate']['Space'][room]
+    if key == 'zone_ppsm':
+        return _multiply_values(
+            _room_source(profile, room, 'internal_gains', 'occupancy_density'),
+            _room_source(profile, room, 'internal_gains', 'occupancy_fraction'))
+    if key == 'zone_equipment':
+        return _multiply_values(
+            _room_source(profile, room, 'internal_gains', 'equipment_power_density'),
+            _room_source(profile, room, 'internal_gains', 'equipment_usage'))
+    if key == 'zone_lighting':
+        return _multiply_values(
+            _room_source(profile, room, 'internal_gains', 'lighting_power_density'),
+            _room_source(profile, room, 'internal_gains', 'lighting_usage'))
+    if key == 'zone_pfav':
+        air_exchange = room_values['air_exchange']
+        fresh_air = _room_source(profile, room, 'air_exchange', 'fresh_air') if 'fresh_air' in air_exchange else 0.
+        availability = (_room_source(profile, room, 'air_exchange', 'fresh_air_availability')
+                        if 'fresh_air_availability' in air_exchange else 1.)
+        return _multiply_values(fresh_air, availability)
+    if key in {'zone_h_temp', 'zone_c_temp'}:
+        domain, name = SPACE_PARAMETERS[key]
+        value = _room_source(profile, room, domain, name)
+        return value if value is not None else [None] * 8760
+    if key == 'zone_collingEER':
+        return _room_source(profile, room, 'system', 'cooling_cop') or 1.
+    if key == 'zone_HeatingEER':
+        return (_room_source(profile, room, 'system', 'heating_efficiency')
+                or _room_source(profile, room, 'system', 'heating_cop') or 1.)
+    domain, name = SPACE_PARAMETERS[key]
+    return _room_source(profile, room, domain, name)
+
+
+def readonly(values, *, allow_nan=False):
+    result = np.array(values, dtype=float, copy=True)
+    finite = np.isfinite(result)
+    if result.ndim != 1 or not np.all(finite | (allow_nan & np.isnan(result))):
+        raise ValueError('Hourly inputs must be finite one-dimensional arrays')
+    result.setflags(write=False)
+    return result
+
+
+def expand_schedule(model, value, label, cache=None, *, allow_nan=False):
+    """Resolve absolute model schedules to immutable 8760-hour inputs."""
+    cache = {} if cache is None else cache
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            name = value
+            if name in cache:
+                if cache[name] is None:
+                    raise ValueError(f'{label}: cyclic schedule {name}')
+                return cache[name]
+            if name not in model.schedule:
+                raise ValueError(f'{label}: unknown schedule {name!r}')
+            cache[name] = None
+            item = model.schedule[name]
+            mode = str(item['type']).lower()
+            values = item['value']
+            if mode == 'weekly':
+                if len(values) != 7:
+                    raise ValueError(f'{label}: weekly schedule requires 7 days')
+                days = [expand_schedule(model, name, label, cache)[:24] for name in values]
+                result = np.concatenate([days[i % 7] for i in range(365)])
+            elif mode in {'daily', 'hourly'}:
+                expected = 24 if mode == 'daily' else 8760
+                if len(values) != expected:
+                    raise ValueError(f'{label}: {mode} requires {expected} values')
+                result = np.tile(np.asarray(values, dtype=float), 365) if mode == 'daily' else np.asarray(values, dtype=float)
+            else:
+                raise ValueError(f'{label}: unsupported schedule mode {mode}')
+            if item.get('value_mode', 'absolute') != 'absolute':
+                raise ValueError(f'{label}: schedule multipliers require explicit conversion to absolute values')
+            result = readonly(result, allow_nan=allow_nan)
+            cache[name] = result
+            return result
+    if np.isscalar(value):
+        return readonly(np.full(8760, float(value)))
+    result = readonly(value, allow_nan=allow_nan)
+    if result.shape != (8760,):
+        raise ValueError(f'{label}: requires 8760 hourly values')
+    return result
+
+
+def resolve_zone_settings(space, profile, overrides=None, *, template_overrides_model=False):
+    """Resolve template values and explicit edits once at the simulation boundary."""
+    settings = dict(space.settings)
+    settings.pop('zone_popheat', None)
+    if overrides and 'zone_popheat' in overrides:
+        raise ValueError('zone_popheat overrides are unsupported; simulations use 75 W/person')
+    if overrides and overrides.get('zone_template', profile['id']) != profile['id']:
+        raise ValueError('Select templates explicitly rather than through zone_overrides')
+    settings['zone_template'] = profile['id']
+    room = _space_room(space, profile)
+    settings['zone_room'] = room
+    explicit = set() if template_overrides_model else set(space.explicit_settings)
+    for key in SPACE_PARAMETERS:
+        if key in explicit and (key not in settings or settings[key] is None):
+            raise ValueError(f'{space.id}/{key}: explicit parameter has no value')
+        if key not in explicit:
+            settings[key] = template_parameter(profile, key, room)
+    availability_by_mode = {}
+    for mode in ('heating', 'cooling'):
+        availability = expand_schedule(
+            None, _room_source(profile, room, 'system', f'{mode}_availability'),
+            f'{space.id}/{mode}_availability')
+        source = _room_source(profile, room, 'system', f'{mode}_setpoint')
+        target = expand_schedule(
+            None, source if source is not None else [None] * 8760,
+            f'{space.id}/{mode}_setpoint', allow_nan=True)
+        if not np.all(np.isin(availability, (0, 1))):
+            raise ValueError(f'{space.id}/{mode}_availability: requires 0 or 1')
+        if not np.array_equal(np.isfinite(target), availability.astype(bool)):
+            raise ValueError(f'{space.id}/{mode}: setpoint and availability disagree')
+        key = f'zone_{"h" if mode == "heating" else "c"}_temp'
+        if key not in explicit:
+            settings[key] = source if source is not None else [None] * 8760
+        settings[f'zone_{mode}_availability'] = availability.tolist()
+        availability_by_mode[mode] = availability
+    general_availability = expand_schedule(
+        None, _room_source(profile, room, 'system', 'hvac_availability'),
+        f'{space.id}/hvac_availability')
+    if not np.all(np.isin(general_availability, (0, 1))):
+        raise ValueError(f'{space.id}/hvac_availability: requires 0 or 1')
+    settings['zone_hvac_availability'] = general_availability.tolist()
+    settings.update(overrides or {})
+    for mode, key in (('heating', 'zone_h_temp'), ('cooling', 'zone_c_temp')):
+        if key in explicit or (overrides and key in overrides):
+            if settings[key] is None:
+                raise ValueError(f'{space.id}/{key}: explicit parameter has no value')
+            target = expand_schedule(
+                getattr(space, 'parent', None), settings[key], f'{space.id}/{key}', allow_nan=True)
+            availability_by_mode[mode] = np.isfinite(target).astype(float)
+            settings[f'zone_{mode}_availability'] = availability_by_mode[mode].tolist()
+    if 'hvac_enabled' not in explicit and not (overrides and 'hvac_enabled' in overrides):
+        settings['hvac_enabled'] = np.maximum(
+            availability_by_mode['heating'], availability_by_mode['cooling']).tolist()
+    return settings
+
+
+def surface_template_parameters(profile, role, boundary):
+    """Select the envelope group shared by energy and visible-light inputs."""
     if boundary == 'ground':
         construction = 'ground'
     elif role == 'window':
@@ -345,7 +523,14 @@ def resolve_surface_template(settings, role, boundary):
         construction = 'interior_wall'
     else:
         construction = 'exterior_wall'
-    parameters = profile['BuildingTemplate']['Envelope'][construction]
+    return profile['BuildingTemplate']['Envelope'][construction]
+
+
+def resolve_surface_template(profile, role, boundary):
+    """Map the selected construction group's direct values to an Energy surface."""
+    assumptions = profile['metadata']['energy_assumptions']
+    parameters = surface_template_parameters(profile, role, boundary)
+    construction = role
     glass = role in {'window', 'skylight'}
     out = dict(assumptions['glass' if glass else 'slab' if role in {'floor', 'roof', 'ceiling'} else 'wall'])
     out['_template_id'] = profile['id']
@@ -353,10 +538,16 @@ def resolve_surface_template(settings, role, boundary):
     if boundary == 'adiabatic':
         out['resistance_m2k_w'] = assumptions['internal_resistance_m2k_w']
     elif boundary == 'ground':
-        out['resistance_m2k_w'] = (
-            assumptions['ground_base_resistance_m2k_w']
-            + assumptions['unspecified_ground_insulation_r'])
-        notes.append('Ground-contact construction has no direct U-value; an explicitly declared engineering resistance is used.')
+        source = parameters.get('r')
+        if source is not None:
+            if source['mode'] != 'constant':
+                raise ValueError(f'Envelope/{construction}/r: the energy model does not support scheduled surface values')
+            out['resistance_m2k_w'] = source['value']
+        else:
+            out['resistance_m2k_w'] = (
+                assumptions['ground_base_resistance_m2k_w']
+                + assumptions['unspecified_ground_insulation_r'])
+            notes.append('Ground-contact construction has no direct R-value; an explicitly declared engineering resistance is used.')
     else:
         u_source = parameters.get('u')
         if u_source is not None:

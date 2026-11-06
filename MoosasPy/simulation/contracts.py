@@ -13,6 +13,9 @@ from .runner import CommandResult
 from .workspace import WorkspaceReport
 
 
+OCCUPANT_SENSIBLE_HEAT_W = 75.
+
+
 @dataclass(frozen=True, slots=True)
 class Location:
     """Geographic and atmospheric metadata read from an EPW file."""

@@ -3361,69 +3361,13 @@ class MoosasSpace(object):
         facesCoorMax = np.max([np.max(coor, axis=0) for coor in facesCoor], axis=0)
         return np.array([facesCoorMin, facesCoorMax])
 
-    def applySettings(self, buildingTemplateHint):
-        """
-        Apply settings based on a building template hint.
-        
-        Parameters
-        ----------
-        buildingTemplateHint : str or dict
-            The identifier used to locate the appropriate building template. A string
-            must be an exact key in
-            `self.parent.buildingTemplate`. If a dictionary, it is treated as 
-            the template itself, and the corresponding key is inferred.
-        
-        Returns
-        -------
-        None
-            This function does not return any value. It updates `self.settings` 
-            with the zone template and other settings from the matched template.
-        """
-
-        if not isinstance(buildingTemplateHint, dict):
-            if not isinstance(buildingTemplateHint, str):
-                raise Exception(f'Key Error: template key error {buildingTemplateHint}')
-            if buildingTemplateHint not in self.parent.buildingTemplate:
-                raise ValueError(f'Unknown building template {buildingTemplateHint!r}; use a complete namespaced id')
-            template = self.parent.buildingTemplate[buildingTemplateHint]
-        else:
-            template = buildingTemplateHint
-            buildingTemplateHint = list(self.parent.buildingTemplate.values()).index(template)
-            buildingTemplateHint = list(self.parent.buildingTemplate.keys())[buildingTemplateHint]
-        if template.get('schema') == 'moosas.building-template':
-            from ...model.building_templates import apply_building_template_to_space
-            apply_building_template_to_space(self, template, buildingTemplateHint)
-            return
-        if '_building_template' in template:
-            raise ValueError('Unsupported legacy template record; use a version 4 BuildingTemplate')
-        self.settings['zone_template'] = buildingTemplateHint
-
-        load_intensity_fields = ("zone_ppsm", "zone_equipment", "zone_lighting")
-        for key, value in template.items():
-            # Thermal loads may be a numeric intensity or a named Daily/Weekly
-            # schedule.  Resolve the latter at simulation time so the same
-            # model works for the energy and airflow/5R1C engines.
-            if key in load_intensity_fields:
-                try:
-                    value = float(value)
-                except (TypeError, ValueError) as error:
-                    raise ValueError(
-                        f"Building template '{buildingTemplateHint}' field '{key}' must be numeric; "
-                        f"got {value!r}. Store schedules separately from load intensities."
-                    ) from error
-            self.settings[key] = value
-    
-
-        if 'zone_wallU' in self.settings:
-            faceDict = self.getAllFaces(to_dict=True)
-            for face in faceDict['MoosasWall']+faceDict['MoosasFloor']+faceDict['MoosasCeiling']:
-                if 'u_value' not in getattr(face, 'explicit_settings', set()):
-                    face.U_Value = self.settings['zone_wallU']
-            for face in faceDict['MoosasGlazing']+faceDict['MoosasSkylight']:
-                if 'u_value' not in getattr(face, 'explicit_settings', set()):
-                    face.U_Value = self.settings['zone_winU']
-                if 'shgc' not in getattr(face, 'explicit_settings', set()):
-                    face.SHGC = self.settings['zone_win_SHGC']
+    def applySettings(self, template_id):
+        """Select a registered BuildingTemplate without copying its parameters."""
+        from ...model.building_templates import space_template
+        if not isinstance(template_id, str):
+            raise ValueError('Select a BuildingTemplate using its complete namespaced id')
+        space_template(self.parent, self, template_id)
+        self.settings['zone_template'] = template_id
 
 
     def add_neighbor(self, neighbor_id, element: MoosasElement):

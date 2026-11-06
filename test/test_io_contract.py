@@ -34,9 +34,9 @@ GEOMETRY_FIXTURE = PROJECT_ROOT / "test" / "caseFile" / "test3_geomove.geo"
 
 
 @pytest.fixture(scope="module")
-def office_large_3a_record():
+def office_3a_record():
     load_building_template_library()
-    return building_templates(DEFAULT_LIBRARY)["CN/GB55015-2021/3A/OfficeLarge"]
+    return building_templates(DEFAULT_LIBRARY)["CN/GB55015-2021/3A/Office"]
 
 
 @pytest.fixture(scope="module")
@@ -54,8 +54,8 @@ def test_model_initialization_does_not_load_external_resources():
 def test_resource_service_configures_a_domain_model():
     model = configure_model_resources(MoosasModel())
 
-    assert len(model.buildingTemplate) == 99
-    assert 'CN/GB55015-2021/3A/Residential' in model.buildingTemplate
+    assert len(model.buildingTemplate) == 88
+    assert 'CN/GB55015-2021/3A/Office' in model.buildingTemplate
     assert model.schedule == {}
 
 
@@ -201,25 +201,143 @@ def test_new_spaces_do_not_select_a_national_standard(tmp_path):
         space.applySettings('RESIDENTIAL')
 
 
+@pytest.fixture
+def template_weather():
+    return SimpleNamespace(
+        location=SimpleNamespace(latitude=39.8, longitude=116.4),
+        temperature=np.full(8760, 25.), ground_temperature=np.full(8760, 18.),
+        sky_temperature=np.full(8760, 285.), pressure=np.full(8760, 101325.),
+        wind_speed=np.ones(8760), global_radiation=np.zeros(8760),
+        diffuse_radiation=np.zeros(8760), humidity_ratio=np.full(8760, .01))
+
+
+def test_template_drives_energy_inputs_once_per_zone(tmp_path, template_weather, monkeypatch):
+    import importlib
+    from MoosasPy.model import apply_building_template
+    from MoosasPy.simulation.energy.input import build_energy_input
+    templates = importlib.import_module('MoosasPy.model.building_templates')
+    model = _single_room_model(tmp_path)
+    space = model.spaceList[0]
+    with pytest.raises(ValueError, match='explicitly select'):
+        build_energy_input(model, template_weather, hours=24)
+    runtime = build_energy_input(model, template_weather, hours=24,
+                                 template_id='CN/GB55015-2021/3A/Office')
+    assert runtime.zones[0].cooling_cop == 3.5
+    assert space.settings['zone_template'] is None
+    apply_building_template(model, 'CN/GB55015-2021/3A/Office')
+    calls = []
+    validate = templates._validate_template_snapshot
+    def counted(profile):
+        calls.append(profile['id'])
+        return validate(profile)
+    monkeypatch.setattr(templates, '_validate_template_snapshot', counted)
+    request = build_energy_input(model, template_weather, hours=24)
+    assert len(calls) == 1
+    zone = request.zones[0]
+    resolved = templates.resolve_zone_settings(space, model.buildingTemplate[space.settings['zone_template']])
+    expected_internal = (
+        np.asarray(resolved['zone_ppsm']) * 75
+        + np.asarray(resolved['zone_equipment'])
+        + np.asarray(resolved['zone_lighting'])
+    ) * space.area
+    np.testing.assert_allclose(zone.internal_w, expected_internal)
+    assert zone.cooling_cop == 3.5
+    assert zone.heating_cop == 2.6
+    space.settings['zone_popheat'] = 150.
+    space.explicit_settings.append('zone_popheat')
+    np.testing.assert_array_equal(
+        build_energy_input(model, template_weather, hours=24).zones[0].internal_w, zone.internal_w)
+    with pytest.raises(ValueError, match='zone_popheat overrides'):
+        build_energy_input(model, template_weather, hours=24,
+                           zone_overrides={space.id: {'zone_popheat': 150.}})
+    np.testing.assert_array_equal(
+        zone.hvac_enabled, resolved['hvac_enabled'])
+    space.settings['zone_equipment'] = 12.
+    space.explicit_settings.append('zone_equipment')
+    overridden = build_energy_input(model, template_weather, hours=24,
+                                    zone_overrides={space.id: {'zone_lighting': 3.}})
+    np.testing.assert_array_equal(overridden.zones[0].equipment_w, np.full(8760, 12. * space.area))
+    np.testing.assert_array_equal(overridden.zones[0].lighting_w, np.full(8760, 3. * space.area))
+    space.conditioned = False
+    assert not build_energy_input(model, template_weather, hours=24).zones[0].hvac_enabled.any()
+
+
+def test_daylight_uses_template_optics_and_explicit_overrides(tmp_path):
+    from MoosasPy.model import apply_building_template
+    from MoosasPy.simulation.radiation.scene import _daylight_scene
+    model = _single_room_model(tmp_path)
+    with pytest.raises(ValueError, match='explicitly select'):
+        _daylight_scene(model)
+    apply_building_template(model, 'CN/GB55015-2021/3A/Office')
+    profile = model.buildingTemplate[model.spaceList[0].settings['zone_template']]
+    profile['BuildingTemplate']['Envelope']['window']['visible_transmittance']['value'] = .42
+    opening = model.glazingList[0]
+    uid = str(opening.Uid)
+    def optics(**kwargs):
+        return {r['uid']: r for r in _daylight_scene(model, **kwargs)[1]}[uid]
+    assert optics()['visible_transmittance'] == .42
+    assert optics()['source'] == 'template'
+    opening.settings['visible_transmittance'] = .55
+    opening.explicit_settings.add('visible_transmittance')
+    assert optics()['visible_transmittance'] == .55
+    assert optics(overrides={uid: {'visible_transmittance': .63}})['visible_transmittance'] == .63
+
+
+def test_daylight_shared_surface_conflict_requires_explicit_optics(tmp_path):
+    from MoosasPy.model import apply_building_template
+    from MoosasPy.simulation.radiation.scene import _daylight_scene
+    model = _single_room_model(tmp_path)
+    template_id = 'CN/GB55015-2021/3A/Office'
+    apply_building_template(model, template_id)
+    other = copy.deepcopy(model.buildingTemplate[template_id])
+    other['id'] = 'CN/GB55015-2021/3B/Office'
+    other['metadata']['template_metadata']['climate_zone'] = '3B'
+    other['metadata']['template_metadata']['id'] = 'CN_GB55015-2021_Office_3B'
+    for role in ('exterior_wall', 'interior_wall'):
+        other['BuildingTemplate']['Envelope'][role]['visible_reflectance']['value'] = .15
+    model.buildingTemplate[other['id']] = other
+    model.spaceList.append(SimpleNamespace(id='adjacent', settings={'zone_template': other['id']},
+        explicit_settings=[], getAllFaces=model.spaceList[0].getAllFaces))
+    with pytest.raises(ValueError, match='conflicting visible properties'):
+        _daylight_scene(model)
+    overrides = {str(w.Uid): {'visible_reflectance': .44} for w in model.wallList}
+    _, optics = _daylight_scene(model, overrides=overrides)
+    assert all(r['visible_reflectance'] == .44 for r in optics if r['uid'] in overrides)
+
+
+@pytest.mark.slow
+def test_selected_template_runs_native_energy(tmp_path, template_weather):
+    from MoosasPy.model import apply_building_template
+    from MoosasPy.simulation.energy.runner import EnergyRunner
+    model = _single_room_model(tmp_path)
+    apply_building_template(model, 'CN/GB55015-2021/3A/Office')
+    result = EnergyRunner(model, template_weather, hours=24, preheat=0).run()
+    assert result.commands and all(c.returncode == 0 for c in result.commands)
+    assert np.isfinite(result.data['total']['total'])
+    assert result.data['total']['total'] >= 0
+
+
 @pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
-def test_unbundled_standard_snapshot_round_trip(tmp_path, suffix, office_large_3a_record):
+def test_unbundled_standard_snapshot_round_trip(tmp_path, suffix, office_3a_record):
     from copy import deepcopy
-    from MoosasPy.model.building_templates import apply_building_template_to_space, template_program
+    from MoosasPy.model.building_templates import template_parameter, space_template
 
     model = _single_room_model(tmp_path)
-    record = deepcopy(office_large_3a_record)
+    record = deepcopy(office_3a_record)
     template_id = record['id']
     space = model.spaceList[0]
-    apply_building_template_to_space(space, record, template_id)
+    model.buildingTemplate[template_id] = record
+    space.applySettings(template_id)
     target = tmp_path / ('standard-snapshot' + suffix)
     model.save(target)
     restored = MoosasModel.load(target)
     restored_space = next(s for s in restored.spaceList if s.id == space.id)
-    assert restored_space.settings['_building_template'] == space.settings['_building_template']
+    assert restored.buildingTemplate == {template_id: record}
+    assert '_building_template' not in restored_space.settings
     assert restored_space.settings['zone_template'] == template_id
     np.testing.assert_array_equal(
-        template_program(restored_space.settings, 'zone_ppsm', .1),
-        template_program(space.settings, 'zone_ppsm', .1))
+        template_parameter(space_template(restored, restored_space), 'zone_ppsm'),
+        template_parameter(space_template(model, space), 'zone_ppsm'))
 
 
 @pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])

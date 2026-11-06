@@ -13,16 +13,19 @@ import shapely
 
 from ...model.building_templates import (
     building_templates, resolve_surface_template, merge_surface_template,
-    template_parameter, template_program, validate_template_snapshot,
+    space_template, resolve_zone_settings, readonly, expand_schedule,
 )
 from ...transform.geometry.geos import Projection, Vector
+from ..contracts import OCCUPANT_SENSIBLE_HEAT_W
+
+
+DISABLED_HEATING_SETPOINT_C = -1000.
+DISABLED_COOLING_SETPOINT_C = 1000.
 
 
 @dataclass(frozen=True)
 class EnergyDefaults:
     """Engineering assumptions used only where model values are absent."""
-    wall_u_value: float = 0.5
-    window_u_value: float = 2.4
     opaque_capacity_j_m2k: float = 60000.
     slab_capacity_j_m2k: float = 120000.
     inside_film_w_m2k: float = 3.
@@ -37,16 +40,6 @@ class EnergyDefaults:
     ground_albedo: float = .2
     time_zone_hours: float = 8.
     north_angle_degrees: float = 0.
-    cooling_cop: float = 2.8
-    heating_cop: float = 2.2
-    heating_setpoint_c: float = 20.
-    cooling_setpoint_c: float = 26.
-    occupant_density: float = .033
-    occupant_heat_w: float = 75.
-    fresh_air_m3_h_person: float = 30.
-    equipment_w_m2: float = 4.3
-    lighting_w_m2: float = 5.
-    infiltration_ach: float = .5
     occupant_moisture_kg_h: float = .06
     cooling_rh_fraction: float = .6
 
@@ -54,10 +47,10 @@ class EnergyDefaults:
         for key, value in asdict(self).items():
             if not math.isfinite(value):
                 raise ValueError(f'EnergyDefaults.{key} must be finite')
-        for key in ('wall_u_value','window_u_value','inside_film_w_m2k','ground_contact_w_m2k','cooling_cop','heating_cop'):
+        for key in ('inside_film_w_m2k','ground_contact_w_m2k'):
             if getattr(self,key)<=0:
                 raise ValueError(f'EnergyDefaults.{key} must be positive')
-        for key in ('opaque_capacity_j_m2k','slab_capacity_j_m2k','occupant_density','occupant_heat_w','fresh_air_m3_h_person','equipment_w_m2','lighting_w_m2','infiltration_ach','occupant_moisture_kg_h'):
+        for key in ('opaque_capacity_j_m2k','slab_capacity_j_m2k','occupant_moisture_kg_h'):
             if getattr(self,key)<0:
                 raise ValueError(f'EnergyDefaults.{key} must be nonnegative')
         for key in ('opaque_emissivity','glass_emissivity','solar_reflectance','glass_solar_reflectance','solar_transmittance','internal_radiant_fraction','solar_floor_fraction','ground_albedo','cooling_rh_fraction'):
@@ -146,14 +139,6 @@ class SurfaceRequest:
         return values
 
 
-def readonly(values):
-    result = np.array(values, dtype=float, copy=True)
-    if result.ndim != 1 or not np.all(np.isfinite(result)):
-        raise ValueError('Hourly inputs must be finite one-dimensional arrays')
-    result.setflags(write=False)
-    return result
-
-
 @dataclass(frozen=True)
 class ZoneRequest:
     zone_id: str
@@ -190,13 +175,14 @@ class ZoneRequest:
             if not 0<=getattr(self,key)<=1:
                 raise ValueError(f'{self.zone_id}: {key} must be in 0..1')
         for key in ('internal_w','lighting_w','equipment_w','heat_setpoint_c','cool_setpoint_c','ventilation_m3_h','hvac_enabled'):
-            value = readonly(getattr(self,key))
+            value = readonly(getattr(self,key), allow_nan=key in {'heat_setpoint_c','cool_setpoint_c'})
             if value.shape!=(8760,):
                 raise ValueError(f'{self.zone_id}/{key}: expected 8760 values')
             if key not in {'heat_setpoint_c','cool_setpoint_c'} and np.any(value<0):
                 raise ValueError(f'{self.zone_id}/{key}: negative value')
             object.__setattr__(self,key,value)
-        if np.any(self.heat_setpoint_c>self.cool_setpoint_c):
+        controlled = np.isfinite(self.heat_setpoint_c) & np.isfinite(self.cool_setpoint_c)
+        if np.any(self.heat_setpoint_c[controlled]>self.cool_setpoint_c[controlled]):
             raise ValueError(f'{self.zone_id}: heating setpoint exceeds cooling')
         if not np.all(np.isin(self.hvac_enabled,(0,1))):
             raise ValueError(f'{self.zone_id}: hvac_enabled requires 0 or 1')
@@ -274,12 +260,18 @@ class EnergyRequest:
         rows = []
         for zone, irradiance in zip(self.zones, self.irradiance):
             films = [5.8 + 4.1 * float(w.wind_speed[h]) if s.boundary_condition == 'outdoors' and s.wind_driven_film else s.ho_w_m2k for s in zone.surfaces]
+            heating = float(zone.heat_setpoint_c[h])
+            cooling = float(zone.cool_setpoint_c[h])
+            heating_available = math.isfinite(heating)
+            cooling_available = math.isfinite(cooling)
+            # CES3 carries finite targets plus one global enable flag.
             rows.append(dict(air_c=ta, ground_c=float(w.ground_temperature[h]), sky_ir_w_m2=sky_ir,
-                internal_w=float(zone.internal_w[h]), heat_setpoint_c=float(zone.heat_setpoint_c[h]),
-                cool_setpoint_c=float(zone.cool_setpoint_c[h]),
+                internal_w=float(zone.internal_w[h]),
+                heat_setpoint_c=heating if heating_available else DISABLED_HEATING_SETPOINT_C,
+                cool_setpoint_c=cooling if cooling_available else DISABLED_COOLING_SETPOINT_C,
                 ventilation_w_k=density * 1006 * float(zone.ventilation_m3_h[h]) / 3600,
                 irradiance_w_m2=irradiance[:, h].tolist(), ho_w_m2k=films,
-                hvac_enabled=bool(zone.hvac_enabled[h])))
+                hvac_enabled=bool(zone.hvac_enabled[h] and (heating_available or cooling_available))))
         return rows
 
 
@@ -301,49 +293,6 @@ def number(value, label, *, minimum=0., strictly_positive=False):
     if not math.isfinite(value) or value < minimum or (strictly_positive and value <= minimum):
         raise ValueError(f'{label}: invalid value {value}')
     return value
-
-
-def expand_schedule(model, value, label, cache=None):
-    """Existing schedules contain absolute values, never implicit multipliers."""
-    cache = {} if cache is None else cache
-    if isinstance(value, str):
-        try:
-            value = float(value)
-        except ValueError:
-            name = value
-            if name in cache:
-                if cache[name] is None:
-                    raise ValueError(f'{label}: cyclic schedule {name}')
-                return cache[name]
-            if name not in model.schedule:
-                raise ValueError(f'{label}: unknown schedule {name!r}')
-            cache[name] = None
-            item = model.schedule[name]
-            mode = str(item['type']).lower()
-            values = item['value']
-            if mode == 'weekly':
-                if len(values) != 7:
-                    raise ValueError(f'{label}: weekly schedule requires 7 days')
-                days = [expand_schedule(model, name, label, cache)[:24] for name in values]
-                result = np.concatenate([days[i % 7] for i in range(365)])
-            elif mode in {'daily','hourly'}:
-                expected = 24 if mode == 'daily' else 8760
-                if len(values) != expected:
-                    raise ValueError(f'{label}: {mode} requires {expected} values')
-                result = np.tile(np.asarray(values, dtype=float), 365) if mode == 'daily' else np.asarray(values, dtype=float)
-            else:
-                raise ValueError(f'{label}: unsupported schedule mode {mode}')
-            if item.get('value_mode', 'absolute') != 'absolute':
-                raise ValueError(f'{label}: schedule multipliers require explicit conversion to absolute values')
-            result = readonly(result)
-            cache[name] = result
-            return result
-    if np.isscalar(value):
-        return readonly(np.full(8760, float(value)))
-    result = readonly(value)
-    if result.shape != (8760,):
-        raise ValueError(f'{label}: requires 8760 hourly values')
-    return result
 
 
 def split_layers(layers, side):
@@ -552,7 +501,7 @@ def _construct_surface(element, zone, role, boundary, area, normal, owners, sett
         if settings.get('resistance_m2k_w') is not None:
             resistance = number(get('resistance_m2k_w', 0),label+'/R',strictly_positive=True)
         else:
-            u = number(get('u_value', zone.settings.get('zone_winU' if glass else 'zone_wallU', defaults.window_u_value if glass else defaults.wall_u_value)), label+'/U',strictly_positive=True)
+            u = number(get('u_value', None), label+'/U',strictly_positive=True)
             convention = get('u_convention','air_to_air')
             if convention not in {'air_to_air','surface_to_surface'}:
                 raise ValueError(f'{label}: invalid u_convention')
@@ -689,17 +638,12 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     for space in sorted(model.spaceList,key=lambda s:str(s.id)):
         if str(space.id) not in selected:
             continue
-        settings = dict(space.settings)
-        if template_id is not None:
-            settings['_building_template'] = deepcopy(template_records[template_id])
-            settings['zone_template'] = template_id
-        settings.update(zone_overrides.get(str(space.id),{}))
-        validate_template_snapshot(settings)
-        profile = settings.get('_building_template')
-        if profile:
-            notes.append(f"Building template {profile['id']}: direct construction values are simulation inputs, not a compliance certification.")
+        profile = space_template(model, space, template_id, templates=template_records)
+        settings = resolve_zone_settings(space, profile, zone_overrides.get(str(space.id),{}),
+                                         template_overrides_model=template_overrides_model)
+        notes.append(f"Building template {profile['id']}: direct construction values are simulation inputs, not a compliance certification.")
         def templated(element, values, role, boundary, override_ids=()):
-            resolved, warnings = resolve_surface_template(settings,role,boundary)
+            resolved, warnings = resolve_surface_template(profile,role,boundary)
             notes.extend(warnings)
             if not resolved: return values
             protected = set(values.get('side_overrides',{}).get(str(space.id),{}))
@@ -800,54 +744,53 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         surfaces.sort(key=lambda surface:surface.surface_id)
         if not surfaces:
             raise ValueError(f'{space.id}: no thermal surfaces after excluding air openings')
-        def configured_value(key, fallback):
+        def program(key, fallback=None):
             value = settings.get(key, fallback)
-            if value is None: value=fallback
-            overridden = key in zone_overrides.get(str(space.id),{}) or (not template_overrides_model and key in getattr(space,'explicit_settings',()))
-            if not overridden:
-                configured = template_parameter(settings, key)
-                if configured is not None:
-                    value = configured
-                absolute = template_program(settings,key,value)
-                if absolute is not None:
-                    value = absolute
-            return value, overridden
-        def program(key, fallback):
-            value, _ = configured_value(key, fallback)
-            result = expand_schedule(model,value,f'{space.id}/{key}',schedule_cache)
+            result = expand_schedule(model,value,f'{space.id}/{key}',schedule_cache,
+                                     allow_nan=key in {'zone_h_temp','zone_c_temp'})
             if key not in {'zone_h_temp','zone_c_temp'} and np.any(result<0):
                 raise ValueError(f'{space.id}/{key}: schedule values must be nonnegative')
             return result
-        def scalar_parameter(key, fallback, label):
-            value, _ = configured_value(key, fallback)
+        def scalar_parameter(key, label):
+            value = settings[key]
             if np.ndim(value) != 0:
                 raise ValueError(f'{space.id}/{key}: the energy model does not support a scheduled value')
             return number(value, f'{space.id}/{label}', strictly_positive=key in {'zone_collingEER', 'zone_HeatingEER'})
         area = number(settings.get('floor_area_m2',space.area),f'{space.id}/area',strictly_positive=True)
         volume = number(settings.get('volume_m3',area * space.height),f'{space.id}/volume',strictly_positive=True)
-        cooling_cop = scalar_parameter('zone_collingEER', defaults.cooling_cop, 'cooling COP')
-        heating_cop = scalar_parameter('zone_HeatingEER', defaults.heating_cop, 'heating COP')
-        density = program('zone_ppsm',defaults.occupant_density)
-        people = program('zone_popheat',defaults.occupant_heat_w)
-        equipment = program('zone_equipment',defaults.equipment_w_m2)*area
-        lighting = program('zone_lighting',defaults.lighting_w_m2)*area
-        heat = program('zone_h_temp',defaults.heating_setpoint_c)
-        cool = program('zone_c_temp',defaults.cooling_setpoint_c)
-        if np.any(heat>cool): raise ValueError(f'{space.id}: heating setpoint exceeds cooling')
-        ach = program('zone_infiltration',defaults.infiltration_ach)
+        cooling_cop = scalar_parameter('zone_collingEER', 'cooling COP')
+        heating_cop = scalar_parameter('zone_HeatingEER', 'heating COP')
+        density = program('zone_ppsm')
+        equipment = program('zone_equipment')*area
+        lighting = program('zone_lighting')*area
+        heat = program('zone_h_temp')
+        cool = program('zone_c_temp')
+        heating_available = program('zone_heating_availability')
+        cooling_available = program('zone_cooling_availability')
+        if not np.all(np.isin(heating_available, (0, 1))) or not np.all(np.isin(cooling_available, (0, 1))):
+            raise ValueError(f'{space.id}: heating/cooling availability requires 0 or 1')
+        heat = np.where(heating_available > 0, heat, np.nan)
+        cool = np.where(cooling_available > 0, cool, np.nan)
+        controlled = np.isfinite(heat) & np.isfinite(cool)
+        if np.any(heat[controlled]>cool[controlled]):
+            raise ValueError(f'{space.id}: heating setpoint exceeds cooling')
+        ach = program('zone_infiltration')
         mechanical_ach = program('zone_mechanical_ach',0.)
-        vent = (ach+mechanical_ach)*volume + density*program('zone_pfav',defaults.fresh_air_m3_h_person)*area
-        internal = density*people*area+equipment+lighting
+        vent = (ach+mechanical_ach)*volume + density*program('zone_pfav')*area
+        internal = density*OCCUPANT_SENSIBLE_HEAT_W*area+equipment+lighting
         if np.any(internal<0) or np.any(vent<0) or np.any(lighting<0) or np.any(equipment<0):
             raise ValueError(f'{space.id}: negative internal load or ventilation')
         zone = ZoneRequest(str(space.id),str(settings.get('zone_name') or space.id),area,volume,tuple(surfaces),
             cooling_cop, heating_cop,
-            float(settings.get('initial_temperature_c',(heat[0]+cool[0])/2)),
+            float(settings.get('initial_temperature_c',
+                (heat[0]+cool[0])/2 if np.isfinite(heat[0]) and np.isfinite(cool[0])
+                else heat[0] if np.isfinite(heat[0]) else cool[0] if np.isfinite(cool[0]) else 20.)),
             float(settings.get('internal_radiant_fraction',defaults.internal_radiant_fraction)),
             float(settings.get('solar_floor_fraction',defaults.solar_floor_fraction)),readonly(internal),readonly(lighting),readonly(equipment),
-            readonly(heat),readonly(cool),readonly(vent),readonly(program('hvac_enabled',1. if space.conditioned else 0.)),
+            readonly(heat, allow_nan=True),readonly(cool, allow_nan=True),readonly(vent),
+            readonly(program('hvac_enabled') if space.conditioned else np.zeros(8760)),
             people_moisture_kg_s=readonly(density*area*program('zone_popmoisture',defaults.occupant_moisture_kg_h)/3600) if latent_enabled else None,
-            fresh_air_m3_h=readonly(mechanical_ach*volume+density*program('zone_pfav',defaults.fresh_air_m3_h_person)*area) if latent_enabled else None,
+            fresh_air_m3_h=readonly(mechanical_ach*volume+density*program('zone_pfav')*area) if latent_enabled else None,
             infiltration_m3_h=readonly(ach*volume) if latent_enabled else None,
             cool_rh_fraction=readonly(program('zone_c_hum',defaults.cooling_rh_fraction)) if latent_enabled else None)
         rad = []

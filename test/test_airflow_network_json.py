@@ -142,8 +142,10 @@ def test_moosas_afn_binary_generates_prj_from_json():
 
 @pytest.mark.slow
 def test_rdf_model_runs_airflow_simulation():
+    from MoosasPy.model import apply_building_template
     rdf_path = Path(__file__).parent / "caseFile" / "NBuilding.rdf"
     model = MoosasModel.load(rdf_path)
+    apply_building_template(model, 'CN/GB55015-2021/3A/Office')
     zero_sky = CumulativeSky(np.zeros(145))
     calculate_model_radiation(
         model,

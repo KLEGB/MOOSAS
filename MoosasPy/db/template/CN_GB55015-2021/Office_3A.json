@@ -2,77 +2,108 @@
   "BuildingTemplate": {
     "metadata": {
       "schema": "moosas.building-template",
-      "id": "CN_GB55015-2021_OfficeLarge_3A",
+      "id": "CN_GB55015-2021_Office_3A",
       "country": "CN",
       "standard_name": "GB55015-2021",
       "standard_source": "https://zh.wikisource.org/wiki/GB_55015-2021_建筑节能与可再生能源利用通用规范",
-      "building_type": "OfficeLarge",
+      "building_type": "Office",
       "climate_zone": "3A"
     },
     "Space": {
-      "air_exchange": {
-        "fresh_air": {
-          "mode": "constant",
-          "unit": "m3/h/person",
-          "value": 30
+      "default": {
+        "air_exchange": {
+          "fresh_air": {
+            "mode": "constant",
+            "value": 30,
+            "unit": "m3/h/person"
+          },
+          "infiltration": {
+            "mode": "constant",
+            "unit": "1/h",
+            "value": 0.5
+          },
+          "fresh_air_availability": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_fresh_air_availability",
+            "unit": "1"
+          }
         },
-        "infiltration": {
-          "mode": "constant",
-          "unit": "1/h",
-          "value": 0.5
-        }
-      },
-      "internal_gains": {
-        "equipment_power_density": {
-          "file": "schedules/office.sch",
-          "mode": "schedule",
-          "name": "equipment_power_density",
-          "unit": "W/m2"
+        "internal_gains": {
+          "equipment_power_density": {
+            "mode": "constant",
+            "value": 15,
+            "unit": "W/m2"
+          },
+          "lighting_power_density": {
+            "mode": "constant",
+            "value": 8,
+            "unit": "W/m2"
+          },
+          "occupancy_density": {
+            "mode": "constant",
+            "value": 0.1,
+            "unit": "person/m2"
+          },
+          "lighting_usage": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_lighting_usage",
+            "unit": "1"
+          },
+          "occupancy_fraction": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_occupancy_fraction",
+            "unit": "1"
+          },
+          "equipment_usage": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_equipment_usage",
+            "unit": "1"
+          }
         },
-        "lighting_power_density": {
-          "file": "schedules/office.sch",
-          "mode": "schedule",
-          "name": "lighting_power_density",
-          "unit": "W/m2"
-        },
-        "occupancy_density": {
-          "file": "schedules/office.sch",
-          "mode": "schedule",
-          "name": "occupancy_density",
-          "unit": "person/m2"
-        },
-        "occupant_heat": {
-          "mode": "constant",
-          "unit": "W/person",
-          "value": 75
-        }
-      },
-      "system": {
-        "cooling_cop": {
-          "mode": "constant",
-          "unit": "1",
-          "value": 3.5
-        },
-        "cooling_setpoint": {
-          "mode": "constant",
-          "unit": "degC",
-          "value": 26
-        },
-        "heating_cop": {
-          "mode": "constant",
-          "unit": "1",
-          "value": 2.6
-        },
-        "heating_setpoint": {
-          "mode": "constant",
-          "unit": "degC",
-          "value": 20
-        },
-        "hvac_availability": {
-          "file": "schedules/office.sch",
-          "mode": "schedule",
-          "name": "hvac_availability",
-          "unit": "1"
+        "system": {
+          "cooling_availability": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_cooling_availability",
+            "unit": "1"
+          },
+          "cooling_setpoint": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_cooling_setpoint",
+            "unit": "degC"
+          },
+          "cooling_cop": {
+            "mode": "constant",
+            "unit": "1",
+            "value": 3.5
+          },
+          "heating_availability": {
+            "mode": "constant",
+            "value": 1,
+            "unit": "1"
+          },
+          "heating_setpoint": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_heating_setpoint",
+            "unit": "degC"
+          },
+          "heating_cop": {
+            "mode": "constant",
+            "unit": "1",
+            "value": 2.6
+          },
+          "hvac_availability": {
+            "mode": "schedule",
+            "file": "schedules/office.sch",
+            "name": "default_hvac_availability",
+            "unit": "1"
+          }
         }
       }
     },

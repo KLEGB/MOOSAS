@@ -421,30 +421,19 @@ def _write_csv(file, records):
         writer.writerows(records)
 
 
-def _daylight_metrics(total, direct, sensors, spaces, request):
+def _daylight_metrics(total, direct, sensors, spaces, request, model):
     points, summaries = [], []
     masks = {}
     supplied = request.occupied_by_space or {}
     if set(supplied) - {str(s.id) for s in spaces}:
         raise ValueError('Occupancy overrides reference unevaluated spaces')
     for space in spaces:
+        from ...model.building_templates import space_template, resolve_zone_settings, expand_schedule
+        settings = resolve_zone_settings(space, space_template(model, space))
         uid = str(space.id)
         mask = supplied.get(uid, space.settings.get('daylight_occupied_mask'))
         if mask is None:
-            settings = space.settings
-            if ('_building_template' in settings and
-                    'zone_ppsm' not in getattr(space, 'explicit_settings', ())):
-                from ...model.building_templates import template_parameter
-                occupancy = template_parameter(settings, 'zone_ppsm')
-                values = np.asarray(occupancy)
-                mask = (np.full(8760, bool(values > 0)) if values.ndim == 0 else values > 0)
-            else:
-                start = float(settings.get('zone_work_start', 8))
-                end = float(settings.get('zone_work_end', 18))
-                if not 0 <= start <= 24 or not 0 <= end <= 24:
-                    raise ValueError(f'{uid}: invalid daily daylight hours')
-                hours = np.arange(8760) % 24 + .5
-                mask = (hours >= start) & (hours < end) if start <= end else (hours >= start) | (hours < end)
+            mask = expand_schedule(model, settings['zone_ppsm'], f'{uid}/zone_ppsm') > 0
         mask = np.asarray(mask)
         if mask.shape != (8760,) or not np.isin(mask, [False, True]).all():
             raise ValueError(f'{uid}: occupancy requires 8760 boolean entries')
@@ -548,7 +537,7 @@ def _run_annual(runner, request):
             total[first:last] = direct[first:last] + full @ diffuse_lux + reflected @ sun_lux
         direct.flush()
         total.flush()
-        points, summaries, masks = _daylight_metrics(total, direct, sensors, spaces, request)
+        points, summaries, masks = _daylight_metrics(total, direct, sensors, spaces, request, runner.model)
         _write_csv(root / 'sensors.csv', sensors)
         _write_csv(root / 'metrics_points.csv', points)
         _write_csv(root / 'metrics_spaces.csv', summaries)

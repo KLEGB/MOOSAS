@@ -417,17 +417,28 @@ from MoosasPy.model import apply_building_template
 
 apply_building_template(
     model,
-    "CN/GB55015-2021/3A/Residential",
+    "CN/GB55015-2021/3A/Office",
 )
 
 model.spaceList[0].settings["zone_equipment"] = 8.8
+model.spaceList[0].explicit_settings.append("zone_equipment")
 ```
 
-`space.applySettings()` also accepts a complete template ID or a record already
-in `model.buildingTemplate`; regex hints are not supported. Structured templates
-store a portable snapshot and preserve explicit constructions. Without a selected
-template, source parameters and engineering defaults do not imply compliance
-with any national standard.
+`space.applySettings()` accepts only a complete template ID already registered
+in `model.buildingTemplate`; dictionaries and regex hints are not supported.
+Energy, airflow, and daylight simulations require an explicitly selected
+BuildingTemplate. Template values are resolved once per space when constructing
+simulation inputs, with explicit model edits and runtime overrides taking
+precedence. `template_overrides_model=True` replaces model edits but not runtime
+overrides. Unconditioned spaces retain disabled HVAC.
+
+The model stores one portable snapshot per selected template, while spaces store
+only `zone_template` and explicit parameter edits. XML/JSON/RDF energy metadata
+uses schema version 3 and embeds the used templates, including resolved schedules,
+once at model level. Older metadata and per-space snapshots are rejected without
+a compatibility path. Recreate those model files from source geometry and apply
+templates explicitly. `template_program` and `apply_building_template_to_space`
+have been removed; use `apply_building_template` or `space.applySettings`.
 
 Important energy-setting fields include:
 
@@ -436,24 +447,23 @@ Important energy-setting fields include:
 | `zone_wallU` | Opaque-envelope U-value in W/(m²·K). |
 | `zone_winU` | Window U-value in W/(m²·K). |
 | `zone_win_SHGC` | Window solar heat-gain coefficient. |
-| `zone_c_temp`, `zone_h_temp` | Cooling and heating set points in °C. |
+| `zone_c_temp`, `zone_h_temp` | Cooling and heating set points in °C; `null` disables that mode. |
 | `zone_collingEER`, `zone_HeatingEER` | Cooling and heating efficiency values. |
-| `zone_ppsm` | Occupant density in people/m². |
-| `zone_pfav` | Outdoor-air requirement per person. |
-| `zone_popheat` | Sensible heat per person in W/person. |
-| `zone_equipment`, `zone_lighting` | Equipment and lighting loads in W/m². |
+| `zone_ppsm` | Effective hourly occupant density in people/m². |
+| `zone_pfav` | Effective outdoor-air requirement per person after availability schedule. |
+| `zone_equipment`, `zone_lighting` | Effective hourly gains in W/m² after usage schedules. |
 | `zone_infiltration` | Infiltration rate, optionally varying through its 8760-hour schedule. |
 | `zone_template` | Applied template identifier. |
+| `zone_room` | Room-group key for a multi-room template. |
 
-Building templates use a version 4 catalog maintained in the independent
+Building templates use a version 5 catalog maintained in the independent
 [MOOSAS-BuildingTemplate repository](https://github.com/KLEGB/MOOSAS-BuildingTemplate)
 and a shared runtime adapter in `MoosasPy/model/building_templates.py`.
-The package bundles a version 4 catalog in `MoosasPy/db/template/` containing
-`CN/GB55015-2021/3A/OfficeLarge` and its referenced schedule. The default
-catalog loads locally without Git, network access, or a user cache. This is the
-only bundled template; new spaces do not automatically select or apply it.
-Select it explicitly with its identifier, or provide another local catalog via
-`template_path` to `apply_building_template` or `library_path` to
+The package bundles only the version-5 Office 3A template and its required
+office schedule in `MoosasPy/db/template/`. New spaces do not
+automatically select or apply a template. Select the namespaced identifier
+explicitly, or provide another version 5 catalog via `template_path` to
+`apply_building_template` or `library_path` to
 `load_building_template_library`. The catalog loader resolves and validates
 referenced schedules when loading.
 
@@ -461,26 +471,44 @@ referenced schedules when loading.
 MoosasPy/db/template/
   library.json
   CN_GB55015-2021/
-    OfficeLarge_3A.json
+    Office_3A.json
     schedules/
       office.sch
 ```
 
-Each record contains `BuildingTemplate.Space` (`air_exchange`,
-`internal_gains`, `system`) and `BuildingTemplate.Envelope`, grouped by
-construction type. Parameters use `{mode: "constant", value, unit}` or
-`{mode: "schedule", file, name, unit}`. Schedule files are JSON `.sch`
-documents with named, unit-labelled arrays of exactly 8760 finite hourly
-values; paths are relative to the standard package. The loader validates and
-stores
-resolved arrays in the model snapshot. Each scheduled parameter directly points
-to its schedule entry; templates do not define day types, weekdays, or weekly
-profiles. The catalog files contain direct construction values; Energy maps
-U-value and SHGC into its surface model with the declared package assumptions.
-Visible reflectance/transmittance remain separate from solar optics.
+Each record contains room groups directly under `BuildingTemplate.Space`, with
+`air_exchange`, `internal_gains`, and `system` parameters per room; `Envelope`
+contains the shared construction groups. Set `zone_room` on every affected
+space before applying a multi-room template.
+Single-room templates use `default`; multi-room templates require an explicit
+key such as `outpatient`, `inpatient`, or a residential room type. Parameters
+use `{mode: "constant", value, unit}` or
+`{mode: "schedule", file, name, unit}`. Schedule files are version 2 JSON
+`.sch` documents with named, unit-labelled arrays of exactly 8760 hourly
+values. `null` is allowed only for temperature setpoints and means that mode is
+off. The loader resolves schedules and stores the complete version 5 record in
+the model snapshot. Occupancy density, equipment power density, and lighting
+power density are each multiplied by their own hourly usage schedule. Fresh-air
+rate is multiplied by its availability schedule. Heating and cooling controls
+remain independent; general HVAC availability does not erase their
+mode-specific targets. The catalog files contain direct construction values;
+Energy maps U-value, R-value, and SHGC into its surface model with the declared
+package assumptions. Visible reflectance/transmittance remain separate from
+solar optics.
+Occupant sensible heat is a built-in simulation assumption of 75 W/person,
+not a template parameter. Templates do not contain `occupant_heat`, and resolved
+zone inputs do not contain `zone_popheat`; runtime overrides of it are rejected.
+Source-imported occupant heat metadata does not change this simulation assumption.
+Daylight scenes use these visible template properties unless the element has an
+explicit property or the request supplies an optical override. Shared surfaces
+with conflicting template optics require an explicit override. Annual occupancy uses the same schedule-multiplied occupancy density as energy
+simulation.
 Construction leakage and opening-ratio properties are preserved in template
-records but are not consumed by AFN/Radiance yet. Explicit custom version 4
-catalogs remain loadable through `template_path`.
+records but are not consumed by AFN yet. Leakage conversion requires a declared
+reference pressure, which the current catalog does not provide; no reference
+pressure is guessed. AFN opening-ratio integration is also deferred. Only
+version 5 catalogs are accepted; old identifiers and earlier catalog formats
+have no aliases or compatibility path.
 
 The default catalog uses stable IDs of the form
 `CN/GB55015-2021/<climate-zone>/<building-type>`. It does not infer climate
@@ -490,14 +518,14 @@ runtime does not support table projections, conditional rule selection, or
 prescriptive WWR/skylight checks. Different standards need not share
 building-type names.
 
-`template_path` now means a catalog directory containing `library.json`, not a
-single JSON file or a standard-package directory. Version 1/2/3 resources, old
-unnamespaced IDs, and old template snapshots are not automatically migrated.
-Upgrade template resources explicitly and reapply them to affected models.
+`template_path` means a catalog directory containing `library.json`, not a
+single JSON file or a standard-package directory. Earlier catalog resources,
+old identifiers, and old template snapshots are not automatically migrated.
+Replace template resources explicitly and reapply them to affected models.
 The bundled catalog is loaded directly from `MoosasPy/db/template/`; no
 download or user cache is needed. To use another catalog, supply its local
 checkout through `template_path` or `library_path`.
-Version 4 snapshots round-trip through RDF/XML/JSON without the source catalog
+Version 5 snapshots round-trip through RDF/XML/JSON without the source catalog
 or `.sch` files.
 The shared model metadata payload in `MoosasPy/model/metadata.py` also
 round-trips `model.metadata` alongside energy settings, schedules, and template

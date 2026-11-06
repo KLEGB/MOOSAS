@@ -351,7 +351,6 @@ def loadXml(filePath, geoPath):
             Uid = str(element.get('id', None))
             spc = MoosasSpace(_floor=topology["Floor"], _ceiling=topology["ceiling"], _edge=topology["Edge"], Uid=Uid)
 
-            spc.settings.pop('_building_template', None)
             for key in element['setting']:
                 try:
                     spc.settings[key] = float(element['setting'][key])

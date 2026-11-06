@@ -8,7 +8,7 @@ import pytest
 import shapely
 from rdflib import URIRef, Literal
 
-from MoosasPy.model import MoosasModel
+from MoosasPy.model import MoosasModel, apply_building_template
 from MoosasPy.model.io.rdf import MoosasRDF, _decode_space_settings
 from MoosasPy.simulation.radiation.runner import (
     AnnualDaylightRequest, RadianceCommandError, RadianceRunner, _daylight_metrics,
@@ -27,17 +27,27 @@ def test_area_weighted_sda_udi_and_night_occupancy():
     direct[0,1] = 1001
     sensors = [dict(sensor_id='a',space_id='room',represented_area_m2=1),
                dict(sensor_id='b',space_id='room',represented_area_m2=3)]
-    space = SimpleNamespace(id='room',settings={})
+    from MoosasPy.model.building_templates import building_templates
+    records = building_templates()
+    space = SimpleNamespace(id='room', settings={'zone_template': next(iter(records))}, explicit_settings=[])
+    model = SimpleNamespace(buildingTemplate=records, schedule={})
     mask = [True]*4+[False]*8756
     request = AnnualDaylightRequest('unused',occupied_by_space={'room':mask},ase_hours=0)
-    points, spaces, _ = _daylight_metrics(total,direct,sensors,[space],request)
+    points, spaces, _ = _daylight_metrics(total,direct,sensors,[space],request,model)
     assert points[0]['da']==.5
     assert points[0]['udi_useful']==.75
     assert spaces[0]['sda']==.25
     assert spaces[0]['ase']==.25
     assert all(np.isclose(p['udi_low']+p['udi_useful']+p['udi_high'],1) for p in points)
     empty = AnnualDaylightRequest('unused',occupied_by_space={'room':[False]*8760})
-    assert _daylight_metrics(total,direct,sensors,[space],empty)[1][0]['sda'] is None
+    assert _daylight_metrics(total,direct,sensors,[space],empty,model)[1][0]['sda'] is None
+    from MoosasPy.model.building_templates import template_parameter
+    _, _, masks = _daylight_metrics(total,direct,sensors,[space],AnnualDaylightRequest('unused'),model)
+    np.testing.assert_array_equal(masks['room'],
+        np.asarray(template_parameter(records[space.settings['zone_template']], 'zone_ppsm')) > 0)
+    space.settings['zone_ppsm'] = 0.
+    space.explicit_settings.append('zone_ppsm')
+    assert not _daylight_metrics(total,direct,sensors,[space],AnnualDaylightRequest('unused'),model)[2]['room'].any()
 
 
 def test_grid_preserves_holes_all_pieces_and_area():
@@ -144,6 +154,7 @@ def test_ttl_canonical_settings_reach_airflow_without_duplicate_snapshot(tmp_pat
     source=Path(__file__).parent/'caseFile/NBuilding.rdf'
     with contextlib.redirect_stdout((tmp_path/'load.log').open('w')):
         model=MoosasModel.load(source)
+        apply_building_template(model, 'CN/GB55015-2021/3A/Office')
         window=model.glazingList[0]
         window.settings.update(visible_transmittance=.61,solar_transmittance=.42,operable=.37,
                                airflow_element={'cd':.61}, numeric_string='001')
@@ -177,8 +188,9 @@ def test_real_radiance_unobstructed_sensor(tmp_path):
     # A tiny notional room supplies only the analysis floor; the optical scene
     # is empty, so the sensor sees the unobstructed sky and sun.
     floor=SimpleNamespace(Uid='f',face=shapely.Polygon([(0,0,0),(1,0,0),(1,1,0),(0,1,0)]),category=2)
-    space=SimpleNamespace(id='room',settings={},getAllFaces=lambda to_dict:{'MoosasFloor':[floor],'MoosasCeiling':[]})
-    model=SimpleNamespace(spaceList=[space],wallList=[],glazingList=[],skylightList=[],shadingList=[])
+    space=SimpleNamespace(id='room',settings={},explicit_settings=[],getAllFaces=lambda to_dict:{'MoosasFloor':[floor],'MoosasCeiling':[]})
+    model=SimpleNamespace(spaceList=[space],wallList=[],glazingList=[],skylightList=[],shadingList=[],buildingTemplate={},schedule={})
+    apply_building_template(model, 'CN/GB55015-2021/3A/Office')
     epw=Path(__file__).parents[1]/'MoosasPy/db/CHN_BJ_Beijing-Nanyuan.AP.545120_TMYx.epw'
     wea=convert_epw_to_wea(epw,tmp_path/'test.wea')
     result=RadianceRunner(model,timeout_seconds=120).run_annual(AnnualDaylightRequest(wea,output_dir=str(tmp_path),grid_spacing_m=1,sky_subdivision=1,ambient_divisions=1024))
@@ -214,6 +226,7 @@ def test_native_weather_pit_prepares_perez_sky(tmp_path):
     with contextlib.redirect_stdout((tmp_path/'load.log').open('w')):
         model=MoosasModel.load(Path(__file__).parent/'caseFile/NBuilding.rdf')
     model.spaceList=model.spaceList[:1]
+    apply_building_template(model, 'CN/GB55015-2021/3A/Office')
     sky=RadianceSky(datetime(2001,6,21,12,30),'-c',
         Location('x','Beijing','BJ',39.783,116.383,40,101325),utc_offset_hours=8,
         direct_normal_irradiance_w_m2=600,diffuse_horizontal_irradiance_w_m2=120)

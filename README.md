@@ -64,14 +64,26 @@ exporters—including OpenFOAM—see the [MoosasPy usage documentation](doc/docu
 
 The template catalog is maintained separately in
 [MOOSAS-BuildingTemplate](https://github.com/KLEGB/MOOSAS-BuildingTemplate).
-MoosasPy bundles the `CN/GB55015-2021/3A/OfficeLarge` template and its schedule
-in `MoosasPy/db/template/`, so the default catalog works offline without Git or
-network access. New spaces do not automatically apply this template; select a
-template explicitly when needed.
+MoosasPy bundles only the version-5 Office 3A template and its required office
+schedule in `MoosasPy/db/template/`, so the default template works offline
+without Git or network access. A complete catalog can be loaded explicitly
+from a local checkout. New spaces do not automatically apply a template; select
+one explicitly before building-energy, airflow, or daylight simulation.
+Models store one self-contained snapshot per selected template; spaces store
+the template ID, room key when needed, and explicit overrides. Per-space
+template snapshots and earlier catalog formats are not supported.
 
 A local catalog checkout can instead be passed as `template_path` to
 `apply_building_template`, or as `library_path` to
 `load_building_template_library`.
+
+Energy and daylight consume the selected template's operating and envelope
+parameters directly. Set `zone_room` on each space before applying a hospital
+or residential template. Occupancy, equipment, and lighting schedules are
+multiplied by their template densities before simulation. Heating and cooling
+setpoints and availability are resolved independently; `null` setpoints disable
+only that mode. AFN internal gains use the same resolved operating values;
+template envelope leakage and opening ratios are not wired to AFN yet.
 
 ## Development
 

@@ -1,10 +1,10 @@
 ﻿"""Coupled energy and airflow simulation workflows."""
 
 from ..energy.runner import EnergyRunner, build_energy_input
-from ..energy.input import expand_schedule
+from ..contracts import OCCUPANT_SENSIBLE_HEAT_W
 from ...transform.geometry.geos import Projection, Vector, Ray
 from ...model import MoosasModel
-from ...model.building_templates import template_parameter
+from ...model.building_templates import space_template, resolve_zone_settings, expand_schedule
 from ..weather import CumulativeSky, WeatherData, build_cumulative_skies
 from ..radiation import calculate_model_radiation, ray_test, write_radiation_geometry
 from ...utils import np, path, os
@@ -56,8 +56,8 @@ class EnergyAirflowCoupler(object):
                     "summer_solar", "winter_solar", "zone_wallU", "zone_winU", "zone_win_SHGC", "zone_c_temp",
                     "zone_c_hum", "zone_h_temp",
                     "zone_collingEER", "zone_HeatingEER", "zone_ppsm", "zone_pfav",
-                    "zone_popheat",
                     "zone_equipment", "zone_lighting", "zone_infiltration", "zone_name",
+                    "zone_heating_availability", "zone_cooling_availability", "zone_hvac_availability",
                     "zone_summerrad", "zone_winterrad", "zone_template"
                     ]
     AFN_INDEX = ['userName', 'temperature', 'prjIndex', 'prjName', 'heatLoad', 'volume', 'position_x', 'position_y',
@@ -128,20 +128,14 @@ class EnergyAirflowCoupler(object):
         key = (str(user), field_name, str(raw))
         series = self._gain_cache.get(key)
         if series is None:
-            space = self._spaces_by_id.get(str(user))
-            settings = space.settings if space is not None else {}
-            value = raw
-            configured = template_parameter(settings, field_name)
-            explicit = field_name in getattr(space, 'explicit_settings', ()) if space is not None else False
-            matches_template = field_name not in settings or np.array_equal(settings[field_name], raw)
-            if not explicit and configured is not None and matches_template:
-                value = configured
-            series = self._gain_cache[key] = expand_schedule(self.model, value, f'{user}/{field_name}')
+            series = self._gain_cache[key] = expand_schedule(
+                self.model, raw, f'{user}/{field_name}',
+                allow_nan=field_name in {'zone_h_temp', 'zone_c_temp'})
         return series
 
     def _resolve_gain_value(self, raw_value, hoy, field_name, zone_name):
         if raw_value is None:
-            return 0.0
+            raise ValueError(f'{zone_name}/{field_name}: missing resolved simulation parameter')
         return float(self._gain_series(zone_name, field_name, raw_value)[hoy])
 
     def updateHeatLoad(self, hoy, energyDict: dict = None):
@@ -179,8 +173,9 @@ class EnergyAirflowCoupler(object):
             zone_ppsm = self._resolve_gain_value(zValue.get('zone_ppsm'), hoy, 'zone_ppsm', zUserName)
             zone_equipment = self._resolve_gain_value(zValue.get('zone_equipment'), hoy, 'zone_equipment', zUserName)
             zone_lighting = self._resolve_gain_value(zValue.get('zone_lighting'), hoy, 'zone_lighting', zUserName)
-            zone_popheat = _safe_float(zValue.get('zone_popheat'))
-            ppsm_heat = zone_ppsm * zone_popheat * zone_area
+            if 'zone_popheat' in zValue:
+                raise ValueError('zone_popheat overrides are unsupported; simulations use 75 W/person')
+            ppsm_heat = zone_ppsm * OCCUPANT_SENSIBLE_HEAT_W * zone_area
             equipment_heat = zone_equipment * zone_area
             lighting_heat = zone_lighting * zone_area
             internal_heat = ppsm_heat + equipment_heat + lighting_heat
@@ -254,8 +249,9 @@ class EnergyAirflowCoupler(object):
             space = z.element
             zone['zone_name'] = str(space.settings.get('zone_name') or space.id)
             zone['zone_area'] = float(space.area)
-            zone.update({key: space.settings[key] for key in self.ENERGY_INDEX
-                         if space.settings.get(key) is not None})
+            settings = resolve_zone_settings(space, space_template(self.model, space))
+            zone.update({key: deepcopy(settings[key]) for key in self.ENERGY_INDEX
+                         if settings.get(key) is not None})
         return dict(zones=zoneDict, paths=pathDict, schemaVersion=NETWORK_SCHEMA_VERSION,
                     levels=[dict(level) for level in network.levels])
 
@@ -294,11 +290,13 @@ class EnergyAirflowCoupler(object):
         for key, zone in self.networkDict['zones'].items():
             name = str(zone.get('userName', key))
             space = self._spaces_by_id.get(name)
-            settings = space.settings if space is not None else {}
+            if space is None:
+                raise ValueError(f'Unknown network zone {name!r}')
+            settings = resolve_zone_settings(space, space_template(self.model, space))
             # Only values edited away from the model settings act as explicit
             # zone overrides; untouched fields keep template resolution.
             overrides[name] = {field: zone[field] for field in self.ENERGY_INDEX
-                               if field in zone and zone[field] != settings.get(field)}
+                               if field in zone and not np.array_equal(zone[field], settings.get(field))}
         return build_energy_input(self.model,self.weather,zone_ids=tuple(overrides),zone_overrides=overrides)
 
     def reconstructVentilationInputs(self, energyDict: dict = None):
@@ -842,8 +840,11 @@ class EnergyAirflowCoupler(object):
             now_on = bool(availability[i]) if i < len(availability) else False
             startup = now_on and not was_on
             temp = float(temperatures[i]) if i < len(temperatures) else np.nan
-            setpoint = self._resolve_zone_series_value(zone_dict, hoy, "zone_c_temp", 26.0)
-            loads.append(0.0458 * max(temp - setpoint, 0.0) if startup and np.isfinite(temp) else 0.0)
+            setpoint = self._resolve_zone_series_value(zone_dict, hoy, "zone_c_temp", float('nan'))
+            cooling_available = self._resolve_zone_series_value(
+                zone_dict, hoy, "zone_cooling_availability", 0.0) > 0
+            loads.append(0.0458 * max(temp - setpoint, 0.0)
+                         if startup and cooling_available and np.isfinite(temp) and np.isfinite(setpoint) else 0.0)
             events.append(bool(startup))
             was_on = now_on
         return loads, events
