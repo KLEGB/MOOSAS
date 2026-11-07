@@ -54,8 +54,7 @@ def test_model_initialization_does_not_load_external_resources():
 def test_resource_service_configures_a_domain_model():
     model = configure_model_resources(MoosasModel())
 
-    assert len(model.buildingTemplate) == 88
-    assert 'CN/GB55015-2021/3A/Office' in model.buildingTemplate
+    assert set(model.buildingTemplate) == {'CN/GB55015-2021/3A/Office'}
     assert model.schedule == {}
 
 

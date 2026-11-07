@@ -663,7 +663,7 @@ def writeIfc(model, ifc_path: str | Path, project_name: str = "Moosas IFC Projec
     }
 
 
-def _legacy_loadIfc_direct(ifc_path: str | Path) -> Any:
+def _legacy_loadIfc_direct(ifc_path: str | Path, ifc: Any | None = None) -> Any:
     require_ifc()
     from ..model import MoosasModel
     from ...transform.geometry.element import (
@@ -678,7 +678,8 @@ def _legacy_loadIfc_direct(ifc_path: str | Path) -> Any:
     from shapely import wkt as shapely_wkt
     from shapely import force_3d, Geometry
 
-    ifc = ifcopenshell.open(str(ifc_path))
+    if ifc is None:
+        ifc = ifcopenshell.open(str(ifc_path))
     model = MoosasModel()
     model.geometryList = []
     model.geoId = []
@@ -845,15 +846,13 @@ def _legacy_loadIfc_direct(ifc_path: str | Path) -> Any:
     return model
 
 
-def _loadIfc_via_geo_bridge(ifc_path: str | Path, ifc: Any | None = None, has_ifc_space: bool | None = None) -> Any:
+def _loadIfc_via_geo_bridge(ifc_path: str | Path, ifc: Any | None = None) -> Any:
     require_ifc()
     from ...transform import transform
     from ...transform.importers.geo import writeGeo
 
     if ifc is None:
         ifc = ifcopenshell.open(str(ifc_path))
-    if has_ifc_space is None:
-        has_ifc_space = len(ifc.by_type("IfcSpace")) > 0
 
     space_meta = [_ifc_space_meta(space) for space in ifc.by_type("IfcSpace")]
 
@@ -911,16 +910,9 @@ def _loadIfc_via_geo_bridge(ifc_path: str | Path, ifc: Any | None = None, has_if
                 raise ValueError("IFC to GEO transform produced an empty model.")
         else:
             raise ValueError("No geometry could be extracted from IFC.")
-    except Exception:
-        if temp_geo.exists():
-            temp_geo.unlink(missing_ok=True)
-        return _legacy_loadIfc_direct(ifc_path)
     finally:
         if temp_geo.exists():
             temp_geo.unlink(missing_ok=True)
-
-    if model is None:
-        return _legacy_loadIfc_direct(ifc_path)
 
     _backfill_ifc_metadata(model, metadata_by_face, space_meta)
     from ...utils.tools import mixItemListToList
@@ -937,11 +929,6 @@ def _loadIfc_via_geo_bridge(ifc_path: str | Path, ifc: Any | None = None, has_if
             if fid:
                 element_by_uid.setdefault(fid, element)
     _restore_ifc_spaces_from_psets(ifc, product_psets, model, element_by_uid)
-    try:
-        model.ifcHasSpaces = has_ifc_space
-        model.ifcLoadMode = "space" if has_ifc_space else "geometry"
-    except Exception:
-        pass
     return model
 
 
@@ -949,28 +936,21 @@ def loadIfc(ifc_path: str | Path) -> Any:
     require_ifc()
     ifc = ifcopenshell.open(str(ifc_path))
     has_ifc_space = len(ifc.by_type("IfcSpace")) > 0
-
-    if has_ifc_space:
+    preferred_loader, fallback_loader = (
+        (_legacy_loadIfc_direct, _loadIfc_via_geo_bridge)
+        if has_ifc_space
+        else (_loadIfc_via_geo_bridge, _legacy_loadIfc_direct)
+    )
+    try:
+        model = preferred_loader(ifc_path, ifc=ifc)
+    except Exception as primary_error:
         try:
-            model = _legacy_loadIfc_direct(ifc_path)
-            try:
-                model.ifcHasSpaces = True
-                model.ifcLoadMode = "space"
-            except Exception:
-                pass
-            return model
-        except Exception:
-            return _loadIfc_via_geo_bridge(ifc_path, ifc=ifc, has_ifc_space=has_ifc_space)
+            model = fallback_loader(ifc_path, ifc=ifc)
+        except Exception as fallback_error:
+            raise fallback_error from primary_error
 
-    try:
-        model = _loadIfc_via_geo_bridge(ifc_path, ifc=ifc, has_ifc_space=has_ifc_space)
-    except Exception:
-        model = _legacy_loadIfc_direct(ifc_path)
-    try:
-        model.ifcHasSpaces = False
-        model.ifcLoadMode = "geometry"
-    except Exception:
-        pass
+    model.ifcHasSpaces = has_ifc_space
+    model.ifcLoadMode = "space" if has_ifc_space else "geometry"
     return model
 
 

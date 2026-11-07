@@ -3,8 +3,8 @@
 import json
 
 import networkx as nx
-from scipy.spatial.transform import Rotation as R
 
+from ...transform.geometry.boundary import create_obb
 from ...utils import np, path, shapely
 
 # Graph JSON is a model projection, not a MoosasModel load format.
@@ -26,96 +26,6 @@ SPACE_PARAM_TEMPLATE = {
     "space_type": "room",
     "conditioned": True,
 }
-
-
-def create_obb(points, normal, min_scale=0.1):
-    """
-    Create an oriented bounding box (OBB) for a set of points.
-    """
-    points = np.asarray(points, dtype=float)
-    normal = np.asarray(normal, dtype=float)
-    if len(points) == 0:
-        raise ValueError("points must not be empty")
-    if np.linalg.norm(normal) <= 1e-8:
-        normal = np.array([0.0, 0.0, 1.0], dtype=float)
-    else:
-        normal = normal / np.linalg.norm(normal)
-
-    geometry = shapely.multipoints(points)
-    z_axis = np.array([0.0, 0.0, 1.0], dtype=float)
-    z_r = normal
-
-    if np.abs(z_r[0]) <= 1e-3 and np.abs(z_r[1]) <= 1e-3:
-        z_r = z_axis
-        min_rotated_rectangle = shapely.minimum_rotated_rectangle(geometry)
-        obb_coords = np.array(
-            shapely.get_coordinates(min_rotated_rectangle, include_z=True)
-        )[:-1]
-        obb_coords = np.nan_to_num(obb_coords, nan=points[0, 2])
-        obb_coords[:, 2] = (np.min(points[:, 2]) + np.max(points[:, 2])) / 2
-
-        if len(obb_coords) <= 2:
-            centroid = np.mean(points, axis=0)
-            x_r = np.array([1.0, 0.0, 0.0], dtype=float)
-            y_r = np.array([0.0, 1.0, 0.0], dtype=float)
-            rotation_matrix = R.from_matrix(np.array([x_r, y_r, z_r])).as_matrix()
-            l = max(np.ptp(points[:, 0]), min_scale)
-            w = max(np.ptp(points[:, 1]), min_scale)
-            h = max(np.ptp(points[:, 2]), min_scale)
-            original_obb_centroid = centroid
-        else:
-            x_vec = obb_coords[1] - obb_coords[0]
-            x_norm = np.linalg.norm(x_vec)
-            x_r = x_vec / x_norm if x_norm > 1e-6 else np.array([1.0, 0.0, 0.0], dtype=float)
-            y_r = np.cross(z_r, x_r)
-
-            rotation_matrix = R.from_matrix(np.array([x_r, y_r, z_r])).as_matrix()
-            l = max(np.linalg.norm(obb_coords[1] - obb_coords[0]), min_scale)
-            w = max(np.linalg.norm(obb_coords[3] - obb_coords[0]), min_scale)
-            h = max(np.max(points[:, 2]) - np.min(points[:, 2]), min_scale)
-            original_obb_centroid = np.mean(obb_coords, axis=0)
-    else:
-        x_r = np.cross(z_r, z_axis)
-        if np.linalg.norm(x_r) <= 1e-8:
-            x_r = np.array([1.0, 0.0, 0.0], dtype=float)
-        else:
-            x_r = x_r / np.linalg.norm(x_r)
-
-        y_r = np.cross(z_r, x_r)
-        if np.linalg.norm(y_r) <= 1e-8:
-            y_r = np.array([0.0, 1.0, 0.0], dtype=float)
-        else:
-            y_r = y_r / np.linalg.norm(y_r)
-
-        rotation_matrix = R.from_matrix(np.array([x_r, y_r, z_r])).as_matrix()
-        rotated_points = points.dot(rotation_matrix.T)
-
-        l = max(np.ptp(rotated_points[:, 0]), min_scale)
-        w = max(np.ptp(rotated_points[:, 1]), min_scale)
-        h = max(np.ptp(rotated_points[:, 2]), min_scale)
-
-        centroid = np.mean(
-            [
-                [
-                    np.min(rotated_points[:, 0]),
-                    np.min(rotated_points[:, 1]),
-                    np.min(rotated_points[:, 2]),
-                ],
-                [
-                    np.max(rotated_points[:, 0]),
-                    np.max(rotated_points[:, 1]),
-                    np.max(rotated_points[:, 2]),
-                ],
-            ],
-            axis=0,
-        )
-        original_obb_centroid = np.dot(centroid, rotation_matrix)
-
-    return {
-        "center": original_obb_centroid,
-        "scale": np.array([l, w, h], dtype=float),
-        "rotation": rotation_matrix,
-    }
 
 
 def _split_tokens(value: str | None) -> list[str]:

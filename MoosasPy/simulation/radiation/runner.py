@@ -255,7 +255,7 @@ class RadianceRunner(Runner):
             values.append((red * 0.265 + green * 0.670 + blue * 0.065) * 179)
         return tuple(values)
 
-    _decode_output = staticmethod(Runner._decode_output)
+    _decode_output = staticmethod(SubprocessEngine._decode_output)
 
 
 @dataclass(frozen=True)

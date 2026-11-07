@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 import MoosasPy
+from MoosasPy.simulation.engine import NativeExecution
 from MoosasPy.simulation import CommandResult, SimulationResult, WorkspaceReport
 from MoosasPy.simulation.energy.runner import EnergyResult, build_energy_input, solve_latent_load
 from MoosasPy.simulation.coupling import (
@@ -27,6 +28,9 @@ from MoosasPy.simulation.airflow.runner import (
 
 
 class SimulationContractTests(unittest.TestCase):
+    def test_engine_and_runner_share_command_result_type(self):
+        self.assertIs(CommandResult, NativeExecution)
+
     def test_root_api_contains_only_model_transform_and_simulation(self):
         self.assertEqual(
             set(MoosasPy.__all__),

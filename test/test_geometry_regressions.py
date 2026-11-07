@@ -10,6 +10,8 @@ from MoosasPy.model.io.graph import buildGraph
 from MoosasPy.transform.geometry.convexify import GeometryConvexifier
 from MoosasPy.model import MoosasModel
 from MoosasPy.model import configure_model_resources
+from MoosasPy.model.io import graph as graph_io
+from MoosasPy.transform.geometry.boundary import create_obb
 from MoosasPy.transform.geometry.element import (
     MoosasEdge,
     MoosasElement,
@@ -34,6 +36,22 @@ from MoosasPy.transform.stages.topology import _normalize_horizontal_faces, buil
 from MoosasPy.utils import GeometryError, shapely
 from MoosasPy.utils.constant import geom
 from MoosasPy.transform.importers.geo import _readGeo
+
+
+def test_graph_and_geometry_share_obb_implementation():
+    assert graph_io.create_obb is create_obb
+
+    points = np.array(
+        [[0.0, 0.0, 2.0], [4.0, 0.0, 2.0], [4.0, 3.0, 2.0], [0.0, 3.0, 2.0]]
+    )
+    obb = create_obb(points, [0.0, 0.0, 2.0])
+
+    assert np.all(np.isfinite(obb["center"]))
+    assert np.all(obb["scale"] > 0)
+    np.testing.assert_allclose(sorted(obb["scale"][:2]), [3.0, 4.0])
+
+    with pytest.raises(ValueError, match="points must not be empty"):
+        create_obb([], [0.0, 0.0, 1.0])
 
 
 def test_geo_import_preserves_millimetre_details(tmp_path):

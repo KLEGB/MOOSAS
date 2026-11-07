@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 from typing import TextIO
 
 from .engine import (
+    NativeExecution,
     NativeEngine,
     NativeEngineProcessError,
     NativeEngineTimeoutError,
@@ -15,14 +15,7 @@ from .engine import (
 )
 
 
-@dataclass(frozen=True)
-class CommandResult:
-    """Captured result of one native-tool command."""
-
-    command: tuple[str, ...]
-    returncode: int
-    stdout: str
-    stderr: str
+CommandResult = NativeExecution
 
 
 class CommandError(RuntimeError):
@@ -90,7 +83,3 @@ class Runner:
             raise self.error_type(command_tuple, error.returncode, error.stdout, error.stderr) from error
 
         return self.result_type(completed.command, completed.returncode, completed.stdout, completed.stderr)
-
-    @staticmethod
-    def _decode_output(output: str | bytes | None) -> str:
-        return SubprocessEngine._decode_output(output)
