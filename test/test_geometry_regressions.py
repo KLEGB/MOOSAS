@@ -27,7 +27,7 @@ from MoosasPy.transform.geometry.grid import MoosasGrid
 from MoosasPy.transform.geometry.planar_graph import TopoNetwork
 from MoosasPy.transform.geometry.planar_graph import TopoEdge
 from MoosasPy.transform.geometry.polygon import GeometryOperator, GeometryValidator
-from MoosasPy.transform.geometry.contour import _merge_tiny_partitions
+from MoosasPy.transform.geometry.contour import _merge_tiny_partitions, closed_contour_calculation
 from MoosasPy.transform.stages.convexification import convexify_model
 from MoosasPy.transform.stages.classification import classify_model
 from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_model
@@ -628,6 +628,54 @@ def test_topology_node_keys_normalize_signed_zero():
     topology_edge = TopoEdge(0, edge)
 
     assert topology_edge.fromPStr == "0.0_0.0"
+
+
+@pytest.mark.parametrize(
+    "segments, expected_areas",
+    [
+        (
+            [
+                ((0, 0), (2, 0)), ((2, 0), (4, 0)),
+                ((4, 0), (4, 2)), ((4, 2), (2, 2)),
+                ((2, 2), (0, 2)), ((0, 2), (0, 0)),
+                ((2, 0), (2, 2)), ((4, 2), (5, 3)),
+                ((6, 0), (7, 0)), ((7, 0), (7, 1)),
+                ((7, 1), (6, 1)), ((6, 1), (6, 0)),
+            ],
+            [1, 4, 4],
+        ),
+        (
+            [
+                ((0, 0), (4, 0)), ((4, 0), (4, 4)),
+                ((4, 4), (0, 4)), ((0, 4), (0, 0)),
+                ((1, 1), (2, 1)), ((2, 1), (2, 2)),
+                ((2, 2), (1, 2)), ((1, 2), (1, 1)),
+            ],
+            [1, 16],
+        ),
+    ],
+)
+def test_closed_contours_polygonize_without_outer_boundary_walk(monkeypatch, segments, expected_areas):
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    model.wallList = [
+        MoosasWall.fromProjection(shapely.LineString(segment), 0, 3, model)
+        for segment in segments
+    ]
+
+    def unexpected_outer_boundary(_network):
+        raise AssertionError("CCR should not traverse discarded outer boundaries")
+
+    monkeypatch.setattr(TopoNetwork, "outerBoundary", unexpected_outer_boundary)
+    closed_contour_calculation(model, 0.0)
+
+    areas = [
+        sum(polygon.area for polygon in shapely.get_parts(
+            shapely.polygonize([wall.force_2d() for wall in boundary])
+        ))
+        for boundary in model.boundaryList
+    ]
+    assert sorted(areas) == pytest.approx(expected_areas)
 
 
 def test_low_enclosed_space_is_void():
