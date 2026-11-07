@@ -1,6 +1,7 @@
 from .radiance import _get_sky as _raw_get_sky, _material_library, _mesh_to_radiance_object
 from ...model import MoosasModel
-from ...transform.geometry.element import MoosasElement, MoosasSpace
+from ...model.space import MoosasSpace
+from ...transform.geometry.element import MoosasElement
 from ...transform.geometry.geos import Projection, Vector
 from ...transform.geometry.grid import MoosasGrid
 from ...utils import np, shapely, mixItemListToList

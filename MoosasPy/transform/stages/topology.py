@@ -5,7 +5,9 @@ from ...model import MoosasModel
 from ...utils import mixItemListToList, np, shapely
 from ...utils.constant import geom
 from ...utils.tools import searchBy
-from ..geometry.element import MoosasEdge, MoosasFace, MoosasFloor, MoosasGlazing, MoosasSkylight, MoosasSpace, MoosasWall
+from ...model.space import MoosasSpace
+from ...model.boundary import MoosasEdge, MoosasFloor
+from ..geometry.element import MoosasFace, MoosasGlazing, MoosasSkylight, MoosasWall
 from ..geometry.geos import GeometryError, Vector, overlapArea
 from .glazing import match_face_glazing
 

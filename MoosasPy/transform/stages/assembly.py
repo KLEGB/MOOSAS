@@ -7,7 +7,9 @@ from ...utils.constant import geom
 from ...utils.tools import searchBy
 from ..geometry.cleanse import solveIntersectionHorizontal
 from ..geometry.contour import overhead_projection, packing_edges
-from ..geometry.element import MoosasEdge, MoosasFace, MoosasFloor, MoosasSkylight, MoosasSpace
+from ...model.space import MoosasSpace
+from ...model.boundary import MoosasEdge, MoosasFloor
+from ..geometry.element import MoosasFace, MoosasSkylight
 from ..geometry.geos import GeometryError, Vector, overlapArea
 
 

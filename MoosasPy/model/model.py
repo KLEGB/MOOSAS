@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 
 from ..transform.geometry.element import *
 from ..transform.geometry.geos import faceNormal
+from .boundary import MoosasEdge, MoosasFloor
+from .container import MoosasContainer
+from .space import MoosasSpace
 
 if TYPE_CHECKING:
     from .io import SaveResult

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from .geos import *
-from .element import MoosasEdge, MoosasWall, MoosasGlazing, MoosasContainer
+from ...model.boundary import MoosasEdge
+from .element import MoosasWall, MoosasGlazing
 from .convexify import convexify_shape
 from .core import offset_partitions, validate_partition_lines
 from ...utils import searchBy, shapely, np, TopologyError, mixItemListToList
 from ...utils.constant import geom
 from .planar_graph import TopoNode, TopoBound, TopoEdge, TopoNetwork
+from ...model.container import MoosasContainer
 
 
 def _unique_boundaries(boundaries):

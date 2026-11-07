@@ -6,7 +6,8 @@ from eppy.modeleditor import IDF
 from .construction import Construction
 from .model import *
 from ....transform.geometry.convexify import convexify_shape
-from ....transform.geometry.element import MoosasSpace, MoosasElement
+from ...space import MoosasSpace
+from ....transform.geometry.element import MoosasElement
 from ....transform.geometry.geos import ccwNormal, Vector, offset, trim, projectTo
 from ....utils import shapely, path
 from ....utils.constant import geom

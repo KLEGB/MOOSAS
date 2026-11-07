@@ -8,7 +8,8 @@ from shapely.affinity import rotate, translate
 from MoosasPy.transform.geometry.contour import _merge_tiny_partitions
 from MoosasPy.transform.geometry.cleanse import splitFaces
 from MoosasPy.transform.geometry.convexify import GeometryConvexifier, convexify_shape
-from MoosasPy.transform.geometry.element import MoosasFace, MoosasFloor, MoosasSkylight
+from MoosasPy.model.boundary import MoosasFloor
+from MoosasPy.transform.geometry.element import MoosasFace, MoosasSkylight
 from MoosasPy.transform.geometry.polygon import GeometryOperator, cut_hole
 from MoosasPy.model import MoosasModel
 from MoosasPy.transform.stages.assembly import cap_floor_simple

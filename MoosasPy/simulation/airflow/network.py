@@ -9,6 +9,7 @@ import os
 import tempfile
 
 from ...transform.geometry.element import *
+from ...model.space import MoosasSpace
 from ...transform.geometry.geos import Vector
 from ...utils.constant import geom
 from ...utils.tools import path, generate_code, parseFile, native_platform

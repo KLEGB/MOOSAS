@@ -8,6 +8,133 @@ from ..model import *
 from ...utils import ET, np, shapely
 
 
+def element_to_xml(
+    element: MoosasElement, element_tag: str | None = None, write_geometry: bool = False,
+) -> ET.Element:
+    """Serialize a surface element, including fields specific to its actual type."""
+    if element_tag is None:
+        if isinstance(element, MoosasGlazing):
+            element_tag = "glazing"
+        elif isinstance(element, MoosasSkylight):
+            element_tag = "skylight"
+        elif isinstance(element, MoosasWall):
+            element_tag = "wall"
+        elif isinstance(element, MoosasFace):
+            element_tag = "face"
+        else:
+            element_tag = "geometry"
+
+    geometry = ET.Element(element_tag)
+    id_list = np.array(element.faceId).flatten()
+    glazing_ids = np.array(element.glazingId).flatten()
+    space_ids = np.array(element.space).flatten()
+    ET.SubElement(geometry, "Uid").text = str(element.Uid)
+    ET.SubElement(geometry, "faceId").text = " ".join(id_list.astype(str))
+    ET.SubElement(geometry, "level").text = str(element.level)
+    ET.SubElement(geometry, "offset").text = str(element.offset)
+    ET.SubElement(geometry, "area").text = str(element.area / INCH_METER_MULTIPLIER_SQR)
+    ET.SubElement(geometry, "glazingId").text = " ".join(glazing_ids.astype(str))
+    ET.SubElement(geometry, "height").text = str(
+        (element.level + element.offset) / INCH_METER_MULTIPLIER
+    )
+    ET.SubElement(geometry, "normal").text = " ".join(Vector(element.normal).array.astype(str))
+    ET.SubElement(geometry, "external").text = str(element.isOuter)
+    ET.SubElement(geometry, "U_Value").text = str(element.U_Value)
+    ET.SubElement(geometry, "parentSpace").text = str(space_ids.astype(str))
+    neighbor = ET.SubElement(geometry, "neighbor")
+    for key in element.neighbor:
+        edge = ET.SubElement(neighbor, "edge")
+        edge.set("key", key)
+        edge.text = " ".join(element.neighbor[key])
+    if write_geometry:
+        coordinates = ET.SubElement(geometry, "geometries")
+        for point in shapely.get_coordinates(element.face, include_z=True).astype(str):
+            ET.SubElement(coordinates, "pt").text = " ".join(point)
+
+    if isinstance(element, MoosasWall):
+        ET.SubElement(geometry, "length").text = str(
+            shapely.length(element.force_2d()) / INCH_METER_MULTIPLIER
+        )
+        ET.SubElement(geometry, "force2d").text = str(
+            shapely.get_coordinates(element.force_2d(), include_z=False) / INCH_METER_MULTIPLIER
+        )
+        ET.SubElement(geometry, "toplevel").text = str(element.toplevel)
+        ET.SubElement(geometry, "topoffset").text = str(element.topoffset)
+
+    if isinstance(element, (MoosasGlazing, MoosasSkylight)):
+        ET.SubElement(geometry, "parentFace").text = (
+            str(element.parentFace.Uid) if isinstance(element, MoosasSkylight)
+            else element.parentFace.Uid
+        )
+        ET.SubElement(geometry, "shadingId").text = " ".join(
+            np.array([shade.Uid for shade in element.shading]).astype(str)
+        )
+        ET.SubElement(geometry, "SHGC").text = "" if element.SHGC is None else str(element.SHGC)
+    return geometry
+
+
+def floor_to_xml(floor: MoosasFloor, element_tag: str = "floor") -> ET.Element:
+    """Serialize the surface references of a floor or ceiling aggregate."""
+    root = ET.Element(element_tag)
+    for face in floor.face:
+        ET.SubElement(root, "face").text = face.Uid
+    return root
+
+
+def edge_to_xml(edge: MoosasEdge, element_tag: str = "edge") -> ET.Element:
+    """Serialize lateral wall references and their outward orientations."""
+    root = ET.Element(element_tag)
+    for wall, factor in zip(edge.wall, edge.FactorOfWall):
+        factor = factor.array
+        wall_xml = ET.SubElement(root, "wall")
+        ET.SubElement(wall_xml, "Uid").text = wall.Uid
+        ET.SubElement(wall_xml, "normal").text = str(factor[0]) + " " + str(factor[1]) + " 0"
+    return root
+
+
+def space_to_xml(
+    space: MoosasSpace, xml_tag: str = "space", write_geometry: bool = False,
+) -> ET.Element:
+    """Serialize a space, its settings, topology, neighbors, and internal mass."""
+    root = ET.Element(xml_tag)
+    ET.SubElement(root, "id").text = space.id
+    ET.SubElement(root, "space_type").text = space.space_type
+    ET.SubElement(root, "conditioned").text = str(space.conditioned)
+    ET.SubElement(root, "area").text = str(space.area)
+    height = (
+        (space.edge.toplevel - space.edge.level) / INCH_METER_MULTIPLIER
+        if space.ceiling and space.floor else None
+    )
+    ET.SubElement(root, "height").text = str(height)
+    ET.SubElement(root, "is_void").text = str(space.is_void())
+    ET.SubElement(root, "void").text = " ".join(str(void) for void in space.void)
+    boundary = ET.SubElement(root, "boundary")
+    coordinates = shapely.get_coordinates(
+        shapely.force_3d(space.edge.force_2d(), z=space.edge.elevation), include_z=True
+    )
+    for point in coordinates:
+        ET.SubElement(boundary, "pt").text = " ".join(
+            str(value / INCH_METER_MULTIPLIER) for value in point
+        )
+    settings = ET.SubElement(root, "setting")
+    for key in space.settings:
+        ET.SubElement(settings, key).text = str(space.settings[key])
+
+    topology = ET.SubElement(root, "topology")
+    if space.floor:
+        topology.append(floor_to_xml(space.floor))
+    if space.ceiling:
+        topology.append(floor_to_xml(space.ceiling, "ceiling"))
+    topology.append(edge_to_xml(space.edge))
+    for neighbor_id in space.neighbor:
+        neighbor = ET.SubElement(root, "neighbor")
+        ET.SubElement(neighbor, "Uid").text = str([wall.Uid for wall in space.neighbor[neighbor_id]])
+        ET.SubElement(neighbor, "id").text = str(neighbor_id)
+    for wall in space.internalMass:
+        root.append(element_to_xml(wall, "internalMass", write_geometry=write_geometry))
+    return root
+
+
 def _xml_float_or_none(value):
     if value in (None, ""):
         return None
@@ -48,7 +175,7 @@ def build_xml(model: MoosasModel, write_geometry: bool = False) -> ET.Element:
     if skipped_spaces:
         print(f"WARNING: skipping {skipped_spaces} spaces without complete floor/ceiling topology")
     for space in spaces:
-        root.append(space.to_xml(model, writeGeometry=write_geometry))
+        root.append(space_to_xml(space, write_geometry=write_geometry))
         element_dict = space.getAllFaces(to_dict=True)
         elements["MoosasFace"] |= set(element_dict["MoosasFloor"] + element_dict["MoosasCeiling"])
         elements["MoosasWall"] |= set(element_dict["MoosasWall"] + element_dict["InternalMass"])
@@ -83,13 +210,13 @@ def build_xml(model: MoosasModel, write_geometry: bool = False) -> ET.Element:
     }
 
     for face in elements["MoosasFace"]:
-        root.append(face.to_xml(model, writeGeometry=write_geometry))
+        root.append(element_to_xml(face, write_geometry=write_geometry))
     for wall in elements["MoosasWall"]:
-        root.append(wall.to_xml(model, writeGeometry=write_geometry))
+        root.append(element_to_xml(wall, write_geometry=write_geometry))
     for glazing in elements["MoosasGlazing"]:
-        root.append(glazing.to_xml(model, writeGeometry=write_geometry))
+        root.append(element_to_xml(glazing, write_geometry=write_geometry))
     for skylight in elements["MoosasSkylight"]:
-        root.append(skylight.to_xml(model, writeGeometry=write_geometry))
+        root.append(element_to_xml(skylight, write_geometry=write_geometry))
 
     for shading in model.shadingList:
         shading_xml = ET.SubElement(root, "shading")

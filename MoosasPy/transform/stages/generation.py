@@ -4,7 +4,7 @@ from __future__ import annotations
 from ...model import MoosasModel
 from ...utils import searchBy
 from ..geometry.contour import _documentBoundary, closed_contour_calculation
-from ..geometry.element import MoosasEdge
+from ...model.boundary import MoosasEdge
 from ..geometry.viewFactor import viewFactorTopology
 
 

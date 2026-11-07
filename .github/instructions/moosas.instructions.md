@@ -33,3 +33,10 @@ applyTo: "**"
 
 - Run Python validation in the `moosas` Conda environment.
 - On this workspace, invoke it explicitly with `D:\miniconda3\Scripts\conda.exe run -n moosas python ...`; do not use an unqualified system Python.
+
+## Tests for Behavior-Preserving Refactoring
+
+- When a refactor does not add or remove functionality, do not add permanent regression tests solely to assert removed content, obsolete import/export paths, or structural relocation.
+- Verify these changes with temporary checks while editing and run the relevant existing tests.
+- Do not persist these temporary checks in formal test files or test documentation.
+- Add permanent regression tests for functional changes or bug fixes only when they cover actual behavior, or when the user explicitly requests them.

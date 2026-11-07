@@ -15,6 +15,9 @@ or a portable Python distribution.
 ```text
 MoosasPy/
 |-- model/                 Building model and model-file I/O
+|   |-- boundary.py        MoosasFloor/MoosasEdge, aggregated space boundaries
+|   |-- container.py       Model-level collections and geometry registry
+|   |-- space.py           MoosasSpace, enclosure topology, and zone settings
 |   `-- io/                RDF, XML, JSON, IDF, graph, gbXML, and IFC adapters
 |-- transform/             Geometry-to-model transformation pipeline
 |   |-- importers/         GEO, OBJ, and STL readers
@@ -40,6 +43,25 @@ The three main public API areas are:
 | `MoosasPy.transform` | Convert GEO, OBJ, or STL geometry into a `MoosasModel`. |
 | `MoosasPy.MoosasModel` | Load, inspect, edit, and save complete building models. |
 | `MoosasPy.simulation` | Run energy, radiation, weather, airflow, and coupled workflows. |
+
+`MoosasSpace` is defined in `MoosasPy.model.space` and exported by
+`MoosasPy.model`. Import it with `from MoosasPy.model import MoosasSpace`;
+the former `MoosasPy.transform.geometry.element.MoosasSpace` import path has
+been removed.
+
+`MoosasFloor` and `MoosasEdge` are defined in `MoosasPy.model.boundary` and
+exported by `MoosasPy.model`. Import them with
+`from MoosasPy.model import MoosasFloor, MoosasEdge`; their former
+`MoosasPy.transform.geometry.element` import paths have been removed.
+Geometry surfaces remain in `MoosasPy.transform.geometry.element`.
+
+XML serialization belongs to `MoosasPy.model.io.xml`, not the domain classes.
+The former object `to_xml` methods have been removed. Use `build_xml(model,
+write_geometry=False)` for a complete model, or `element_to_xml`,
+`floor_to_xml`, `edge_to_xml`, and `space_to_xml` for individual objects.
+XML/JSON file formats and `MoosasModel.save` remain unchanged. Legacy
+`fromDict` construction and `MoosasSpace.to_string` are not changed by this
+serialization relocation.
 
 ## Requirements and Installation
 

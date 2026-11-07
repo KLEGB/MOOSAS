@@ -12,14 +12,13 @@ from MoosasPy.model import MoosasModel
 from MoosasPy.model import configure_model_resources
 from MoosasPy.model.io import graph as graph_io
 from MoosasPy.transform.geometry.boundary import create_obb
+from MoosasPy.model.space import MoosasSpace
+from MoosasPy.model.boundary import MoosasEdge, MoosasFloor
 from MoosasPy.transform.geometry.element import (
-    MoosasEdge,
     MoosasElement,
     MoosasFace,
-    MoosasFloor,
     MoosasGlazing,
     MoosasGeometry,
-    MoosasSpace,
     MoosasWall,
 )
 from MoosasPy.transform.geometry.geos import Projection, ccwNormal, is_ccw, simplify

@@ -4,7 +4,8 @@ import tempfile
 
 from ...transform.importers.geo import writeGeo
 from ...transform.geometry.grid import MoosasGrid
-from ...transform.geometry.element import MoosasSpace, MoosasSkylight, MoosasGlazing, MoosasElement
+from ...model.space import MoosasSpace
+from ...transform.geometry.element import MoosasSkylight, MoosasGlazing, MoosasElement
 from ...transform.geometry.geos import Ray, Vector
 from ...utils import np, os, Iterable
 from ...utils import path

@@ -11,6 +11,8 @@ from ...utils import TopologyError
 from ...utils.tools import mixItemListToList, searchBy
 from ...utils.constant import geom
 from .geos import equals, overlapEdge, Vector
+from ...model.container import MoosasContainer
+from ...model.boundary import MoosasEdge
 
 
 def _groupByNormal(listToGroup: list, listOfNormal: list[shapely.Geometry | np.ndarray]) -> list[list]:

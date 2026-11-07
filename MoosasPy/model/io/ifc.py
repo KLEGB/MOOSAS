@@ -471,7 +471,8 @@ def _backfill_ifc_metadata(model, metadata_by_face: dict[str, dict[str, Any]], s
 
 
 def _restore_ifc_spaces_from_psets(ifc, product_psets: dict[int, dict[str, Any]], model, element_by_uid: dict[str, Any]) -> int:
-    from ...transform.geometry.element import MoosasFloor, MoosasEdge, MoosasSpace
+    from ..space import MoosasSpace
+    from ..boundary import MoosasFloor, MoosasEdge
 
     restored = 0
     existing_ids = {str(space.id) for space in getattr(model, "spaceList", [])}
@@ -666,14 +667,13 @@ def writeIfc(model, ifc_path: str | Path, project_name: str = "Moosas IFC Projec
 def _legacy_loadIfc_direct(ifc_path: str | Path, ifc: Any | None = None) -> Any:
     require_ifc()
     from ..model import MoosasModel
+    from ..space import MoosasSpace
+    from ..boundary import MoosasFloor, MoosasEdge
     from ...transform.geometry.element import (
         MoosasFace,
         MoosasWall,
         MoosasGlazing,
         MoosasSkylight,
-        MoosasFloor,
-        MoosasEdge,
-        MoosasSpace,
     )
     from shapely import wkt as shapely_wkt
     from shapely import force_3d, Geometry

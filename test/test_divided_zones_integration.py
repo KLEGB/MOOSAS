@@ -12,7 +12,7 @@ from MoosasPy.simulation.energy.runner import EnergyRunner
 from MoosasPy.simulation.weather import Location
 from MoosasPy.simulation.weather.epw import read_weather_csv
 from MoosasPy.transform import TransformOptions, transform
-from MoosasPy.transform.geometry.element import MoosasSpace
+from MoosasPy.model.space import MoosasSpace
 from MoosasPy.utils import shapely
 from MoosasPy.utils.constant import geom
 

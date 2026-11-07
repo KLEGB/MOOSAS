@@ -1,6 +1,6 @@
 """Fast daylight-factor estimates."""
 
-from ...transform.geometry.element import MoosasSpace
+from ...model.space import MoosasSpace
 from ...utils import np
 
 
