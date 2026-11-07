@@ -7,10 +7,9 @@ from shapely.affinity import rotate, translate
 
 from MoosasPy.transform.geometry.contour import _merge_tiny_partitions
 from MoosasPy.transform.geometry.cleanse import splitFaces
-from MoosasPy.transform.geometry.convexify import GeometryConvexifier, _cut_hole
+from MoosasPy.transform.geometry.convexify import GeometryConvexifier, convexify_shape
 from MoosasPy.transform.geometry.element import MoosasFace, MoosasFloor, MoosasSkylight
-from MoosasPy.transform.geometry.polygon import GeometryOperator
-from MoosasPy.transform.geometry.triangulation import triangulate2dFace
+from MoosasPy.transform.geometry.polygon import GeometryOperator, cut_hole
 from MoosasPy.model import MoosasModel
 from MoosasPy.transform.stages.assembly import cap_floor_simple
 from MoosasPy.utils import GeometryError, TopologyError
@@ -280,14 +279,14 @@ def test_offset_band_with_disconnected_cores_uses_simple_double_cut_regions(foot
     while pending:
         piece = pending.pop()
         if piece.interiors:
-            cells = _cut_hole(piece)
+            cells = cut_hole(piece)
             assert sum(len(cell.interiors) for cell in cells) == len(piece.interiors) - 1
             pending.extend(cells)
         else:
             simple.append(piece)
     assert all(piece.is_valid and piece.exterior.is_simple for piece in simple)
 
-    faces, _ = triangulate2dFace(
+    faces, _ = convexify_shape(
         shapely.Polygon(band.exterior), [shapely.Polygon(ring) for ring in band.interiors]
     )
     assert_partition(faces, band)
@@ -325,7 +324,7 @@ def test_double_cuts_report_missing_connector_pair(monkeypatch):
         [[(4, 3), (8, 3), (8, 7), (4, 7)]],
     )
     with pytest.raises(GeometryError, match="No valid pair"):
-        _cut_hole(source)
+        cut_hole(source)
 
 
 def test_horizontal_face_split_keeps_small_remaining_physical_fragments():

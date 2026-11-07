@@ -6,7 +6,7 @@ import shapely
 from ...model import MoosasModel
 from ...utils import np
 from ...utils.constant import geom
-from ..geometry.triangulation import triangulate2dFace
+from ..geometry.convexify import convexify_shape
 from ..geometry.cleanse import cleanseDuplicatedLevel
 from ..geometry.element import MoosasElement, MoosasFace, MoosasGlazing, MoosasSkylight, MoosasWall
 from ..geometry.geos import GeometryError, Projection, Vector
@@ -45,7 +45,7 @@ def classify_model(
                     projection = Projection.fromPolygon(geometry.face)
                     face_projection = projection.toUV(geometry.face)
                     hole_projections = [projection.toUV(hole) for hole in geometry.holes]
-                    split_projections, _ = triangulate2dFace(face_projection, hole_projections)
+                    split_projections, _ = convexify_shape(face_projection, hole_projections)
                     for split_projection in split_projections:
                         try:
                             model.includeGeo(projection.toWorld(split_projection), cat=geometry.category)

@@ -3,61 +3,41 @@ Convexification utilities aligned with the current cuger implementation.
 """
 
 from ...utils import GeometryError, np, shapely
+from . import polygon as polygon_ops
+from .geos import Projection, simplify
 from .polygon import GeometryBasic, GeometryOperator, GeometryValidator
 
 
-def _validate_partition(parts, source, *, convex=False):
-    tolerance = max(1e-8, source.area * 1e-9)
-    if not parts or any(not part.is_valid or part.area <= 0 for part in parts):
-        raise GeometryError(source, "Double-cut decomposition produced an invalid partition.")
-    if convex and any(
-        part.interiors or part.convex_hull.area - part.area > tolerance
-        for part in parts
-    ):
-        raise GeometryError(source, "Double-cut decomposition did not produce convex, hole-free faces.")
-    union = shapely.union_all(parts)
-    if (
-        union.symmetric_difference(source).area > tolerance
-        or abs(sum(part.area for part in parts) - union.area) > tolerance
-    ):
-        raise GeometryError(source, "Double-cut decomposition lost area or produced overlapping faces.")
+def convexify_shape(boundary: shapely.Geometry, holes: list[shapely.Geometry] | None = None):
+    """Convert a planar shape to coordinate arrays and return convex shapes and cuts."""
+    if holes is None:
+        holes = list(shapely.get_rings(boundary))[1:] if shapely.get_dimensions(boundary) == 2 else []
+    shell = shapely.get_exterior_ring(boundary) if shapely.get_dimensions(boundary) == 2 else boundary
+    boundary = shapely.polygons(
+        shapely.get_coordinates(shapely.force_3d(shell, z=0), include_z=True)
+    )
+    projection = Projection.fromPolygon(boundary)
+    boundary = projection.toUV(boundary)
+    boundary = simplify(boundary, include_z=True)
+    coordinates = shapely.get_coordinates(
+        shapely.force_3d(boundary, z=0), include_z=True
+    )[:-1]
 
+    projected_holes = [projection.toUV(hole) for hole in holes]
+    hole_coordinates = [
+        shapely.get_coordinates(shapely.force_3d(hole, z=0), include_z=True)[:-1]
+        for hole in projected_holes
+    ]
 
-def _cut_hole(polygon):
-    """Open one hole with two disjoint visible vertex-to-vertex connectors."""
-    shell = np.asarray(polygon.exterior.coords)[:-1, :2]
-    hole = np.asarray(polygon.interiors[0].coords)[:-1, :2]
-    distances = np.linalg.norm(shell[:, None] - hole[None, :], axis=2)
-    boundary = polygon.boundary
-    first = None
-    for flat_index in np.argsort(distances, axis=None, kind="stable"):
-        shell_index, hole_index = np.unravel_index(flat_index, distances.shape)
-        endpoints = [shell[shell_index], hole[hole_index]]
-        line = shapely.LineString(endpoints)
-        if line.length == 0 or not polygon.covers(line):
-            continue
-        # A visible connector touches the boundary only at its two endpoints.
-        if not boundary.intersection(line).equals(shapely.MultiPoint(endpoints)):
-            continue
-        if first is None:
-            first = line
-            continue
-        if first.intersects(line):
-            continue
-        network = shapely.union_all([boundary, first, line])
-        cells = [
-            cell for cell in shapely.get_parts(
-                shapely.polygonize(shapely.get_parts(network))
-            )
-            if polygon.covers(cell.representative_point())
-        ]
-        if len(cells) != 2:
-            continue
-        if sum(len(cell.interiors) for cell in cells) != len(polygon.interiors) - 1:
-            continue
-        _validate_partition(cells, polygon)
-        return cells
-    raise GeometryError(polygon, "No valid pair of double-cut hole connectors found.")
+    convex_faces, divided_lines = GeometryConvexifier.convexify_faces_2d(
+        [coordinates],
+        [hole_coordinates],
+        is_quad_clean=False,
+    )
+    convex_faces = [shapely.polygons(convex_face) for convex_face in convex_faces]
+    convex_faces = [projection.toWorld(convex_face) for convex_face in convex_faces]
+    divided_lines = [projection.toWorld(shapely.linestrings(line)) for line in divided_lines]
+    return convex_faces, divided_lines
 
 
 def _convex_parts_with_holes(face, holes):
@@ -77,10 +57,10 @@ def _convex_parts_with_holes(face, holes):
     while pending:
         piece = pending.pop()
         if piece.interiors:
-            pending.extend(_cut_hole(piece))
+            pending.extend(polygon_ops.cut_hole(piece))
         else:
             simple.append(piece)
-    _validate_partition(simple, polygon)
+    polygon_ops._validate_partition(simple, polygon)
 
     pieces = []
     for piece in simple:
@@ -89,9 +69,9 @@ def _convex_parts_with_holes(face, holes):
         )
         faces, _ = GeometryOperator.split_poly(vertices, list(range(len(vertices))))
         subparts = [shapely.Polygon(vertices[indices]) for indices in faces]
-        _validate_partition(subparts, piece, convex=True)
+        polygon_ops._validate_partition(subparts, piece, convex=True)
         pieces.extend(subparts)
-    _validate_partition(pieces, polygon, convex=True)
+    polygon_ops._validate_partition(pieces, polygon, convex=True)
     z_value = float(np.mean(face[:, 2])) if face.shape[1] > 2 else 0.0
     result = []
     for piece in pieces:
@@ -115,11 +95,11 @@ def convexify_faces(cat, idd, normal, faces, holes, valid_face=True, clean_quad=
                 for i in range(len(holes[idx])):
                     holes[idx][i] = GeometryOperator.reorder_vertices(holes[idx][i], is_upward=False)
 
-    print("--Faces reordering done--")
+    print("CONVEXIFY: Faces reordering done")
 
     for idx, face in enumerate(faces):
         if valid_face and not GeometryValidator._is_valid_face(face):
-            print(f"    Skipping invalid face {idd[idx]}")
+            print(f"******Warning: CONVEXIFY: Skipping invalid face {idd[idx]}")
             continue
 
         if np.abs(normal[idx][2]) > 1e-3:
@@ -147,13 +127,13 @@ def convexify_faces(cat, idd, normal, faces, holes, valid_face=True, clean_quad=
                     candidate_face = verts[poly]
 
                     if valid_face and not GeometryValidator._is_valid_face(candidate_face):
-                        print(f"    Skipping invalid sub-face in face {idd[idx]}")
+                        print(f"******Warning: CONVEXIFY: Skipping invalid sub-face in face {idd[idx]}")
                         continue
 
                     if clean_quad and len(poly) > 4:
                         quad_poly = GeometryOperator.compute_max_inscribed_quadrilateral(candidate_face)
                         if valid_face and not GeometryValidator._is_valid_face(quad_poly):
-                            print(f"    Skipping invalid quadrilateral sub-face in face {idd[idx]}")
+                            print(f"******Warning: CONVEXIFY: Skipping invalid quadrilateral sub-face in face {idd[idx]}")
                             continue
                         candidate_face = np.array(quad_poly)
 
@@ -181,7 +161,7 @@ def convexify_faces(cat, idd, normal, faces, holes, valid_face=True, clean_quad=
             convex_normal.append(normal[idx])
             convex_faces.append(face)
 
-    print("--Faces splitting done--")
+    print("CONVEXIFY: Faces splitting done")
 
     return convex_cat, convex_idd, convex_normal, convex_faces, divide_lines
 

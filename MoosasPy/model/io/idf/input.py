@@ -5,7 +5,7 @@ from eppy.modeleditor import IDF
 
 from .construction import Construction
 from .model import *
-from ....transform.geometry.triangulation import triangulate2dFace
+from ....transform.geometry.convexify import convexify_shape
 from ....transform.geometry.element import MoosasSpace, MoosasElement
 from ....transform.geometry.geos import ccwNormal, Vector, offset, trim, projectTo
 from ....utils import shapely, path
@@ -185,7 +185,7 @@ def createWindowSurface(idf: IDF, element: MoosasElement, parentElement: MoosasE
         return []
 
     # split the face into 4 coordinates
-    triFaces, _ = triangulate2dFace(face)
+    triFaces, _ = convexify_shape(face)
     for idx, triFace in enumerate(triFaces):
 
         # offset the window considering the splitter

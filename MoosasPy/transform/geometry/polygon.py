@@ -4,7 +4,61 @@ Geometry utilities for convexification and simplification in Moosas.
 
 from typing import List, Tuple, Union
 
-from ...utils import np, shapely
+from ...utils import GeometryError, np, shapely
+
+
+def _validate_partition(parts, source, *, convex=False):
+    tolerance = max(1e-8, source.area * 1e-9)
+    if not parts or any(not part.is_valid or part.area <= 0 for part in parts):
+        raise GeometryError(source, "Double-cut decomposition produced an invalid partition.")
+    if convex and any(
+        part.interiors or part.convex_hull.area - part.area > tolerance
+        for part in parts
+    ):
+        raise GeometryError(source, "Double-cut decomposition did not produce convex, hole-free faces.")
+    union = shapely.union_all(parts)
+    if (
+        union.symmetric_difference(source).area > tolerance
+        or abs(sum(part.area for part in parts) - union.area) > tolerance
+    ):
+        raise GeometryError(source, "Double-cut decomposition lost area or produced overlapping faces.")
+
+
+def cut_hole(polygon):
+    """Open one hole with two disjoint visible vertex-to-vertex connectors."""
+    shell = np.asarray(polygon.exterior.coords)[:-1, :2]
+    hole = np.asarray(polygon.interiors[0].coords)[:-1, :2]
+    distances = np.linalg.norm(shell[:, None] - hole[None, :], axis=2)
+    boundary = polygon.boundary
+    first = None
+    for flat_index in np.argsort(distances, axis=None, kind="stable"):
+        shell_index, hole_index = np.unravel_index(flat_index, distances.shape)
+        endpoints = [shell[shell_index], hole[hole_index]]
+        line = shapely.LineString(endpoints)
+        if line.length == 0 or not polygon.covers(line):
+            continue
+        # A visible connector touches the boundary only at its two endpoints.
+        if not boundary.intersection(line).equals(shapely.MultiPoint(endpoints)):
+            continue
+        if first is None:
+            first = line
+            continue
+        if first.intersects(line):
+            continue
+        network = shapely.union_all([boundary, first, line])
+        cells = [
+            cell for cell in shapely.get_parts(
+                shapely.polygonize(shapely.get_parts(network))
+            )
+            if polygon.covers(cell.representative_point())
+        ]
+        if len(cells) != 2:
+            continue
+        if sum(len(cell.interiors) for cell in cells) != len(polygon.interiors) - 1:
+            continue
+        _validate_partition(cells, polygon)
+        return cells
+    raise GeometryError(polygon, "No valid pair of double-cut hole connectors found.")
 
 
 def planar_surface(geometry):
@@ -45,11 +99,6 @@ class GeometryBasic:
         angle_rad = np.arccos(np.clip(dot / (np.linalg.norm(v1) * np.linalg.norm(v2)), -1.0, 1.0))
         angle_deg = np.degrees(angle_rad)
         return angle_deg if cross[2] > 0 else -angle_deg
-
-    @staticmethod
-    def get_angle_tan(p1, p2, verts_all):
-        vec = verts_all[p2] - verts_all[p1]
-        return np.arctan2(vec[1], vec[0])
 
     @staticmethod
     def polygon_area_2d(vertices):
@@ -283,112 +332,6 @@ class GeometryOperator:
                     return True
 
         return False
-
-    @staticmethod
-    def merge_holes(verts_poly: np.ndarray, verts_holes: dict[int, np.ndarray]) -> np.ndarray:
-        if verts_holes is None or len(verts_holes) == 0:
-            return verts_poly, []
-
-        n_poly = len(verts_poly)
-        indices_poly = list(range(n_poly))
-        indices_holes = {}
-        verts_all = verts_poly.copy()
-
-        offset = n_poly
-        for hole_id, verts_hole in verts_holes.items():
-            n_hole = len(verts_hole)
-            indices_holes[hole_id] = list(range(offset, offset + n_hole))
-            verts_all = np.concatenate((verts_all, verts_hole))
-            offset += n_hole
-
-        best_diagonals = {}
-
-        for hole_id, indices_hole in indices_holes.items():
-            verts_hole = verts_holes[hole_id]
-            n_hole = len(indices_hole)
-            min_diagonal_length = float("inf")
-            min_diagonal = None
-
-            for hole_idx, hole_vert_idx in enumerate(indices_hole):
-                hole_vertex = verts_hole[hole_idx]
-                for poly_idx, poly_vertex_idx in enumerate(indices_poly):
-                    poly_vertex = verts_poly[poly_idx]
-                    okay = True
-
-                    for poly_edge in range(n_poly):
-                        poly_a = verts_poly[poly_edge]
-                        poly_b = verts_poly[(poly_edge + 1) % n_poly]
-                        if poly_idx in (poly_edge, (poly_edge + 1) % n_poly):
-                            continue
-                        if GeometryValidator._is_intersect(poly_vertex, hole_vertex, poly_a, poly_b):
-                            okay = False
-                            break
-
-                    if not okay:
-                        continue
-
-                    for hole_edge in range(n_hole):
-                        hole_a = verts_hole[hole_edge]
-                        hole_b = verts_hole[(hole_edge + 1) % n_hole]
-                        if hole_idx in (hole_edge, (hole_edge + 1) % n_hole):
-                            continue
-                        if GeometryValidator._is_intersect(poly_vertex, hole_vertex, hole_a, hole_b):
-                            okay = False
-                            break
-
-                    if not okay:
-                        continue
-
-                    for other_id, other_indices in indices_holes.items():
-                        if other_id == hole_id:
-                            continue
-                        other_verts = verts_holes[other_id]
-                        for edge in range(len(other_verts)):
-                            a = other_verts[edge]
-                            b = other_verts[(edge + 1) % len(other_verts)]
-                            if GeometryValidator._is_intersect(poly_vertex, hole_vertex, a, b):
-                                okay = False
-                                break
-                        if not okay:
-                            break
-
-                    if okay:
-                        diagonal_length = np.linalg.norm(poly_vertex - hole_vertex)
-                        if diagonal_length < min_diagonal_length:
-                            min_diagonal_length = diagonal_length
-                            min_diagonal = (poly_vertex_idx, hole_vert_idx)
-
-            if min_diagonal is not None:
-                best_diagonals[hole_id] = min_diagonal
-
-        diagonals = list(best_diagonals.values())
-        diagonals = sorted(diagonals, key=lambda x: (x[0], -GeometryBasic.get_angle_tan(x[0], x[1], verts_all)))
-
-        verts = []
-        for idx in indices_poly:
-            verts.append(verts_all[idx])
-
-            for diagonal in diagonals:
-                if diagonal[0] != idx:
-                    continue
-
-                hole_vertex = diagonal[1]
-                target_hole_indices = None
-                for hole_id, hole_indices in indices_holes.items():
-                    if hole_vertex in hole_indices:
-                        target_hole_indices = hole_indices
-                        break
-
-                if target_hole_indices:
-                    start_idx = target_hole_indices.index(hole_vertex)
-                    n_hole = len(target_hole_indices)
-                    for i in range(n_hole + 1):
-                        current_idx = target_hole_indices[(start_idx + i) % n_hole]
-                        verts.append(verts_all[current_idx])
-                    verts.append(verts_all[idx])
-
-        mergelines = [np.array([verts_all[pair[0]], verts_all[pair[1]]]) for pair in diagonals]
-        return np.array(verts), mergelines
 
     @staticmethod
     def split_poly(verts: np.ndarray, indices: np.ndarray) -> Union[List[np.ndarray], List[Tuple[int, int]]]:

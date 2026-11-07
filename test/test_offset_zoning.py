@@ -16,7 +16,7 @@ from MoosasPy.transform.geometry.core import (
     offset_partitions,
     validate_partition_lines,
 )
-from MoosasPy.transform.geometry.convexify import _validate_partition
+from MoosasPy.transform.geometry.polygon import _validate_partition
 from MoosasPy.utils import GeometryError
 from MoosasPy.utils.constant import geom
 

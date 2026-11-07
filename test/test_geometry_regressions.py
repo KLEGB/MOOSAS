@@ -27,7 +27,7 @@ from MoosasPy.transform.geometry.grid import MoosasGrid
 from MoosasPy.transform.geometry.planar_graph import TopoNetwork
 from MoosasPy.transform.geometry.planar_graph import TopoEdge
 from MoosasPy.transform.geometry.polygon import GeometryOperator, GeometryValidator
-from MoosasPy.transform.geometry.contour import _merge_tiny_partitions, closed_contour_calculation
+from MoosasPy.transform.geometry.contour import _merge_tiny_partitions
 from MoosasPy.transform.stages.convexification import convexify_model
 from MoosasPy.transform.stages.classification import classify_model
 from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_model
@@ -90,13 +90,13 @@ def test_projection_round_trip_preserves_polygon_holes():
 
 
 @pytest.mark.parametrize('explicit_holes', [False, True])
-def test_triangulation_keeps_intrinsic_holes_without_duplicate_rings(explicit_holes):
-    from MoosasPy.transform.geometry.triangulation import triangulate2dFace
+def test_convexify_shape_keeps_intrinsic_holes_without_duplicate_rings(explicit_holes):
+    from MoosasPy.transform.geometry.convexify import convexify_shape
     polygon = shapely.Polygon(
         [(0, 0), (4, 0), (4, 4), (0, 4)],
         holes=[[(1, 1), (2, 1), (2, 2), (1, 2)]],
     )
-    parts, _ = triangulate2dFace(polygon, [polygon.interiors[0]] if explicit_holes else None)
+    parts, _ = convexify_shape(polygon, [polygon.interiors[0]] if explicit_holes else None)
     union = shapely.union_all(parts)
     assert union.symmetric_difference(polygon).area < 1e-8
     assert sum(part.area for part in parts) == pytest.approx(15)
@@ -364,24 +364,6 @@ def test_convex_partition_is_translation_independent(offset, points):
     assert sorted(part.area for part in translated) == pytest.approx(sorted(part.area for part in reference))
 
 
-@pytest.mark.parametrize("offset", [(0, 0, 0), (10000, 10000, 3)])
-def test_hole_bridges_do_not_cross_polygon_or_holes(offset):
-    outer = np.array([(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 0)]) + offset
-    holes = {
-        0: np.array([(2, 2, 0), (2, 4, 0), (4, 4, 0), (4, 2, 0)]) + offset,
-        1: np.array([(6, 6, 0), (6, 8, 0), (8, 8, 0), (8, 6, 0)]) + offset,
-    }
-    merged, bridges = GeometryOperator.merge_holes(outer, holes)
-    polygon = shapely.Polygon(outer[:, :2])
-
-    assert len(bridges) == 2
-    assert shapely.Polygon(merged[:, :2]).area == pytest.approx(92)
-    for bridge in bridges:
-        line = shapely.LineString(bridge[:, :2])
-        assert polygon.covers(line)
-        assert all(line.intersection(shapely.Polygon(hole[:, :2])).length == 0 for hole in holes.values())
-
-
 @pytest.mark.parametrize("axis_z,axis_x", [
     ((0, 0, 1), (1, 0, 0)),
     ((0, 0, -1), (1, 0, 0)),
@@ -628,54 +610,6 @@ def test_topology_node_keys_normalize_signed_zero():
     topology_edge = TopoEdge(0, edge)
 
     assert topology_edge.fromPStr == "0.0_0.0"
-
-
-@pytest.mark.parametrize(
-    "segments, expected_areas",
-    [
-        (
-            [
-                ((0, 0), (2, 0)), ((2, 0), (4, 0)),
-                ((4, 0), (4, 2)), ((4, 2), (2, 2)),
-                ((2, 2), (0, 2)), ((0, 2), (0, 0)),
-                ((2, 0), (2, 2)), ((4, 2), (5, 3)),
-                ((6, 0), (7, 0)), ((7, 0), (7, 1)),
-                ((7, 1), (6, 1)), ((6, 1), (6, 0)),
-            ],
-            [1, 4, 4],
-        ),
-        (
-            [
-                ((0, 0), (4, 0)), ((4, 0), (4, 4)),
-                ((4, 4), (0, 4)), ((0, 4), (0, 0)),
-                ((1, 1), (2, 1)), ((2, 1), (2, 2)),
-                ((2, 2), (1, 2)), ((1, 2), (1, 1)),
-            ],
-            [1, 16],
-        ),
-    ],
-)
-def test_closed_contours_polygonize_without_outer_boundary_walk(monkeypatch, segments, expected_areas):
-    model = MoosasModel()
-    model.levelList = [0.0, 3.0]
-    model.wallList = [
-        MoosasWall.fromProjection(shapely.LineString(segment), 0, 3, model)
-        for segment in segments
-    ]
-
-    def unexpected_outer_boundary(_network):
-        raise AssertionError("CCR should not traverse discarded outer boundaries")
-
-    monkeypatch.setattr(TopoNetwork, "outerBoundary", unexpected_outer_boundary)
-    closed_contour_calculation(model, 0.0)
-
-    areas = [
-        sum(polygon.area for polygon in shapely.get_parts(
-            shapely.polygonize([wall.force_2d() for wall in boundary])
-        ))
-        for boundary in model.boundaryList
-    ]
-    assert sorted(areas) == pytest.approx(expected_areas)
 
 
 def test_low_enclosed_space_is_void():

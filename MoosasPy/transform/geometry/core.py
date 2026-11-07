@@ -7,7 +7,8 @@ from shapely.geometry.polygon import orient
 
 from ...utils import GeometryError, np, shapely
 from ...utils.constant import geom
-from .convexify import _validate_partition, _convex_parts_with_holes
+from .convexify import _convex_parts_with_holes
+from .polygon import _validate_partition
 
 
 _GRID = 1e-9

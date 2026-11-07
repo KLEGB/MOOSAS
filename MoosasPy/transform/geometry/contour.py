@@ -3,258 +3,15 @@ from __future__ import annotations
 
 from .geos import *
 from .element import MoosasEdge, MoosasWall, MoosasGlazing, MoosasContainer
-from .triangulation import triangulate2dFace
+from .convexify import convexify_shape
 from .core import offset_partitions, validate_partition_lines
 from ...utils import searchBy, shapely, np, TopologyError, mixItemListToList
 from ...utils.constant import geom
 from .planar_graph import TopoNode, TopoBound, TopoEdge, TopoNetwork
 
 
-def _findPathDepth(node: TopoNode, exitPoint: list[TopoNode],
-                   avoidPoint: list[TopoNode] = None, avoidEdge: list[TopoBound] = None,
-                   max_depth=geom.PATH_MAX_DEPTH) -> list[TopoNode]:
-    """
-    Recursive Depth-first search to find a valid path from node to exit points.
-    
-    Parameters
-    ----------
-    node : TopoNode
-        The starting node for the search.
-    exitPoint : list of TopoNode
-        List of target exit nodes to reach.
-    avoidPoint : list of TopoNode, optional
-        Nodes to exclude from the search (default is None, treated as empty list).
-    avoidEdge : list of TopoBound, optional
-        Edges to avoid traversing; if a connection between two nodes lies on one of these edges, it will be skipped (default is None, treated as empty list).
-    max_depth : int, default=geom.PATH_MAX_DEPTH
-        Maximum recursion depth allowed to prevent infinite traversal.
-    
-    Returns
-    -------
-    list of TopoNode
-        A list of nodes representing the path from the input node to an exit point, including both ends. Returns empty list if no path is found.
-    """
-    """Recursive Depth-first search method to find a valid connection from the target node to the exit point(s)
-    -----------------------------------------------
-    node: searching node
-    exitPoint: exit nodes
-    avoidPoint: nodes that would not be searched
-    avoidEdge: segments would not be targeted as neighborhood
-    max_depth: early exit of the loop
-
-    return: list[TopoNode]
-    """
-    if avoidPoint is None: avoidPoint = []
-    if node in exitPoint: return [node]
-    if max_depth == 0:
-        raise TopologyError(_findPathDepth, "meet maximum recursion depth")
-
-    for nei in [chilNode for chilNode in node.neighbor if chilNode not in avoidPoint]:
-        avoid = False
-        for edge in avoidEdge:
-            if node in edge.nodeLoop:
-                if nei in edge.nodeLoop:
-                    if abs(edge.nodeLoop.index(node) - edge.nodeLoop.index(nei)) == 1:
-                        avoid = True
-                        break
-        if not avoid:
-            path = _findPathDepth(nei, exitPoint, avoidPoint + [node], avoidEdge, max_depth - 1)
-            if len(path) > 0:
-                path.append(node)
-                return path
-    return []
-
-
-def _divideBoundaryByNode(boundaries: list[TopoBound], nodeList: list[TopoNode]) -> list[TopoBound]:
-    """
-    Recursively divide boundaries by internal nodes to decompose complex regions into simpler ones.
-    
-    Parameters
-    ----------
-    boundaries : list of TopoBound
-        List of boundary objects to be subdivided. Each boundary represents a closed loop of nodes.
-    nodeList : list of TopoNode
-        List of nodes not yet assigned to any boundary. These nodes are candidates for splitting existing boundaries.
-    
-    Returns
-    -------
-    list of TopoBound
-        A list of simplified, non-overlapping boundary objects resulting from recursive subdivision by internal nodes.
-    """
-    """recursively divide the boundary(s) by some nodes inside the boundary(s)
-    1. build a sub set of the eligible nodes that are not coveredBy by the boundaries
-    2. for each boundary:
-        2.1 judge whether the boundary is a minimum boundary: do not have other nodes inside it
-        2.2 if the boundary is not minimum: depth-first search a path to the boundary from target node
-        2.3 divide the boundary by the path
-        2.4 check self intersection and put the boundary in the new set
-    3. call _divideBoundaryByNode until len(eligible) == 0
-
-    -----------------------------------------------
-    boundaries: target list of boundary(s)
-    nodeList: nodes that do not belong to any boundary. you can give network.nodes in the first time
-
-    return: list[boundary]
-    """
-
-    """1. build a sub set of the network's nodes to accelerate the transverse"""
-    netNodeSet = {node for node in nodeList}
-
-    for bound in boundaries:
-        netNodeSet = netNodeSet.difference({node for node in bound.nodeLoop})
-    nodeList: list[TopoNode] = list(netNodeSet)
-
-    if len(nodeList) > 0:
-        nodeListLen = len(nodeList)
-        boundarySplit: list[TopoBound] = []
-
-        for bound in boundaries:
-            # if len(bound.nodeLoop) < 4:
-            #     boundarySplit.append(bound)
-            # else:
-            inside_node = None
-            """2.1 judge whether the boundary is a minimum boundary: do not have other nodes inside it"""
-            for node in nodeList:
-                if shapely.contains_properly(bound.geometry, node.location):
-                    inside_node = node
-                    nodeList.remove(node)
-                    break
-
-            """2.2 if the boundary is not minimum: depth-first search a path to the boundary from target node"""
-            if inside_node is None:
-                boundarySplit.append(bound)  # exit and find next boundary
-            else:
-                try:
-
-                    path1 = _findPathDepth(inside_node, bound.nodeLoop, [inside_node])
-                    path2 = _findPathDepth(inside_node, bound.nodeLoop, path1)
-
-                    if len(path2) == 0:
-                        # there are inner rings in the loop. find a path to the path1 except for the first and second node
-                        path2 = _findPathDepth(inside_node, path1[:-1], path1[-2:])
-                        # two paths repeat on the start node!
-                        innerRing = TopoBound(list(np.append(path1, np.flip(path2[:-1]))))
-                        boundarySplit.append(innerRing)
-                        boundarySplit.append(bound)
-                    else:
-                        # two paths repeat on the start node!
-                        pathSplit = TopoBound(list(np.append(path1, np.flip(path2[:-1]))))
-                        # also check the self intersect of the split path
-                        validPath = TopoBound.selfIntersect(pathSplit)
-
-                        for path in validPath[:-1]:
-                            # the inner rings within the pathSplit
-                            boundarySplit.append(path)
-                        """2.3 divide the boundary by the path"""
-                        bound1, bound2 = TopoBound.split(bound, validPath[-1])
-
-                        """2.4 check self intersection and put the boundary in the new set"""
-                        boundarySplit += TopoBound.selfIntersect(bound1)
-                        boundarySplit += TopoBound.selfIntersect(bound2)
-                except TopologyError as e:
-                    # print(inside_node,inside_node.neighbor)
-                    # print(path1,path2,bound)
-                    # failed to find path due to low topology quality
-                    print(f"******Warning: {e}")
-                    boundarySplit.append(bound)
-
-        if nodeListLen != len(nodeList):
-            boundaries = _divideBoundaryByNode(boundarySplit, nodeList)
-        else:
-            boundaries = boundarySplit
-    return boundaries
-
-
-def _divideBoundaryByEdge(boundaries: list[TopoBound], edgeList: list[TopoBound] | list[TopoEdge]) -> list[TopoBound]:
-    """
-    Recursively divide boundary polygons using internal edges.
-    
-    Parameters
-    ----------
-    boundaries : list of TopoBound
-        List of boundary objects to be subdivided. Each boundary represents a polygonal region.
-    edgeList : list of TopoBound or list of TopoEdge
-        List of edges that may lie inside the boundaries and are used for subdivision. 
-        These edges are not part of any existing boundary. If TopoEdge objects are provided, 
-        they are converted internally to TopoBound objects.
-    
-    Returns
-    -------
-    list of TopoBound
-        A list of refined boundary objects resulting from recursive subdivision by eligible edges.
-    """
-    """recursively divide the boundary(s) by some edges inside the boundary(s)
-    1. build a sub set of the eligible edges that are not coveredBy by the boundaries
-    2. for each boundary:
-        2.1 judge whether the boundary is a minimum boundary: do not have other edges inside it
-        2.2 if the boundary is not minimum: divide the boundary by the edge
-            2.2.1 if both points of the edge are on the boundary: directly divide it
-            2.2.2 if one point not on the boundary: there is an inner ring inside the boundary
-                2.2.2.1 try to find another eligible edge on the two boundaries
-                2.2.2.2 if true: divide the outer ring with the inner ring and two edges
-                2.2.2.3 if not: dump the edge
-    3. call _divideBoundaryByEdge until len(eligible) == 0
-    -----------------------------------------------
-    boundaries: target list of boundary(s)
-    edgeList: nodes that do not belong to any boundary. you can give network.nodes in the first time
-
-    return: list[boundary]
-    """
-
-    """1. build a sub set of the eligible edges that are not coveredBy by the boundaries"""
-    delLine = []
-    for i, line in enumerate(edgeList):
-        if isinstance(line, TopoEdge):
-            edgeList[i] = TopoBound.fromTopoEdge(line)
-            line = edgeList[i]
-        for bound in boundaries:
-            if line.coveredBy(bound):
-                delLine.append(i)
-                break
-    edgeList: list[TopoBound] = list(np.delete(edgeList, delLine))
-
-    if len(edgeList) > 0:
-        edgeListLen = len(edgeList)
-        boundSplit = []
-
-        """2.1 judge whether the boundary is a minimum boundary: do not have other edges inside it"""
-        for bound in boundaries:
-            targetBound = None
-            for edgeBound in edgeList:
-                if edgeBound.connect(bound):
-                    targetBound = edgeBound
-                    edgeList.remove(edgeBound)
-                    break
-
-            if targetBound is None:
-                boundSplit.append(bound)
-            else:
-                """2.2 if the boundary is not minimum: divide the boundary by the edge"""
-                if targetBound.nodeLoop[0] in bound.nodeLoop and targetBound.nodeLoop[1] in bound.nodeLoop:
-                    """2.2.1 if both points of the edge are on the boundary: directly divide it"""
-                    boundSplit += TopoBound.split(bound, targetBound)
-                else:
-                    """2.2.2 if one point not on the boundary: there is an inner ring inside the boundary"""
-                    """2.2.2.1 try to find another eligible edge on the two boundaries"""
-                    """2.2.2.2 if true: divide the outer ring with the inner ring and two edges"""
-                    """2.2.2.3 if not: dump the edge"""
-                    boundSplit += TopoBound.split(bound, targetBound)
-
-        """3. call _divideBoundaryByEdge until len(eligible) == 0"""
-        if edgeListLen != len(edgeList):
-            boundaries = _divideBoundaryByEdge(boundSplit, edgeList)
-        else:
-            boundaries = boundSplit
-    return boundaries
-
-
 def _unique_boundaries(boundaries):
-    """Record each closed region once, regardless of loop start/direction.
-
-    Keeping a parent after a failed split can rediscover the same inner ring
-    through several of its edges. Those discoveries must not create duplicate
-    spaces or repeat work in the recursive subdivision.
-    """
+    """Record each closed region once, regardless of loop start/direction."""
     unique = []
     for boundary in boundaries:
         geometry = boundary.geometry
@@ -263,129 +20,6 @@ def _unique_boundaries(boundaries):
         if not any(shapely.equals(geometry, kept.geometry) for kept in unique):
             unique.append(boundary)
     return unique
-
-
-def _divideBoundary(boundaries: list[TopoBound], edgeList: list[TopoBound] | list[TopoEdge]) -> list[TopoBound]:
-    """
-    Recursively divide boundaries using internal edges to decompose complex regions into minimal boundaries.
-    
-    Parameters
-    ----------
-    boundaries : list[TopoBound]
-        List of boundary objects to be subdivided. Each boundary is expected to define a closed loop.
-    edgeList : list[TopoBound] or list[TopoEdge]
-        List of edge-like objects (either `TopoBound` or `TopoEdge`) that may lie inside the boundaries and are used for splitting.
-        These edges are typically not yet part of any boundary and represent internal connections or potential splits.
-    
-    Returns
-    -------
-    list[TopoBound]
-        A list of decomposed boundary objects resulting from recursive subdivision. 
-        The output contains only minimal boundaries (i.e., those without any internal edges) and any newly detected inner rings.
-    """
-    """recursively divide the boundary(s) by some edges inside the boundary(s)
-    1. build a sub set of the eligible edges that are not coveredBy by the boundaries
-    2. for each boundary:
-        2.1 judge whether the boundary is a minimum boundary: do not have other edges inside it
-        2.2 if the boundary is not minimum: depth-first search a path to the boundary from the two nodes
-        2.3 check path self-intersection:
-            2.3.1 if one of the path in None:
-                2.3.1.1 means the None nodes have an inner ring. find it and add if the ring is not exist in the boundaries
-                2.3.1.2 dump this invalid edge
-            2.3.2 add the inner ring inside the split path if the ring is not exist in the boundaries
-        2.4 divide the boundary by the path
-        2.5 check self intersection and put the boundary in the new set
-    3. call _divideBoundaryByEdge until len(eligible) == 0
-    -----------------------------------------------
-    boundaries: target list of boundary(s)
-    edgeList: nodes that do not belong to any boundary. you can give network.nodes in the first time
-
-    return: list[boundary]
-    """
-
-    """1. build a sub set of the eligible edges that are not coveredBy by the boundaries"""
-    boundaries = _unique_boundaries(boundaries)
-    delLine = []
-    for i, line in enumerate(edgeList):
-        if isinstance(line, TopoEdge):
-            edgeList[i] = TopoBound.fromTopoEdge(line)
-            line = edgeList[i]
-        for bound in boundaries:
-            if line.coveredBy(bound):
-                delLine.append(i)
-                break
-    edgeList: list[TopoBound] = list(np.delete(edgeList, delLine))
-    if len(edgeList) > 0:
-        edgeListLen = len(edgeList)
-        boundSplit = []
-
-        """2.1 judge whether the boundary is a minimum boundary: do not have other edges inside it"""
-        for bound in boundaries:
-            targetEdge = None
-            for edgeBound in edgeList:
-                midPoint = shapely.points(np.average(shapely.get_coordinates(edgeBound.geometry),axis=0))
-                if shapely.contains(bound.geometry,midPoint):
-                    targetEdge = edgeBound
-                    edgeList.remove(edgeBound)
-                    break
-
-            if targetEdge is None:
-                boundSplit.append(bound)
-            else:
-                """2.2 if the boundary is not minimum: depth-first search a path to the boundary from the two nodes"""
-                try:
-
-                    path1 = _findPathDepth(targetEdge.nodeLoop[0], bound.nodeLoop, avoidEdge=[targetEdge])
-                    path2 = _findPathDepth(targetEdge.nodeLoop[1], bound.nodeLoop, avoidPoint=path1,
-                                           avoidEdge=[targetEdge])
-
-                    """2.3.1 if one of the path in None:"""
-                    if len(path1) * len(path2) == 0:
-                        # No two-sided cut: the original enclosure still exists.
-                        boundSplit.append(bound)
-                        """2.3.1.1 means there is an inner ring. 
-                        find it and add if the ring is not exist in the boundaries
-                        There are two possibilities:
-                        1) the inner ring contain the targetEdge. find a path from the start to the end.
-                        2) the inner ring out of the targetEdge. Just dump the targetEdge, next loop will find it.
-                        """
-                        innerRing = _findPathDepth(targetEdge.nodeLoop[0], [targetEdge.nodeLoop[1]],
-                                                   avoidEdge=[targetEdge])
-                        if len(innerRing) > 0:
-                            innerRing = np.append(innerRing,[targetEdge.nodeLoop[1]])
-                            ring = TopoBound(innerRing)
-                            if not any(shapely.equals(ring.geometry, existing.geometry)
-                                       for existing in boundaries + boundSplit):
-                                boundSplit.append(ring)
-                    else:
-                        # connect the path
-                        pathSplit = TopoBound(np.append(path1, np.flip(path2)))
-                        # also check the self intersect of the split path
-                        """2.3.2 add the inner ring inside the split path if the ring is not exist in the boundaries"""
-                        validPath = TopoBound.selfIntersect(pathSplit)
-                        for path in validPath[:-1]:
-                            # the inner rings within the pathSplit
-                            boundSplit.append(path)
-                        """2.3 divide the boundary by the path"""
-                        bound1, bound2 = TopoBound.split(bound, validPath[-1])
-
-                        """2.4 check self intersection and put the boundary in the new set"""
-                        boundSplit += TopoBound.selfIntersect(bound1)
-                        boundSplit += TopoBound.selfIntersect(bound2)
-                except TopologyError as e:
-                    # print(inside_node,inside_node.neighbor)
-                    # print(path1,path2,bound)
-                    # failed to find path due to low topology quality
-                    print(f"******Warning: {e}")
-                    boundSplit.append(bound)
-
-        """3. call _divideBoundaryByEdge until len(eligible) == 0"""
-        boundSplit = _unique_boundaries(boundSplit)
-        if edgeListLen != len(edgeList):
-            boundaries = _divideBoundary(boundSplit, edgeList)
-        else:
-            boundaries = boundSplit
-    return _unique_boundaries(boundaries)
 
 
 def outerBoundary(model: MoosasContainer, bld_level: float) -> list[shapely.Geometry]:
@@ -458,42 +92,15 @@ def closed_contour_calculation(model: MoosasContainer, bld_level: float) -> Moos
     MoosasContainer
         The updated model with recorded boundary information from the contour calculation.
     """
-    """calculate the closed contour in the given building level.
-    This method start with the network.inLevel method to build a network.
-    the recognized boundaries will be recorded into the MoosasModel.
-
-    ---------------------------------
-    bld_level: building level to retrieve in float
-    model: get topoEdge from this model
-
-    return: model:MoosasModel
-    """
-
-    """build the network and split it"""
     network = TopoNetwork.inLevel(bld_level, model)
     if network.edges is None or network.nodes is None:
         return model
-    # for ed in network.edges:
-    #     print(shapely.get_coordinates([ed.fromP.location,ed.toP.location]).tolist())
 
     networks = TopoNetwork.splitNetwork(network)
-    print(f'\rTOPOLOGY: in {bld_level}: Calculate outer Boundary', end='')
-    """calculate the outer boundaries (the biggest boundaries) of each network"""
-    boundaries: list[list[TopoBound]] = [network.outerBoundary() for network in networks]
-
     print(f'\rTOPOLOGY: in {bld_level}: Dividing boundary', end='')
-    boundariesNew = []
-
-    for boundGroup, network in zip(boundaries, networks):
-        """divide the boundaries by node or edges inside"""
-        boundGroup = _partition_network(network)
-        boundariesNew += boundGroup
-
-    # 2.5 展平 boundary_list，检查是否顺时针并转换为 edge。
-    print(f'\rTOPOLOGY: in {bld_level}: find {len(boundariesNew)} boundaries')
-    model = _documentBoundary(np.array(boundariesNew).flatten(), model)
-
-    return model
+    boundaries = [bound for network in networks for bound in _partition_network(network)]
+    print(f'\rTOPOLOGY: in {bld_level}: find {len(boundaries)} boundaries')
+    return _documentBoundary(boundaries, model)
 
 
 def _documentBoundary(boundaries: Iterable[TopoBound], model: MoosasContainer) -> MoosasContainer:
@@ -730,7 +337,7 @@ def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -
                     )
                     validate_partition_lines(newEdges, cuts)
                 else:
-                    newEdges, _ = triangulate2dFace(edge.force_2d(), holes)
+                    newEdges, _ = convexify_shape(edge.force_2d(), holes)
                     newEdges = _merge_tiny_partitions(newEdges)
                 if len(newEdges) > 1:
                     walls = list(np.array(model.wallList)[searchBy('level', bldLevel, model.wallList)])

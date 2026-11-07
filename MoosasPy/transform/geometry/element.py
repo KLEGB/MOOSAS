@@ -10,7 +10,7 @@ import os
 import re
 
 from .geos import Projection, Vector, faceNormal, is_ccw, simplify, overlapArea, equals, selfIntersect, makeValid, bBox
-from .triangulation import triangulate2dFace
+from .convexify import convexify_shape
 from ...utils import generate_code, searchBy, mixItemListToObject, mixItemListToList, encodeParams, GeometryError
 from ...utils import shapely, np, ET
 from ...utils.tools import path
@@ -3166,7 +3166,7 @@ class MoosasSpace(object):
         MainSpace: the main space in the building, like the living room or the hall
         privateSpace: the small space in the building, provided for a few amount of persons
         """
-        convexFaces, _ = triangulate2dFace(self.force_2d())
+        convexFaces, _ = convexify_shape(self.force_2d())
         narrowPart, mainPart = [], []
         for face in convexFaces:
             if shapely.area(face) > 9.0:
