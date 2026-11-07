@@ -99,7 +99,7 @@ class ExampleIntegrationTests(unittest.TestCase):
                 solve_redundant=True,
                 solve_overlap=True,
             )
-            model = split_wall_intersections(model, enabled=True)
+            model = split_wall_intersections(model)
             model = CCRSpaceGeneration(model)
 
         self.assertEqual(len(model.boundaryList), 70)

@@ -79,9 +79,7 @@ def split_vertical_face(model: MoosasModel, face_id) -> MoosasModel:
     return model
 
 
-def split_wall_intersections(model: MoosasModel, enabled: bool) -> MoosasModel:
-    """Split intersecting wall projections when the option is enabled."""
-    if enabled:
-        model = solveIntersectionVertical(model)
-        model = cleanseInvalidWall(model)
-    return model
+def split_wall_intersections(model: MoosasModel) -> MoosasModel:
+    """Split intersecting wall projections and remove invalid walls."""
+    model = solveIntersectionVertical(model)
+    return cleanseInvalidWall(model)

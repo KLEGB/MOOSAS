@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TransformOptions:
-    """Options shared by every stage of a geometry transformation."""
+    """Options for orchestrating a geometry transformation."""
 
     solve_duplicated: bool = True
     solve_redundant: bool = True

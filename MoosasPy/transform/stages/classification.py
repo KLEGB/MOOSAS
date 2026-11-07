@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import shapely
+import numpy as np
 
 from ...model import MoosasModel
-from ...utils import np
 from ...utils.constant import geom
 from ..geometry.convexify import convexify_shape
 from ..geometry.cleanse import cleanseDuplicatedLevel

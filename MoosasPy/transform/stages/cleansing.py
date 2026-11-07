@@ -35,7 +35,7 @@ def cleanse_model(
     if solve_redundant:
         model = cleanseCoplannerLine(model)
     if solve_duplicated:
-        model = cleanseDuplicatedWall(model)
+        model = cleanse_duplicate_walls(model)
 
     model = cleanseInvalidWall(model)
     model = cleanseInvalidFace(model)
@@ -44,6 +44,11 @@ def cleanse_model(
         model = cleanseOverlapWall(model)
         model = cleanseOverlapFace(model)
     return model, wall_counts
+
+
+def cleanse_duplicate_walls(model: MoosasModel) -> MoosasModel:
+    """Remove duplicate walls from the model."""
+    return cleanseDuplicatedWall(model)
 
 
 def attach_explicit_shading(model: MoosasModel) -> MoosasModel:

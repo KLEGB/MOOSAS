@@ -235,7 +235,7 @@ def test_wall_intersections_preserve_millimetre_junctions(origin, transpose, cro
         for first, second in [(start, end), (branch_start, branch_end)]
     ]
 
-    split_wall_intersections(model, enabled=True)
+    split_wall_intersections(model)
 
     expected = [(start, junction), (junction, end)]
     expected += [(branch_start, junction), (junction, branch_end)] if crossing else [(branch_start, branch_end)]

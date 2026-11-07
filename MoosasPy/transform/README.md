@@ -7,10 +7,14 @@ formats.
 | Module | Responsibility |
 | --- | --- |
 | `pipeline.py` | Geometry source to complete `MoosasModel` pipeline |
+| `options.py` | Configuration for the transformation pipeline |
 | `importers/` | GEO, OBJ, and STL readers |
 | `stages/` | Classification, cleanup, generation, assembly, and topology |
 | `geometry/` | Geometry types and transformation algorithms |
 | `alignment/` | Geometry-to-model alignment helpers |
+
+The pipeline decides whether to split intersecting walls and remove resulting
+duplicates; the corresponding stages perform those operations without option flags.
 
 Complete model formats are owned by `MoosasPy.model.io` and exposed through
 `MoosasModel.load()` and `model.save()`.

@@ -8,7 +8,7 @@ __all__ = [
 
 def __getattr__(name):
     if name == "TransformOptions":
-        from .stages.options import TransformOptions
+        from .options import TransformOptions
 
         return TransformOptions
     if name == "transform":

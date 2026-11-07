@@ -11,17 +11,17 @@ import sys
 import time
 
 import shapely
+import numpy as np
 
 from .stages.assembly import assemble_model
 from .stages.boundary import prepare_boundary_geometry
 from .stages.classification import classify_model
-from .stages.cleansing import attach_explicit_shading, cleanse_model
-from .geometry.cleanse import cleanseDuplicatedWall
+from .stages.cleansing import attach_explicit_shading, cleanse_duplicate_walls, cleanse_model
 from .stages.convexification import convexify_model
 from .stages.finalization import finalize_model
 from .stages.generation import CCRSpaceGeneration
 from .stages.glazing import attach_glazing_to_faces
-from .stages.options import TransformOptions
+from .options import TransformOptions
 from .stages.splitting import split_wall_intersections
 from .stages.topology import build_face_topology, build_space_topology
 from .importers.geo import _readGeo, preClassified
@@ -29,7 +29,6 @@ from .importers.obj import _readObj
 from .importers.stl import _readStl
 from ..model import MoosasModel
 from ..model.building_templates import configure_model_resources
-from ..utils import np
 
 
 def _sort_spaces(model: MoosasModel) -> MoosasModel:
@@ -45,21 +44,6 @@ def _sort_spaces(model: MoosasModel) -> MoosasModel:
 
     model.spaceList = sorted(model.spaceList, key=sort_key)
     return model
-
-
-def complete_topology(model: MoosasModel) -> MoosasModel:
-    """Attach glazing and rebuild topology for a model loaded by an I/O adapter."""
-    attached_glazing = sum(
-        len(getattr(element, "glazingElement", []))
-        for elements in (getattr(model, "wallList", []), getattr(model, "faceList", []))
-        for element in elements
-    )
-    glazing_count = len(getattr(model, "glazingList", [])) + len(getattr(model, "skylightList", []))
-    if glazing_count and attached_glazing == 0:
-        model = attach_glazing_to_faces(model)
-    model = build_space_topology(model, True)
-    return build_face_topology(model)
-
 
 def _load_geometry_source(input_path: str, input_type: str | None = None) -> MoosasModel:
     """Create the draft geometry model consumed exclusively by ``transform``."""
@@ -234,9 +218,10 @@ def structured(
             solve_redundant=options.solve_redundant,
             solve_overlap=options.solve_overlap,
         )
-        model = split_wall_intersections(model, options.break_wall_horizontal)
-        if options.solve_duplicated and options.break_wall_horizontal:
-            model = cleanseDuplicatedWall(model)
+        if options.break_wall_horizontal:
+            model = split_wall_intersections(model)
+            if options.solve_duplicated:
+                model = cleanse_duplicate_walls(model)
         if options.attach_shading:
             model = attach_explicit_shading(model)
         t2 = time.time()

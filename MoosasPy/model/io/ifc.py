@@ -903,7 +903,7 @@ def _loadIfc_via_geo_bridge(ifc_path: str | Path, ifc: Any | None = None) -> Any
     try:
         if geo_list:
             writeGeo(str(temp_geo), geoList=geo_list)
-            from ...transform.stages.options import TransformOptions
+            from ...transform.options import TransformOptions
 
             model = transform(str(temp_geo), input_type="geo", options=TransformOptions())
             if model is None:
