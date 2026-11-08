@@ -393,7 +393,10 @@ class EnergyRunner:
             def step(hour, full=False):
                 nonlocal states,maximum_residual
                 session.begin_step(request.hour(hour),states)
-                response = session.evaluate(full=full)
+                try:
+                    response = session.evaluate(full=full)
+                except ValueError as exc:
+                    raise ValueError(f'{exc}; hour_of_year={request.start_hour+hour} (zero based)') from exc
                 states = response['states']
                 maximum_residual = max(maximum_residual,response['max_abs_residual_w'])
                 session.end_step()

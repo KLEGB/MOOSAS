@@ -1,5 +1,39 @@
 # CETUS 能耗模块与热工模板
 
+## BuildingTemplate v5 import
+
+`MoosasPy.model.building_templates(path)` accepts a v5 `library.json`, a
+catalog/standard directory, or a single `BuildingTemplate` JSON. Referenced
+`moosas.schedule` v2 files are resolved relative to the standard directory;
+each referenced array must have 8760 values and matching units.
+
+```python
+from MoosasPy.model import apply_building_template
+
+apply_building_template(model, template_path="templates/CN_GB55015-2021/Office_2B.json",
+                       replace_all=True)
+request = build_energy_input(model, weather)
+```
+
+`replace_all=True` replaces previous zone/surface thermal and optical settings,
+old schedules and model parameter overrides. Geometry, IDs, categories and
+boundary assignments remain unchanged. This is a deliberately separate
+simulation scenario; its metadata records the replacement. Omitted values use
+the catalog's shared assumptions, then recorded solver defaults. The default
+application policy still preserves explicit source values for existing callers.
+
+V5 gains are density multiplied by annual usage; fresh-air availability is
+independent of occupancy. Mode availability and temperature nulls control
+heating and cooling independently, without multiplying both by the general
+HVAC schedule. `ZoneRequest` retains separate mode flags. At the CES3 v2 wire
+boundary, an inactive mode uses a finite unreachable thermostat bound (-1e6 C
+for heating, +1e6 C for cooling); these are control sentinels, never physical
+temperature results. The original nulls remain in the persisted profile.
+
+Configured Radiance scenes use visible reflectance/transmittance from element
+settings; SHGC is handled separately by the energy adapter. Fuel heating
+efficiency is not an electric COP and is rejected by this electric-energy model.
+
 本文件统一说明能耗接口、CES3 v2 二进制协议、热工模板与验收方式。
 代码及资源路径均相对于仓库根目录。
 

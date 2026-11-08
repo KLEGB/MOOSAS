@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import uuid
 
@@ -74,6 +75,28 @@ def load_schedule(model, schedule_path: str | None = None):
         raise FileNotFoundError(f"Schedule file not found: {schedule_path}")
 
     loaded = {}
+    with open(schedule_path, encoding='utf-8-sig') as source:
+        first = source.read(1)
+    if first == '{':
+        with open(schedule_path, encoding='utf-8-sig') as source:
+            document = json.load(source)
+        if document.get('schema') != 'moosas.schedule' or document.get('version') != 2:
+            raise ValueError('Expected moosas.schedule version 2')
+        import math
+        for name, item in document['schedules'].items():
+            values = item['values']
+            if len(values) != 8760:
+                raise ValueError(f'{name}: expected 8760 hourly schedule values')
+            for value in values:
+                if value is None and name.endswith(('_heating_setpoint', '_cooling_setpoint')) and item['unit'] == 'degC':
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise ValueError(f'{name}: invalid annual schedule value')
+            loaded[name] = dict(type='Hourly', value=values, unit=item['unit'])
+        model.schedule.update(loaded)
+        model.schedulePath = schedule_path
+        rebuild_schedule_index(model)
+        return model.schedule
     with open(schedule_path, "r", encoding="utf-8", errors="ignore") as schedule_file:
         for line in schedule_file:
             text = line.strip()

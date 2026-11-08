@@ -2279,9 +2279,9 @@ class MoosasEdge:
     'level': The lower elevation of the envelope, which is used to reduce the scope of floor identification
     'toplevel': The upper elevation of the envelope, which is used to reduce the ceiling identification area
     """
-    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', 'internalMass')
+    __slots__ = ('wall', 'Uid', '__botBound', '__topBound', '__explicitBoundary', 'internalMass', 'normal_diagnostic')
 
-    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None):
+    def __init__(self, walls: list[MoosasWall], boundary: shapely.Geometry | None = None, *, strict_normals=True):
         """
         Initialize a boundary object composed of walls.
         
@@ -2298,6 +2298,7 @@ class MoosasEdge:
         self.__botBound = []
         self.__topBound = []
         self.__explicitBoundary = boundary is not None
+        self.normal_diagnostic = None
         self.Uid = generate_code(4)
         # 创建底面和顶面投影多边形。
         if len(self.wall) < 3:
@@ -2308,7 +2309,20 @@ class MoosasEdge:
             # sub-grid wall segments before this boundary is installed.
             self.__botBound = shapely.force_2d(boundary)
             self.__topBound = self.__botBound
-            for wall, factor in zip(self.wall, self.FactorOfWall):
+            try:
+                factors = self.FactorOfWall
+            except GeometryError as exc:
+                if strict_normals:
+                    raise
+                # Diagnostic import only: retain source face winding and the
+                # explicit room ring. Never guess a normal or move geometry.
+                # Analysis callers must exclude the flagged room from methods
+                # requiring a consistent enclosure.
+                self.normal_diagnostic = str(exc)
+                factors = []
+                import warnings
+                warnings.warn('Room enclosure orientation unresolved; source geometry retained: '+str(exc), RuntimeWarning)
+            for wall, factor in zip(self.wall, factors):
                 wall.orientation = factor
                 for glazing in wall.glazingElement:
                     glazing.orientation = factor
@@ -2593,9 +2607,85 @@ class MoosasEdge:
                         sign = -1 if plus else 1
                         break
                 if sign is None:
+                    # A shared source wall can be a few millimetres longer or
+                    # slightly skewed relative to the supplied room ring. Its
+                    # midpoint then lies wholly inside/outside, even though a
+                    # real boundary-supported portion exists near one end.
+                    # Probe those actual wall portions under the SAME 1 mm
+                    # cap; require a unique outward side, never a centroid guess.
+                    supported = set()
+                    fractions = [.1, .25, .75, .9, .01, .99]
+                    # Shared wall faces may span several rooms. Include local
+                    # intervals delimited by the actual room-ring stations,
+                    # rather than assuming the relevant part lies at a fixed
+                    # fraction of the entire source wall.
+                    ring_points = shapely.get_coordinates(self.__botBound)
+                    stations = np.unique(np.clip((ring_points-points[ia]) @ vector / (length*length),0.,1.))
+                    for lo,hi in zip(stations[:-1],stations[1:]):
+                        if hi-lo>1e-10:
+                            fractions.extend(lo+(hi-lo)*ratio for ratio in (.1,.5,.9))
+                    for fraction in fractions:
+                        local = points[ia] + vector * fraction
+                        for step in steps:
+                            plus = shapely.contains(self.__botBound, shapely.points(local + normal * step))
+                            minus = shapely.contains(self.__botBound, shapely.points(local - normal * step))
+                            if plus != minus:
+                                supported.add(-1 if plus else 1)
+                                break
+                    # Slightly tilted panels have distinct top/bottom XY
+                    # traces. Their farthest XY pair need not pass through a
+                    # real bottom-edge anchor, so also probe the actual source
+                    # vertices and their locally adjacent wall portions.
+                    tangent = vector/length
+                    for anchor in points:
+                        for shift in (0.,epsilon,-epsilon):
+                            local=anchor+tangent*shift
+                            for step in steps:
+                                plus=shapely.contains(self.__botBound,shapely.points(local+normal*step))
+                                minus=shapely.contains(self.__botBound,shapely.points(local-normal*step))
+                                if plus != minus:
+                                    supported.add(-1 if plus else 1)
+                                    break
+                    if len(supported) == 1:
+                        sign = supported.pop()
+                    if sign is None:
+                        # Legacy RDF room rings were sometimes rounded to
+                        # centimetres while the source 3-D panel retained its
+                        # precision/tilt. Match an unambiguous parallel local
+                        # ring segment, and probe ON that authoritative ring.
+                        # No wall/ring coordinates or scoring tolerances change.
+                        ring_signs=set()
+                        maximum_offset=0.
+                        for ring in shapely.get_rings(self.__botBound):
+                            coords=shapely.get_coordinates(ring)
+                            for start,end in zip(coords[:-1],coords[1:]):
+                                delta=end-start;segment_length=float(np.linalg.norm(delta))
+                                if segment_length<1e-9:continue
+                                if abs(float(np.dot(delta/segment_length,tangent)))<.9999:continue
+                                ta,tb=sorted((float(np.dot(start-points[ia],tangent)),float(np.dot(end-points[ia],tangent))))
+                                lo,hi=max(0.,ta),min(length,tb)
+                                if hi-lo<=1e-6:continue
+                                middle=(lo+hi)/2
+                                denominator=float(np.dot(delta,tangent))
+                                local=start+delta*((middle-float(np.dot(start-points[ia],tangent)))/denominator)
+                                offset=abs(float(np.dot(local-points[ia],normal)))
+                                if offset>.01:continue
+                                for step in steps:
+                                    plus=shapely.contains(self.__botBound,shapely.points(local+normal*step))
+                                    minus=shapely.contains(self.__botBound,shapely.points(local-normal*step))
+                                    if plus != minus:
+                                        ring_signs.add(-1 if plus else 1)
+                                        maximum_offset=max(maximum_offset,offset)
+                                        break
+                        if len(ring_signs)==1:
+                            sign=ring_signs.pop()
+                            import warnings
+                            warnings.warn(f'{wall.Uid}: outward side derived from the explicit room ring; '
+                                f'legacy 3-D/ring offset {maximum_offset:.9g} m; geometry unchanged.',RuntimeWarning)
+                if sign is None:
                     raise GeometryError(
                         wall.face,
-                        "cannot establish actual holed-room outward wall normal",
+                        f"{wall.Uid}: cannot establish actual holed-room outward wall normal",
                     )
                 factors.append(Vector([
                     float(normal[0] * length * sign),

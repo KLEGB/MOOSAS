@@ -30,17 +30,35 @@ def _generate_radiance_geometry(roof, floor, others):
     """
     geoStr = ''
     ids = 0
+    def material(element, default, glass=False):
+        settings = getattr(element, 'settings', {})
+        key = 'visible_transmittance' if glass else 'visible_reflectance'
+        if key not in settings:
+            return '', default
+        value = float(settings[key])
+        if not np.isfinite(value) or not 0 <= value <= 1:
+            raise ValueError(f'{element.Uid}/{key}: expected a fraction in 0..1')
+        name = f'visible_{ids}'
+        if glass:
+            # Radiance glass uses transmissivity, not measured transmittance.
+            value = 0. if value == 0 else (np.sqrt(.8402528435 + .0072522239*value*value) - .9166530661) / (.0036261119*value)
+            return f'void glass {name}\n0\n0\n3 {value} {value} {value}\n', name
+        return f'void plastic {name}\n0\n0\n5 {value} {value} {value} 0 0\n', name
     for moFace in floor:
-        geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_floor", ids)
+        definition, name = material(moFace, 'default_floor')
+        geoStr += definition + _mesh_to_radiance_object(_triangulate_opaque(moFace), name, ids)
         ids += 1
     for moFace in roof:
-        geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_roof", ids)
+        definition, name = material(moFace, 'default_roof')
+        geoStr += definition + _mesh_to_radiance_object(_triangulate_opaque(moFace), name, ids)
         ids += 1
     for moFace in others:
         if moFace.category in (0, 3, 4, -1):
-            geoStr += _mesh_to_radiance_object(_triangulate_opaque(moFace), "default_wall", ids)
+            definition, name = material(moFace, 'default_wall')
+            geoStr += definition + _mesh_to_radiance_object(_triangulate_opaque(moFace), name, ids)
         if moFace.category in (1, 5, 6):
-            geoStr += _mesh_to_radiance_object(moFace.representation(), "glazing_", ids)
+            definition, name = material(moFace, 'glazing_', glass=True)
+            geoStr += definition + _mesh_to_radiance_object(moFace.representation(), name, ids)
         ids += 1
     return geoStr
 

@@ -16,7 +16,13 @@ DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'building_templat
 
 def load_thermal_library(filename=None):
     filename = Path(filename or DEFAULT_LIBRARY)
-    data = json.loads(filename.read_text(encoding='utf-8'))
+    if filename.is_dir():
+        from .building_catalog import load_catalog
+        return load_catalog(filename)
+    data = json.loads(filename.read_text(encoding='utf-8-sig'))
+    if 'BuildingTemplate' in data or data.get('schema') == 'moosas.building-template-library':
+        from .building_catalog import load_catalog
+        return load_catalog(filename)
     if data.get('schema') != 'moosas.thermal-templates' or data.get('version') != 1:
         raise ValueError('Unsupported thermal template schema/version')
     return data
@@ -32,6 +38,9 @@ def _strictest(value):
 
 def building_templates(filename=None):
     library = load_thermal_library(filename)
+    if library.get('version') == 5:
+        from .building_catalog import catalog_records
+        return catalog_records(library)
     result = {}
     for name, spec in library['templates'].items():
         op = library['operations'][spec['operation']]
@@ -67,20 +76,28 @@ def apply_thermal_template(space, record, name, *, preserve_explicit=True, conte
         space.explicit_settings = [k for k in space.explicit_settings if k not in record or not k.startswith('zone_')]
     for key, value in record.items():
         if key not in explicit:
-            space.settings[key] = deepcopy(value)
+            space.settings[key] = ({**value, 'context': deepcopy(value.get('context', {}))}
+                if key == '_thermal_template' and value.get('catalog_version') == 5 else deepcopy(value))
     space.settings['zone_template'] = name
     if context:
         space.settings['_thermal_template']['context'].update(context)
 
 
-def apply_building_template(model, template_id, *, template_path=None, zone_ids=None,
-                            preserve_explicit=True, context=None):
+def apply_building_template(model, template_id=None, *, template_path=None, zone_ids=None,
+                            preserve_explicit=True, context=None, replace_all=False,
+                            room_types=None):
     """Select JSON templates explicitly. Geometry and source files are unchanged.
 
     ``preserve_explicit=False`` rebases zone operating values only. Element
     constructions remain authoritative; use surface overrides to replace them.
+    ``replace_all=True`` deliberately creates a new template-only scenario:
+    old non-geometric zone, surface, schedule and model overrides are discarded.
+    Boundary classifications, element categories and geometry remain unchanged.
+    V5 multi-room catalogs require ``room_types={zone_id: room_key}``.
     """
     records = building_templates(template_path)
+    if template_id is None and len(records) == 1:
+        template_id = next(iter(records))
     if template_id not in records:
         raise ValueError(f'Unknown building template {template_id!r}')
     record = records[template_id]
@@ -89,10 +106,76 @@ def apply_building_template(model, template_id, *, template_path=None, zone_ids=
     selected = set(map(str, zone_ids)) if zone_ids is not None else {str(s.id) for s in model.spaceList}
     if selected - {str(s.id) for s in model.spaceList}:
         raise ValueError('Unknown zone_ids in template application')
-    model.buildingTemplate.update(records)
+    if replace_all and zone_ids is not None:
+        raise ValueError('replace_all requires whole-model application to avoid conflicting shared surfaces')
+    room_records = {}
+    for space in model.spaceList:
+        if str(space.id) not in selected:
+            continue
+        chosen = record
+        profile = record['_thermal_template']
+        room = (room_types or {}).get(str(space.id))
+        if profile.get('catalog_version') == 5:
+            if profile.get('room_selection_required') and room is None:
+                raise ValueError(f'{space.id}: explicit room_types selection required')
+            if room is not None:
+                from .building_catalog import room_record
+                chosen = room_record(dict(template=profile['catalog'], assumptions=profile['assumptions'],
+                    calendar=profile['calendar'], source_sha256=profile['source_sha256']), room)
+        room_records[str(space.id)] = chosen
+    if replace_all:
+        original_source = getattr(model, 'energy_settings', {}).get('external_thermal_model', {}).get('source_sha256')
+        model.energy_settings = dict(template_replacement=dict(template_id=template_id,
+            mode='replace_all_non_geometry', original_source_sha256=original_source))
+        model.buildingTemplate = dict(records)
+        model.schedule = {}
+        model.scheduleByType = {}
+        model.schedulePath = None
+    else:
+        model.buildingTemplate.update(records)
     for space in model.spaceList:
         if str(space.id) in selected:
-            apply_thermal_template(space, record, template_id, preserve_explicit=preserve_explicit, context=context)
+            if replace_all:
+                space.settings = dict(zone_name=space.settings.get('zone_name', str(space.id)))
+                space.explicit_settings = []
+                space.conditioned = True
+            apply_thermal_template(space, room_records[str(space.id)], template_id,
+                preserve_explicit=preserve_explicit and not replace_all, context=context)
+    if replace_all:
+        # Do not retain old material layers, optical values, side-specific
+        # thermal overrides, opening fractions or external-source settings.
+        elements = {}
+        for space in list(model.spaceList) + list(getattr(model, 'voidList', ())):
+            for element in space.getAllFaces(to_dict=False):
+                elements[str(element.Uid)] = element
+        for name in ('wallList', 'faceList', 'glazingList', 'skylightList'):
+            elements.update({str(e.Uid): e for e in getattr(model, name, ())})
+        for element in elements.values():
+            old = element.settings
+            element.settings = {k: deepcopy(v) for k, v in old.items() if k in {'boundary_condition', 'opaque_opening'}}
+            side_boundaries = {key: {'boundary_condition': value['boundary_condition']}
+                for key, value in old.get('side_overrides', {}).items() if 'boundary_condition' in value}
+            if side_boundaries:
+                element.settings['side_overrides'] = side_boundaries
+            element.explicit_settings = set()
+        for space in model.spaceList:
+            profile = space.settings['_thermal_template']
+            groups = space.getAllFaces(to_dict=True)
+            for group, role in [('MoosasWall', 'wall'), ('MoosasFloor', 'floor'), ('MoosasCeiling', 'ceiling'), ('InternalMass', 'wall')]:
+                for element in groups.get(group, ()):
+                    boundary = element.settings.get('boundary_condition', 'outdoors' if element.isOuter else 'adiabatic')
+                    if role == 'floor' and boundary == 'outdoors' and abs(float(space.level) - min(float(s.level) for s in model.spaceList)) < 1e-6:
+                        boundary = 'ground'
+                    resolved, _ = resolve_surface_template(space.settings, role, boundary, getattr(element, 'normal', (0, 0, 1)))
+                    element.settings.update(resolved)
+                    for opening in element.glazingElement:
+                        opening_role = 'window' if role == 'wall' else 'skylight'
+                        resolved, _ = resolve_surface_template(space.settings, opening_role, boundary, getattr(opening, 'normal', (0, 0, 1)))
+                        opening.settings.update(resolved)
+                        if 'shgc' in resolved:
+                            opening.SHGC = resolved['shgc']
+                        if 'opening_ratio' in resolved:
+                            opening.operable = resolved['opening_ratio']
     return model
 
 
@@ -105,6 +188,9 @@ def template_program(settings, key, base):
     profile = settings.get('_thermal_template')
     if not profile:
         return None
+    if profile.get('catalog_version') == 5:
+        from .building_catalog import catalog_program
+        return catalog_program(settings, key, base)
     mapping = {'zone_ppsm': 'occupancy', 'zone_lighting': 'lighting',
                'zone_equipment': 'equipment', 'hvac_enabled': 'hvac'}
     if key not in mapping or isinstance(base, str) or not isinstance(base, (float, int)):
@@ -124,6 +210,9 @@ def resolve_surface_template(settings, role, boundary, normal, *, wwr=0., contex
     profile = settings.get('_thermal_template')
     if not profile:
         return {}, ()
+    if profile.get('catalog_version') == 5:
+        from .building_catalog import catalog_surface
+        return catalog_surface(profile, role, boundary)
     rule, assumptions = profile['envelope'], profile['assumptions']
     ctx = {**profile.get('context', {}), **(context or {})}
     notes = []

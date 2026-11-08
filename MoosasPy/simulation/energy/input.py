@@ -172,6 +172,8 @@ class ZoneRequest:
     cool_setpoint_c: np.ndarray
     ventilation_m3_h: np.ndarray
     hvac_enabled: np.ndarray
+    heating_enabled: np.ndarray | None = None
+    cooling_enabled: np.ndarray | None = None
 
     def __post_init__(self):
         if not self.zone_id or not self.surfaces or len({s.surface_id for s in self.surfaces})!=len(self.surfaces):
@@ -191,7 +193,12 @@ class ZoneRequest:
             if key not in {'heat_setpoint_c','cool_setpoint_c'} and np.any(value<0):
                 raise ValueError(f'{self.zone_id}/{key}: negative value')
             object.__setattr__(self,key,value)
-        if np.any(self.heat_setpoint_c>self.cool_setpoint_c):
+        for key in ('heating_enabled', 'cooling_enabled'):
+            values = self.hvac_enabled if getattr(self, key) is None else readonly(getattr(self, key))
+            if values.shape != (8760,) or not np.isin(values, (0, 1)).all():
+                raise ValueError(f'{self.zone_id}/{key}: requires 8760 binary flags')
+            object.__setattr__(self, key, values)
+        if np.any((self.heat_setpoint_c>self.cool_setpoint_c) & (self.heating_enabled==1) & (self.cooling_enabled==1)):
             raise ValueError(f'{self.zone_id}: heating setpoint exceeds cooling')
         if not np.all(np.isin(self.hvac_enabled,(0,1))):
             raise ValueError(f'{self.zone_id}: hvac_enabled requires 0 or 1')
@@ -235,7 +242,7 @@ class EnergyRequest:
         digest = sha256(json.dumps([z.native_model() for z in self.zones], sort_keys=True, allow_nan=False).encode())
         for zone in self.zones:
             digest.update(bytes(int(s.wind_driven_film) for s in zone.surfaces))
-            for key in ('internal_w','lighting_w','equipment_w','heat_setpoint_c','cool_setpoint_c','ventilation_m3_h','hvac_enabled'):
+            for key in ('internal_w','lighting_w','equipment_w','heat_setpoint_c','cool_setpoint_c','ventilation_m3_h','hvac_enabled','heating_enabled','cooling_enabled'):
                 digest.update(np.asarray(getattr(zone,key), dtype='<f8').tobytes())
         return digest.hexdigest()
 
@@ -249,12 +256,18 @@ class EnergyRequest:
         rows = []
         for zone, irradiance in zip(self.zones, self.irradiance):
             films = [5.8 + 4.1 * float(w.wind_speed[h]) if s.boundary_condition == 'outdoors' and s.wind_driven_film else s.ho_w_m2k for s in zone.surfaces]
+            # CES3 v2 has one master HVAC flag and finite thermostat bounds.
+            # A disabled mode is represented by an unreachable bound, NOT by
+            # a 0 C target. The original null targets remain in the catalog
+            # profile; explicit mode flags are retained in the request/audit.
+            heating = bool(zone.heating_enabled[h]) and bool(zone.hvac_enabled[h])
+            cooling = bool(zone.cooling_enabled[h]) and bool(zone.hvac_enabled[h])
             rows.append(dict(air_c=ta, ground_c=float(w.ground_temperature[h]), sky_ir_w_m2=sky_ir,
-                internal_w=float(zone.internal_w[h]), heat_setpoint_c=float(zone.heat_setpoint_c[h]),
-                cool_setpoint_c=float(zone.cool_setpoint_c[h]),
+                internal_w=float(zone.internal_w[h]), heat_setpoint_c=float(zone.heat_setpoint_c[h]) if heating else -1e6,
+                cool_setpoint_c=float(zone.cool_setpoint_c[h]) if cooling else 1e6,
                 ventilation_w_k=density * 1006 * float(zone.ventilation_m3_h[h]) / 3600,
                 irradiance_w_m2=irradiance[:, h].tolist(), ho_w_m2k=films,
-                hvac_enabled=bool(zone.hvac_enabled[h])))
+                hvac_enabled=heating or cooling, heating_enabled=heating, cooling_enabled=cooling))
         return rows
 
 
@@ -407,11 +420,17 @@ def _height_band(footprint, projection, lo, hi):
     return shapely.intersection(footprint,shapely.Polygon(vertices))
 
 
-def _owner_extent(space, projection, normal, center, footprint, *, height_bounds=None):
+def _owner_extent(space, projection, normal, center, footprint, *, height_bounds=None, room_regions=None):
     """Intersect a surface plane with a room's vertical footprint extrusion."""
     if footprint.is_empty or footprint.area<=1e-12:
         return shapely.GeometryCollection()
-    region = _room_region(space.force_2d())
+    if room_regions is None:
+        region = _room_region(space.force_2d())
+    else:
+        key=id(space)
+        if key not in room_regions:
+            room_regions[key]=_room_region(space.force_2d())
+        region=room_regions[key]
     footprint = shapely.set_precision(footprint,0)
     if abs(normal[2]) > .999999:
         world = shapely.force_3d(region,z=float(center[2]))
@@ -465,9 +484,10 @@ def _owner_extent(space, projection, normal, center, footprint, *, height_bounds
     return patch if patch.area>1e-12 else shapely.GeometryCollection()
 
 
-def _adjacency_parts(space, owner_ids, spaces, footprint, projection, normal, center, *, height_bounds=None):
+def _adjacency_parts(space, owner_ids, spaces, footprint, projection, normal, center, *, height_bounds=None,
+                     allow_adiabatic_overlap=False, diagnostics=None, room_regions=None):
     """Partition partial shared boundaries without using a zone-level outer flag."""
-    own = _owner_extent(space,projection,normal,center,footprint,height_bounds=height_bounds)
+    own = _owner_extent(space,projection,normal,center,footprint,height_bounds=height_bounds,room_regions=room_regions)
     # Old shared Wall references include users outside the current face patch.
     # Their zero-area intersection has NaN bounds; never build a cut line from it.
     if own.is_empty or own.area<=1e-7:
@@ -479,7 +499,7 @@ def _adjacency_parts(space, owner_ids, spaces, footprint, projection, normal, ce
     for owner in sorted(owner_ids-{str(space.id)}):
         if owner not in spaces:
             raise ValueError(f'{space.id}: unknown boundary owner {owner}')
-        region=_owner_extent(spaces[owner],projection,normal,center,own,height_bounds=height_bounds)
+        region=_owner_extent(spaces[owner],projection,normal,center,own,height_bounds=height_bounds,room_regions=room_regions)
         if region.area<=1e-7:
             continue
         overlap = shapely.intersection(covered,region)
@@ -489,7 +509,11 @@ def _adjacency_parts(space, owner_ids, spaces, footprint, projection, normal, ce
         # Reject real overlap, but remove this bounded strip exactly once.
         buffer_area_tolerance = 1e-6*(region.length+covered.length)+1e-10
         if overlap.area>max(1e-5,buffer_area_tolerance):
-            raise ValueError(f'{space.id}: overlapping boundary owners need disjoint source geometry')
+            if not allow_adiabatic_overlap:
+                raise ValueError(f'{space.id}: overlapping boundary owners need disjoint source geometry')
+            if diagnostics is not None:
+                diagnostics.append(f'{space.id}: shared owner {owner} overlaps earlier owners by {overlap.area:.9g} m2; '
+                    'shared coverage is unioned once as adiabatic, without changing source geometry or ownership.')
         if overlap.area:
             region=shapely.difference(region,covered)
         if region.area<=1e-7:
@@ -670,12 +694,17 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                        irradiance_by_surface=None, schedule_path=None, require_radiation=False,
                        core=None, temporal_scale=None, spatial_scale=None,
                        template_id=None, template_path=None, template_context=None,
-                       template_overrides_model=False):
+                       template_overrides_model=False, shared_owner_overlap='reject'):
     """Build CES3 v2 requests; shared surfaces are resolved independently per owner.
 
     Override keys are element Uids or complete surface-side IDs. Legacy seasonal
     solar gain fields are not consumed by the dynamic surface model.
+    ``shared_owner_overlap='union_adiabatic'`` explicitly permits overlapping
+    neighbour coverage for independent adiabatic zones. Each surface patch is
+    counted once; warnings retain the source space/owner and overlap area.
     """
+    if shared_owner_overlap not in {'reject','union_adiabatic'}:
+        raise ValueError('shared_owner_overlap must be reject or union_adiabatic')
     source_defaults = getattr(model,'energy_settings',{}).get('energy_defaults',{})
     defaults = defaults or EnergyDefaults(**source_defaults)
     for key,value in source_defaults.items():
@@ -702,6 +731,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     ground_level_m = number(ground_level_m,'ground_level_m',minimum=-10000)
     owners = {}
     owner_height_bounds = {}
+    owner_room_regions = {}
     element_geometry = {}
     spaces = {str(space.id):space for space in list(model.spaceList)+list(model.voidList)}
     for space in spaces.values():
@@ -711,6 +741,11 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     selected = {str(v) for v in zone_ids} if zone_ids is not None else {str(s.id) for s in model.spaceList}
     if selected - {str(s.id) for s in model.spaceList}:
         raise ValueError('Unknown zone_ids: ' + ', '.join(sorted(selected-{str(s.id) for s in model.spaceList})))
+    invalid_enclosures = {str(s.id): s.edge.normal_diagnostic for s in model.spaceList
+                          if str(s.id) in selected and getattr(s.edge, 'normal_diagnostic', None)}
+    if invalid_enclosures:
+        raise ValueError('Unresolved source room enclosure; exclude or repair zones: '
+                         + ', '.join(sorted(invalid_enclosures)))
     facade_ratios = None
     sun = _solar_vectors(weather, defaults)
     ghi = np.maximum(np.asarray(weather.global_radiation),0)
@@ -732,19 +767,21 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
             settings['zone_template'] = template_id
         settings.update(zone_overrides.get(str(space.id),{}))
         profile = settings.get('_thermal_template')
+        if profile and profile.get('catalog_version') == 5 and 'heating_efficiency' in settings:
+            raise ValueError('Fuel heating_efficiency requires a fuel energy model; it is not an electric COP')
         if profile and settings.get('zone_template') not in {profile['id'],profile.get('alias')}:
             settings.pop('_thermal_template')
             profile = None
         context = {**(profile or {}).get('context',{}), **(template_context or {})}
         if profile:
-            if facade_ratios is None:
+            if facade_ratios is None and profile.get('catalog_version') != 5:
                 facade_ratios = _facade_window_ratios(spaces,owners,ground_level_m,surface_overrides)
             if 'storeys' not in context:
                 context['storeys'] = len({round(float(s.level),3) for s in model.spaceList if float(s.level)>=ground_level_m-1e-6})
             notes.extend((f"Template {profile['id']}: {profile['operation']['assumptions']}",
                           'Unknown storeys/shape/inertia use the stricter table column; U targets are equivalent constructions, not certified material recipes.'))
         def templated(element, values, role, boundary, normal, wwr, override_ids=()):
-            if profile and role=='window':
+            if profile and role=='window' and profile.get('catalog_version') != 5:
                 facade_key = tuple(np.round(normal,6))
                 if settings.get('type') == 'RESIDENTIAL':
                     wwr = facade_ratios[1].get((str(space.id),facade_key),wwr)
@@ -788,12 +825,13 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                 elif role == 'ceiling': normal = np.array([0.,0.,1.])
                 elif np.dot(normal,center-room_center)<0: normal=-normal
                 projection = Projection(Vector(center),Vector(normal))
-                uv = [shapely.force_2d(projection.toUV(face)) for face in np.asarray(element.face).flatten()]
+                uv = [part for face in np.asarray(element.face).flatten()
+                      for part in shapely.get_parts(_room_region(projection.toUV(face)))]
                 footprint = shapely.union_all([shapely.Polygon(p.exterior) for p in uv])
                 openings = list(element.glazingElement)
                 aperture = {}
                 for opening in openings:
-                    shapes = [shapely.force_2d(projection.toUV(f)) for f in np.asarray(opening.face).flatten()]
+                    shapes = [_room_region(projection.toUV(f)) for f in np.asarray(opening.face).flatten()]
                     aperture[str(opening.Uid)] = shapely.intersection(footprint,shapely.union_all(shapes))
                 # Preserve geometric holes even when no separate glazing/air
                 # object has been attached; never manufacture opaque material.
@@ -806,7 +844,9 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                 boundary = es.get('boundary_condition')
                 if boundary is None and (str(element.Uid) in mass_ids or (not element.isOuter and len(eo)==1)):
                     boundary = 'adiabatic'
-                adjacency = _adjacency_parts(space,eo,spaces,footprint,projection,normal,center,height_bounds=owner_height_bounds) if len(eo)>1 else ((None,footprint,eo),)
+                adjacency = _adjacency_parts(space,eo,spaces,footprint,projection,normal,center,height_bounds=owner_height_bounds,
+                    allow_adiabatic_overlap=shared_owner_overlap=='union_adiabatic',diagnostics=notes,
+                    room_regions=owner_room_regions) if len(eo)>1 else ((None,footprint,eo),)
                 parts=[]
                 for inferred,patch,patch_owners in adjacency:
                     bc=boundary or inferred
@@ -871,7 +911,11 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         lighting = program('zone_lighting',defaults.lighting_w_m2)*area
         heat = program('zone_h_temp',defaults.heating_setpoint_c)
         cool = program('zone_c_temp',defaults.cooling_setpoint_c)
-        if np.any(heat>cool): raise ValueError(f'{space.id}: heating setpoint exceeds cooling')
+        controls = None
+        if profile and profile.get('catalog_version') == 5:
+            from ...model.building_catalog import catalog_controls
+            controls = catalog_controls(settings)
+        if controls is None and np.any(heat>cool): raise ValueError(f'{space.id}: heating setpoint exceeds cooling')
         clock = np.arange(8760)%24
         start = number(settings.get('zone_work_start',0),f'{space.id}/work start')
         end = number(settings.get('zone_work_end',24),f'{space.id}/work end')
@@ -885,10 +929,12 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         zone = ZoneRequest(str(space.id),str(settings.get('zone_name') or space.id),area,volume,tuple(surfaces),
             number(settings.get('zone_collingEER',defaults.cooling_cop),f'{space.id}/cooling COP',strictly_positive=True),
             number(settings.get('zone_HeatingEER',defaults.heating_cop),f'{space.id}/heating COP',strictly_positive=True),
-            float(settings.get('initial_temperature_c',(heat[0]+cool[0])/2)),
+            float(settings.get('initial_temperature_c',20. if controls is not None else (heat[0]+cool[0])/2)),
             float(settings.get('internal_radiant_fraction',defaults.internal_radiant_fraction)),
             float(settings.get('solar_floor_fraction',defaults.solar_floor_fraction)),readonly(internal),readonly(lighting),readonly(equipment),
-            readonly(heat),readonly(cool),readonly(vent),readonly(program('hvac_enabled',1. if space.conditioned else 0.)))
+            readonly(heat),readonly(cool),readonly(vent),readonly(program('hvac_enabled',1. if space.conditioned else 0.)),
+            None if controls is None else readonly(controls['heat_enabled']),
+            None if controls is None else readonly(controls['cool_enabled']))
         rad = []
         for surface in surfaces:
             prescribed = (irradiance_by_surface or {}).get(surface.surface_id,(irradiance_by_surface or {}).get(surface.source_element_id))

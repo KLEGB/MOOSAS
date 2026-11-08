@@ -1491,7 +1491,7 @@ def writeRDF(model: MoosasModel, out_path: str, fileFormat="turtle", dumpUseless
     return g
 
 
-def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
+def loadRDF(input_path: str, fileFormat="turtle", *, invalid_room_normals="raise") -> MoosasModel:
     """
     Load RDF data from a file and construct a MoosasModel instance.
     
@@ -1501,12 +1501,19 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         Path to the input RDF file.
     fileFormat : str, optional
         Format of the RDF file (default is "turtle").
+    invalid_room_normals : {"raise", "record"}, optional
+        Strict by default. Diagnostic ``record`` imports inconsistent room
+        enclosures without changing source geometry or guessing wall normals.
+        Affected edges expose ``normal_diagnostic`` and require exclusion from
+        analyses that depend on a consistent room enclosure.
     
     Returns
     -------
     MoosasModel
         A constructed MoosasModel instance populated with data from the RDF file.
     """
+    if invalid_room_normals not in {"raise", "record"}:
+        raise ValueError('invalid_room_normals must be raise or record')
     rdfGraph: MoosasRDF = MoosasRDF.load(input_path, fileFormat=fileFormat)
     model = MoosasModel()
     from ..resources import configure_model_resources
@@ -1676,7 +1683,8 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
             rdfGraph.getObject(spaceUri, rdfGraph.moosas.boundaryWKT)
         )
         boundary = shapely.from_wkt(str(boundary_wkt)) if boundary_wkt is not None else None
-        edgeTopo = MoosasEdge(edgeElements, boundary=boundary)
+        edgeTopo = MoosasEdge(edgeElements, boundary=boundary,
+                              strict_normals=invalid_room_normals == "raise")
 
         spc = MoosasSpace(
             _floor=floorTopo,

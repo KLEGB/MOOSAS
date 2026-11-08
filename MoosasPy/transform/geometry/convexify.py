@@ -24,11 +24,15 @@ def _validate_partition(parts, source, *, convex=False):
 
 
 def _cut_hole(polygon):
-    """Open one hole with two disjoint visible vertex-to-vertex connectors."""
+    """Open one hole with visible connectors, reusing an existing shell contact."""
     shell = np.asarray(polygon.exterior.coords)[:-1, :2]
     hole = np.asarray(polygon.interiors[0].coords)[:-1, :2]
     distances = np.linalg.norm(shell[:, None] - hole[None, :], axis=2)
     boundary = polygon.boundary
+    # A valid hole may touch the exterior at one vertex. That contact is
+    # already one connection: adding two more creates three cells instead
+    # of the two required by the double-cut path.
+    touches_shell = polygon.exterior.intersects(polygon.interiors[0])
     first = None
     for flat_index in np.argsort(distances, axis=None, kind="stable"):
         shell_index, hole_index = np.unravel_index(flat_index, distances.shape)
@@ -39,6 +43,20 @@ def _cut_hole(polygon):
         # A visible connector touches the boundary only at its two endpoints.
         if not boundary.intersection(line).equals(shapely.MultiPoint(endpoints)):
             continue
+        if touches_shell:
+            network = shapely.union_all([boundary, line])
+            cells = [
+                cell for cell in shapely.get_parts(
+                    shapely.polygonize(shapely.get_parts(network))
+                )
+                if polygon.covers(cell.representative_point())
+            ]
+            if len(cells) != 2:
+                continue
+            if sum(len(cell.interiors) for cell in cells) != len(polygon.interiors) - 1:
+                continue
+            _validate_partition(cells, polygon)
+            return cells
         if first is None:
             first = line
             continue
@@ -69,10 +87,23 @@ def _convex_parts_with_holes(face, holes):
         # passing them to Shapely so NumPy does not coerce ragged coordinates.
         holes=[shapely.linearrings(np.asarray(hole, dtype=float)[:, :2]) for hole in holes],
     )
+    if not polygon.is_valid:
+        # Apertures sharing an edge with the exterior are not interior rings;
+        # they are notches (or disconnected slab pieces). Express the same
+        # shell-minus-apertures region without changing coordinates or filling
+        # openings. Do not guess repairs for self-crossing or outside rings.
+        shell = shapely.Polygon(face[:, :2])
+        cutouts = [shapely.Polygon(np.asarray(hole, dtype=float)[:, :2]) for hole in holes]
+        tolerance = max(1e-8, shell.area * 1e-9)
+        if shell.is_valid and all(
+            hole.is_valid and hole.area > 0 and hole.difference(shell).area <= tolerance
+            for hole in cutouts
+        ):
+            polygon = shell.difference(shapely.union_all(cutouts))
     if not polygon.is_valid or polygon.is_empty or polygon.area <= 0:
         raise GeometryError(polygon, "Double-cut decomposition requires a valid polygon with holes.")
 
-    pending = [polygon]
+    pending = list(shapely.get_parts(polygon))
     simple = []
     while pending:
         piece = pending.pop()
