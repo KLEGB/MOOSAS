@@ -261,29 +261,8 @@ def _is_internal_partition(segment, source_boundary, walls):
     )
 
 
-def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -> MoosasContainer:
-    """
-    Packs edges into a MoosasContainer by validating and processing boundary lists, and optionally subdividing complex faces into simpler polygons.
-    
-    Parameters
-    ----------
-    model : MoosasContainer
-        The container object holding wall, edge, boundary, and level lists to be processed.
-        Modified in place by appending valid edges and walls, and removing processed ones.
-    divided_zones : bool
-        If True, enables convex subdivision of complex footprints.
-        Air walls are added to represent internal divisions, and original edges are replaced with new constructed edges.
-    insert_core : bool
-        Enable offset thermal zoning with opaque core/perimeter interfaces.
-        Other subdivisions and collapsed narrow-core centerlines remain air boundaries.
-    
-    Returns
-    -------
-    MoosasContainer
-        The updated model with validated and potentially subdivided edges, newly added air walls (if applicable),
-        and remaining unassigned walls marked in `wall_remain`.
-    """
-
+def packing_edges(model: MoosasContainer) -> MoosasContainer:
+    """Pack boundary walls into model edges and record unassigned walls."""
     model.boundaryList = _replace_one_sided_air_boundaries(
         model.boundaryList,
         model.wallList,
@@ -305,81 +284,87 @@ def packing_edges(model: MoosasContainer, divided_zones, *, insert_core=False) -
         except GeometryError:
             print("******Warning: GeometryError, something occurred and the boundary was skipped")
 
-
-    """Divide the boundaries into simple polygons"""
-    if divided_zones or insert_core:
-        model.edgeList = [
-            edge for edge in model.edgeList
-            if edge.area >= geom.ROOM_MIN_AREA
-        ]
-        for levelIdx, bldLevel in enumerate(model.levelList):
-            edges = np.array(model.edgeList)[searchBy('level', bldLevel, model.edgeList)]
-            overhead = overhead_projection(model, bldLevel)
-            for edgeIdx, edge in enumerate(edges):
-                # ``contains`` considers a geometry to contain itself.  That
-                # made the current boundary an identical "hole", so a
-                # concave footprint was passed to the convexifier with its
-                # exterior removed and could not be divided.  A hole must lie
-                # strictly inside the boundary instead.
-                holes = _direct_child_holes(edge, edges)
-                footprint = shapely.difference(edge.force_2d(), shapely.union_all(holes))
-                if shapely.area(shapely.intersection(
-                    footprint, overhead, grid_size=geom.POINT_PRECISION
-                )) <= geom.AREA_PRECISION:
-                    continue
-                if insert_core:
-                    perimeter, core, cuts = offset_partitions(footprint)
-                    core_boundary = shapely.buffer(
-                        shapely.boundary(shapely.union_all(core)),
-                        geom.POINT_PRECISION * 10,
-                    )
-                    newEdges = (
-                        _merge_tiny_partitions(perimeter, cuts)
-                        + _merge_tiny_partitions(core, cuts)
-                    )
-                    validate_partition_lines(newEdges, cuts)
-                else:
-                    newEdges, _ = convexify_shape(edge.force_2d(), holes)
-                    newEdges = _merge_tiny_partitions(newEdges)
-                if len(newEdges) > 1:
-                    walls = list(np.array(model.wallList)[searchBy('level', bldLevel, model.wallList)])
-                    source_boundary = shapely.boundary(edge.force_2d())
-                    for new_edge in newEdges:
-                        coordinates = shapely.get_coordinates(new_edge)
-                        for start, end in zip(coordinates[:-1], coordinates[1:]):
-                            segment = shapely.linestrings([start, end])
-                            if shapely.length(segment) <= geom.POINT_PRECISION:
-                                continue
-                            if MoosasEdge.matchWall(segment, walls) is None:
-                                is_internal_partition = _is_internal_partition(
-                                    segment,
-                                    source_boundary,
-                                    walls,
-                                )
-                                is_core_interface = insert_core and shapely.covered_by(
-                                    segment, core_boundary,
-                                )
-                                partition_wall = MoosasWall.fromProjection(
-                                    segment,
-                                    bottom=bldLevel,
-                                    top=model.levelList[levelIdx + 1],
-                                    model=model,
-                                    airBoundary=is_internal_partition and not is_core_interface,
-                                )
-                                model.wallList = np.append(model.wallList, partition_wall)
-                                walls.append(partition_wall)
-                    newConstructEdges = []
-                    for ed in newEdges:
-                        try:
-                            newConstructEdges += [MoosasEdge.selectWall(ed, walls)]
-                        except GeometryError as gE:
-                            print(f"******Warning: {gE}")
-                    newEdges = newConstructEdges
-                    model.edgeList.remove(edge)
-                    model.edgeList += newEdges
-                print(f'\rTOPOLOGY: in {bldLevel}: Dividing zones {edgeIdx}/{len(edges)}', end='')
-
     model.wall_remain = list(faceSet)
-    print()
-    print('PACKING: Identified boundaries', len(model.edgeList))
     return model
+
+
+def _core_partitions(edge, holes, footprint):
+    perimeter, core, cuts = offset_partitions(footprint)
+    core_boundary = shapely.buffer(
+        shapely.boundary(shapely.union_all(core)),
+        geom.POINT_PRECISION * 10,
+    )
+    partitions = _merge_tiny_partitions(perimeter, cuts) + _merge_tiny_partitions(core, cuts)
+    validate_partition_lines(partitions, cuts)
+    return partitions, core_boundary
+
+
+def _convex_partitions(edge, holes, footprint):
+    partitions, _ = convexify_shape(edge.force_2d(), holes)
+    return _merge_tiny_partitions(partitions), None
+
+
+def _partition_edges(model, partition):
+    model.edgeList = [
+        edge for edge in model.edgeList
+        if edge.area >= geom.ROOM_MIN_AREA
+    ]
+    for levelIdx, bldLevel in enumerate(model.levelList):
+        edges = np.array(model.edgeList)[searchBy('level', bldLevel, model.edgeList)]
+        overhead = overhead_projection(model, bldLevel)
+        for edgeIdx, edge in enumerate(edges):
+            holes = _direct_child_holes(edge, edges)
+            footprint = shapely.difference(edge.force_2d(), shapely.union_all(holes))
+            if shapely.area(shapely.intersection(
+                footprint, overhead, grid_size=geom.POINT_PRECISION
+            )) <= geom.AREA_PRECISION:
+                continue
+            newEdges, core_boundary = partition(edge, holes, footprint)
+            if len(newEdges) > 1:
+                walls = list(np.array(model.wallList)[searchBy('level', bldLevel, model.wallList)])
+                source_boundary = shapely.boundary(edge.force_2d())
+                for new_edge in newEdges:
+                    coordinates = shapely.get_coordinates(new_edge)
+                    for start, end in zip(coordinates[:-1], coordinates[1:]):
+                        segment = shapely.linestrings([start, end])
+                        if shapely.length(segment) <= geom.POINT_PRECISION:
+                            continue
+                        if MoosasEdge.matchWall(segment, walls) is None:
+                            is_internal_partition = _is_internal_partition(
+                                segment,
+                                source_boundary,
+                                walls,
+                            )
+                            is_core_interface = core_boundary is not None and shapely.covered_by(
+                                segment, core_boundary,
+                            )
+                            partition_wall = MoosasWall.fromProjection(
+                                segment,
+                                bottom=bldLevel,
+                                top=model.levelList[levelIdx + 1],
+                                model=model,
+                                airBoundary=is_internal_partition and not is_core_interface,
+                            )
+                            model.wallList = np.append(model.wallList, partition_wall)
+                            walls.append(partition_wall)
+                newConstructEdges = []
+                for ed in newEdges:
+                    try:
+                        newConstructEdges += [MoosasEdge.selectWall(ed, walls)]
+                    except GeometryError as gE:
+                        print(f"******Warning: {gE}")
+                newEdges = newConstructEdges
+                model.edgeList.remove(edge)
+                model.edgeList += newEdges
+            print(f'\rTOPOLOGY: in {bldLevel}: Dividing zones {edgeIdx}/{len(edges)}', end='')
+    return model
+
+
+def partition_core_edges(model: MoosasContainer) -> MoosasContainer:
+    """Partition packed edges into core and perimeter zones."""
+    return _partition_edges(model, _core_partitions)
+
+
+def partition_convex_edges(model: MoosasContainer) -> MoosasContainer:
+    """Partition packed edges into convex zones."""
+    return _partition_edges(model, _convex_partitions)

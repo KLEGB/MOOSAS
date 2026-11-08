@@ -30,15 +30,8 @@ def _replace_geometry(model, categories, face_ids, normals, faces, holes):
     return model
 
 
-def prepare_boundary_geometry(
-    model: MoosasModel,
-    *,
-    simplify_boundary: bool,
-) -> MoosasModel:
-    """Apply requested boundary operations to a draft geometry model."""
-    if not simplify_boundary:
-        return model
-
+def prepare_boundary_geometry(model: MoosasModel) -> MoosasModel:
+    """Simplify a draft model's boundary geometry into layered boxes."""
     categories, face_ids, normals, faces, holes = geometry_arrays(model.geometryList)
     categories, face_ids, normals, faces, holes = simplify_to_layered_obb(
         categories, normals, faces

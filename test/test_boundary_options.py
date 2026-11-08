@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import pytest
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
 
 from MoosasPy.model import MoosasModel
-from MoosasPy.transform import TransformOptions
+from MoosasPy.transform import TransformOptions, transform
 from MoosasPy.transform.stages.boundary import prepare_boundary_geometry
 from MoosasPy.transform.geometry.element import MoosasGeometry, MoosasWall
-from MoosasPy.transform.stages.classification import classify_model
+from MoosasPy.transform.stages.classification import (
+    classify_horizontal_surfaces, classify_predefined_walls, classify_vertical_surfaces,
+)
 from MoosasPy.transform.stages.validation import validate_model
 from MoosasPy.utils import np, shapely
 
@@ -101,7 +106,9 @@ def test_category_two_vertical_geometry_is_classified_as_air_boundary_wall():
     model.geometryList.append(air_geometry)
     model.geoId.append(air_geometry.faceId)
 
-    classified = classify_model(model, triangulate_faces=False, break_wall_vertical=False)
+    model, ids, walls, _ = classify_horizontal_surfaces(model)
+    model = classify_predefined_walls(model, walls)
+    classified = classify_vertical_surfaces(model, ids)
     air_walls = [wall for wall in classified.wallList if wall.is_air_boundary]
 
     assert len(air_walls) == 1
@@ -110,23 +117,15 @@ def test_category_two_vertical_geometry_is_classified_as_air_boundary_wall():
 
 
 def test_disabled_boundary_operations_preserve_geometry_objects():
-    model = _three_story_box()
-    original_geometry = model.geometryList
-
-    result = prepare_boundary_geometry(
-        model,
-        simplify_boundary=False,
-    )
-
-    assert result is model
-    assert result.geometryList is original_geometry
+    case = Path(__file__).parent / "caseFile" / "test90_restockwithattic.geo"
+    with patch("MoosasPy.transform.pipeline.prepare_boundary_geometry") as simplify:
+        model = transform(str(case), stdout=StringIO())
+    assert model.spaceList
+    simplify.assert_not_called()
 
 
 def test_simplify_boundary_builds_one_obb_per_story():
-    model = prepare_boundary_geometry(
-        _three_story_box(),
-        simplify_boundary=True,
-    )
+    model = prepare_boundary_geometry(_three_story_box())
 
     assert len(model.geometryList) == 18
     assert {
@@ -141,7 +140,4 @@ def test_simplify_boundary_rejects_single_level_geometry():
     model.geometryList = model.geometryList[:1]
 
     with pytest.raises(ValueError, match='at least two horizontal levels'):
-        prepare_boundary_geometry(
-            model,
-            simplify_boundary=True,
-        )
+        prepare_boundary_geometry(model)

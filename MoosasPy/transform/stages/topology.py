@@ -12,36 +12,37 @@ from ..geometry.geos import GeometryError, Vector, overlapArea
 from .glazing import match_face_glazing
 
 
-def build_space_topology(
-    model: MoosasModel,
-    break_wall_vertical: bool,
-) -> MoosasModel:
+def connect_void_spaces(model: MoosasModel) -> MoosasModel:
+    """Connect vertically adjacent voids before building space topology."""
+    model.faceList = list(model.faceList)
+    print("\r2LSB: Checking void connection", end="")
+    for index, void in enumerate(model.voidList):
+        print(f"\r2LSB: Checking void connection {index}/{len(model.voidList)}", end="")
+        if void.floor is None or overlapArea(void.floor.force_2d(), void.edge.force_2d()) <= void.area - geom.AREA_PRECISION:
+            continue
+        meta_voids = [void]
+        while meta_voids[-1] is not None:
+            meta_voids.append(find_void_above(meta_voids[-1]))
+        meta_voids.pop()
+        if not meta_voids or meta_voids[-1].ceiling is None:
+            continue
+        source_voids = meta_voids
+        meta_voids = [MoosasSpace(item.floor, item.edge, item.ceiling) for item in meta_voids]
+        for space_bottom, space_top in zip(meta_voids[:-1], meta_voids[1:]):
+            space_bottom.ceiling, space_top.floor = find_co_ceiling(space_bottom, space_top)
+            model.ceilingList.append(space_bottom.ceiling)
+            model.floorList.append(space_top.floor)
+        if any(space.is_void() for space in meta_voids):
+            continue
+        model.spaceList = list(np.append(model.spaceList, meta_voids))
+        model.voidList = list(set(model.voidList) - set(source_voids))
+    print()
+    return model
+
+
+def build_space_topology(model: MoosasModel) -> MoosasModel:
     """Regenerate space IDs and record space-to-space adjacency."""
     model.faceList = list(model.faceList)
-    if break_wall_vertical:
-        print("\r2LSB: Checking void connection", end="")
-        for index, void in enumerate(model.voidList):
-            print(f"\r2LSB: Checking void connection {index}/{len(model.voidList)}", end="")
-            if void.floor is None or overlapArea(void.floor.force_2d(), void.edge.force_2d()) <= void.area - geom.AREA_PRECISION:
-                continue
-            meta_voids = [void]
-            while meta_voids[-1] is not None:
-                meta_voids.append(find_void_above(meta_voids[-1]))
-            meta_voids.pop()
-            if not meta_voids or meta_voids[-1].ceiling is None:
-                continue
-            source_voids = meta_voids
-            meta_voids = [MoosasSpace(item.floor, item.edge, item.ceiling) for item in meta_voids]
-            for space_bottom, space_top in zip(meta_voids[:-1], meta_voids[1:]):
-                space_bottom.ceiling, space_top.floor = find_co_ceiling(space_bottom, space_top)
-                model.ceilingList.append(space_bottom.ceiling)
-                model.floorList.append(space_top.floor)
-            if any(space.is_void() for space in meta_voids):
-                continue
-            model.spaceList = list(np.append(model.spaceList, meta_voids))
-            model.voidList = list(set(model.voidList) - set(source_voids))
-        print()
-
     print("\r2LSB: Recording Boundary topology", end="")
     _normalize_wall_faces(model)
     for space in model.spaceList:

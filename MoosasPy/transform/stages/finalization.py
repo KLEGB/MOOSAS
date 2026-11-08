@@ -4,29 +4,12 @@ from __future__ import annotations
 from ...model import MoosasModel
 from ...utils import np, shapely
 from ...utils.tools import searchBy
-from .standardization import standardize_model
-from .topology import build_face_topology, build_space_topology
-from .validation import validate_model
-
-
-def finalize_model(
-    model: MoosasModel,
-    *,
-    break_wall_vertical: bool,
-    attach_shading: bool,
-    standardize: bool,
-) -> MoosasModel:
-    """Build topology, then apply optional content attachment and standardization."""
-    model = build_space_topology(model, break_wall_vertical)
-    model = build_face_topology(model)
-    if attach_shading:
-        model = attach_shading_content(model)
-    if standardize:
-        model = standardize_model(model)
+def normalize_air_boundaries(model: MoosasModel) -> MoosasModel:
+    """Convert air boundaries without two distinct spaces to opaque walls."""
     for wall in model.wallList:
         if wall.is_air_boundary and len({str(space_id) for space_id in wall.space}) != 2:
             wall.setCategory(0)
-    return validate_model(model)
+    return model
 
 
 def attach_shading_content(model: MoosasModel) -> MoosasModel:

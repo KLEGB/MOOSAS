@@ -10,20 +10,45 @@ from ..geometry.convexify import convexify_shape
 from ..geometry.cleanse import cleanseDuplicatedLevel
 from ..geometry.element import MoosasElement, MoosasFace, MoosasGlazing, MoosasSkylight, MoosasWall
 from ..geometry.geos import GeometryError, Projection, Vector
-from .splitting import split_vertical_walls
 
 
-def classify_model(
-    model: MoosasModel,
-    triangulate_faces: bool = True,
-    break_wall_vertical: bool = True,
-    attach_shading: bool = False,
-) -> MoosasModel | None:
-    """Classify source geometry into building elements and establish levels."""
+def triangulate_horizontal_faces(model: MoosasModel) -> MoosasModel:
+    """Decompose eligible horizontal faces with holes before classification."""
+    excluded_ids = {
+        geometry.faceId for geometry in model.geometryList
+        if geometry.category in (-2, -1, 3, 4, 5, 6)
+    }
+    deleted_indices = []
+    for index, geometry in enumerate(model.geometryList):
+        if geometry.faceId in excluded_ids:
+            continue
+        print(f"\rLOADING: triangulate horizontal faces {index + 1}/{len(model.geoId)}", end="")
+        if np.abs(Vector.dot(geometry.normal, shapely.points([0, 0, 1]))) >= geom.HORIZONTAL_ANGLE_THRESHOLD:
+            if len(geometry.holes) > 0:
+                projection = Projection.fromPolygon(geometry.face)
+                face_projection = projection.toUV(geometry.face)
+                hole_projections = [projection.toUV(hole) for hole in geometry.holes]
+                split_projections, _ = convexify_shape(face_projection, hole_projections)
+                for split_projection in split_projections:
+                    try:
+                        model.includeGeo(projection.toWorld(split_projection), cat=geometry.category)
+                    except GeometryError as error:
+                        print(f"******Warning: {error}")
+                deleted_indices.append(index)
+
+    model.geoId = list(np.delete(model.geoId, deleted_indices))
+    model.geometryList = list(np.delete(model.geometryList, deleted_indices))
+    print(f"\t\tprocessing faces: {len(deleted_indices)}")
+    return model
+
+
+def classify_horizontal_surfaces(model: MoosasModel):
+    """Classify horizontal surfaces, returning IDs and unmatched sloped faces."""
     model._levels_frozen = False
     classified_ids = []
     predefined_faces = {}
     predefined_walls = []
+    unmatched = []
     for geometry in model.geometryList:
         if geometry.category in (-2, -1):
             classified_ids.append(geometry.faceId)
@@ -34,28 +59,6 @@ def classify_model(
             classified_ids.append(geometry.faceId)
 
     print()
-    if triangulate_faces:
-        deleted_indices = []
-        for index, geometry in enumerate(model.geometryList):
-            if geometry.faceId in classified_ids or geometry.faceId in predefined_faces:
-                continue
-            print(f"\rLOADING: triangulate horizontal faces {index + 1}/{len(model.geoId)}", end="")
-            if np.abs(Vector.dot(geometry.normal, shapely.points([0, 0, 1]))) >= geom.HORIZONTAL_ANGLE_THRESHOLD:
-                if len(geometry.holes) > 0:
-                    projection = Projection.fromPolygon(geometry.face)
-                    face_projection = projection.toUV(geometry.face)
-                    hole_projections = [projection.toUV(hole) for hole in geometry.holes]
-                    split_projections, _ = convexify_shape(face_projection, hole_projections)
-                    for split_projection in split_projections:
-                        try:
-                            model.includeGeo(projection.toWorld(split_projection), cat=geometry.category)
-                        except GeometryError as error:
-                            print(f"******Warning: {error}")
-                    deleted_indices.append(index)
-
-        model.geoId = list(np.delete(model.geoId, deleted_indices))
-        model.geometryList = list(np.delete(model.geometryList, deleted_indices))
-        print(f"\t\tprocessing faces: {len(deleted_indices)}")
 
     def load_surface(geometry):
         predefined = predefined_faces.get(geometry.faceId)
@@ -87,21 +90,33 @@ def classify_model(
                 # An unmatched slope stays geometry/shading, never a cutting level.
                 classified_ids.append(geometry.faceId)
                 print(f"******Warning: {geometry.faceId}: {error}")
-                if attach_shading:
-                    z = float(np.min(shapely.get_coordinates(geometry.face, include_z=True)[:, 2]))
-                    nearest = min(model.levelList, key=lambda level: (abs(level - z), level))
-                    model.shadingList.append(MoosasElement(model, geometry, level=nearest, offset=z-nearest))
+                unmatched.append(geometry)
 
+    print(f"\t\ttotal horizontal faces: {len(model.faceList)} skylights: {len(model.skylightList)}")
+    return model, classified_ids, predefined_walls, unmatched
+
+
+def attach_unmatched_shading(model: MoosasModel, geometries) -> MoosasModel:
+    """Attach sloped surfaces that could not be assigned to a level."""
+    for geometry in geometries:
+        z = float(np.min(shapely.get_coordinates(geometry.face, include_z=True)[:, 2]))
+        nearest = min(model.levelList, key=lambda level: (abs(level - z), level))
+        model.shadingList.append(MoosasElement(model, geometry, level=nearest, offset=z-nearest))
+    return model
+
+
+def classify_predefined_walls(model: MoosasModel, predefined_walls) -> MoosasModel:
+    """Classify explicitly tagged walls and glazing."""
     for geometry, category in predefined_walls:
         geometry.setCategory()
         (model.wallList if category == 3 else model.glazingList).append(
             MoosasWall(model, geometry) if category == 3 else MoosasGlazing(model, geometry)
         )
-    print(f"\t\ttotal horizontal faces: {len(model.faceList)} skylights: {len(model.skylightList)}")
+    return model
 
-    if break_wall_vertical:
-        model = split_vertical_walls(model, classified_ids)
 
+def classify_vertical_surfaces(model: MoosasModel, classified_ids) -> MoosasModel:
+    """Classify remaining vertical source geometry."""
     for index, geometry in enumerate(model.geometryList):
         if geometry.faceId in classified_ids:
             continue

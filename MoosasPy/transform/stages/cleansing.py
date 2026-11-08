@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from ...model import MoosasModel
-from ...utils import np
-from ...utils.tools import searchBy
 from ..geometry.cleanse import (
     cleanseCoplannerLine,
     cleanseDuplicatedWall,
@@ -13,37 +11,23 @@ from ..geometry.cleanse import (
     cleanseOverlapWall,
 )
 from ..geometry.element import MoosasElement
-from .glazing import attach_glazing_to_faces
 
 
-def cleanse_model(
-    model: MoosasModel,
-    *,
-    solve_duplicated: bool,
-    solve_redundant: bool,
-    solve_overlap: bool,
-) -> tuple[MoosasModel, list[int]]:
-    """Clean classified geometry and attach glazing before space generation."""
-    if solve_redundant:
-        model = cleanseCoplannerLine(model)
+def cleanse_coplanar_lines(model: MoosasModel) -> MoosasModel:
+    """Remove redundant coplanar lines from model elements."""
+    return cleanseCoplannerLine(model)
 
+
+def cleanse_invalid_elements(model: MoosasModel) -> MoosasModel:
+    """Remove invalid walls and faces."""
     model = cleanseInvalidWall(model)
-    model = cleanseInvalidFace(model)
-    model = attach_glazing_to_faces(model)
+    return cleanseInvalidFace(model)
 
-    wall_counts = [len(searchBy("level", level, model.wallList)) for level in model.levelList]
-    if solve_redundant:
-        model = cleanseCoplannerLine(model)
-    if solve_duplicated:
-        model = cleanse_duplicate_walls(model)
 
-    model = cleanseInvalidWall(model)
-    model = cleanseInvalidFace(model)
-
-    if solve_overlap:
-        model = cleanseOverlapWall(model)
-        model = cleanseOverlapFace(model)
-    return model, wall_counts
+def cleanse_overlapping_elements(model: MoosasModel) -> MoosasModel:
+    """Clean overlapping walls and faces."""
+    model = cleanseOverlapWall(model)
+    return cleanseOverlapFace(model)
 
 
 def cleanse_duplicate_walls(model: MoosasModel) -> MoosasModel:

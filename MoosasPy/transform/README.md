@@ -15,6 +15,13 @@ formats.
 
 The pipeline decides whether to split intersecting walls and remove resulting
 duplicates; the corresponding stages perform those operations without option flags.
+After boundary generation, the pipeline packs edges and selects core/perimeter
+partitioning when `insert_core` is enabled, convex partitioning when only
+`divided_zones` is enabled, or no partitioning otherwise, before assembling spaces.
+It also selects boundary simplification, source-face decomposition, vertical wall
+splitting, cleansing operations, void connection, shading, and standardization.
+Space assembly still receives `solve_overlap` because it controls both horizontal
+intersection processing and floor capping during floor matching.
 
 Complete model formats are owned by `MoosasPy.model.io` and exposed through
 `MoosasModel.load()` and `model.save()`.

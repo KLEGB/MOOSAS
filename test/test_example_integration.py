@@ -13,11 +13,18 @@ from MoosasPy.simulation.weather import Location
 from MoosasPy.simulation.weather.epw import read_weather_csv
 from MoosasPy.transform import transform
 from MoosasPy.transform.pipeline import _load_geometry_source
-from MoosasPy.transform.stages.classification import classify_model
-from MoosasPy.transform.stages.cleansing import cleanse_model
+from MoosasPy.transform.stages.classification import (
+    classify_horizontal_surfaces, classify_predefined_walls,
+    classify_vertical_surfaces, triangulate_horizontal_faces,
+)
+from MoosasPy.transform.stages.cleansing import (
+    cleanse_coplanar_lines, cleanse_duplicate_walls, cleanse_invalid_elements,
+    cleanse_overlapping_elements,
+)
+from MoosasPy.transform.stages.glazing import attach_glazing_to_faces
 from MoosasPy.transform.stages.generation import CCRSpaceGeneration
 from MoosasPy.model.io.xml import build_xml
-from MoosasPy.transform.stages.splitting import split_wall_intersections
+from MoosasPy.transform.stages.splitting import split_vertical_walls, split_wall_intersections
 from MoosasPy.transform.stages.validation import validate_model
 from MoosasPy.utils import np
 from MoosasPy.utils.tools import native_platform, path
@@ -76,7 +83,11 @@ class ExampleIntegrationTests(unittest.TestCase):
 
     def test_classification_stage_builds_elements_before_topology(self):
         model = _load_geometry_source(str(GEOMETRY_FIXTURE), "geo")
-        classified_model = classify_model(model)
+        model = triangulate_horizontal_faces(model)
+        model, ids, walls, _ = classify_horizontal_surfaces(model)
+        model = classify_predefined_walls(model, walls)
+        model = split_vertical_walls(model, ids)
+        classified_model = classify_vertical_surfaces(model, ids)
 
         self.assertIs(classified_model, model)
         self.assertEqual(len(model.faceList), 144)
@@ -89,16 +100,21 @@ class ExampleIntegrationTests(unittest.TestCase):
     def test_generation_stage_builds_boundaries_before_assembly(self):
         model = _load_geometry_source(str(GEOMETRY_FIXTURE), "geo")
         with redirect_stdout(StringIO()):
-            model = classify_model(model)
+            model = triangulate_horizontal_faces(model)
+            model, ids, walls, _ = classify_horizontal_surfaces(model)
+            model = classify_predefined_walls(model, walls)
+            model = split_vertical_walls(model, ids)
+            model = classify_vertical_surfaces(model, ids)
             model.faceList = np.array(model.faceList)
             model.wallList = np.array(model.wallList)
             model.glazingList = np.array(model.glazingList)
-            model, _ = cleanse_model(
-                model,
-                solve_duplicated=True,
-                solve_redundant=True,
-                solve_overlap=True,
-            )
+            model = cleanse_coplanar_lines(model)
+            model = cleanse_invalid_elements(model)
+            model = attach_glazing_to_faces(model)
+            model = cleanse_coplanar_lines(model)
+            model = cleanse_duplicate_walls(model)
+            model = cleanse_invalid_elements(model)
+            model = cleanse_overlapping_elements(model)
             model = split_wall_intersections(model)
             model = CCRSpaceGeneration(model)
 

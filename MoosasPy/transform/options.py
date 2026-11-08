@@ -17,5 +17,5 @@ class TransformOptions:
     attach_shading: bool = False
     divided_zones: bool = False
     simplify_boundary: bool = False
-    insert_core: bool = False  # Offset thermal zoning; no physical shaft insertion.
+    insert_core: bool = False  
     standardize: bool = False

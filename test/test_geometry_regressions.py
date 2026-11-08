@@ -28,8 +28,11 @@ from MoosasPy.transform.geometry.planar_graph import TopoEdge
 from MoosasPy.transform.geometry.polygon import GeometryOperator, GeometryValidator
 from MoosasPy.transform.geometry.contour import _merge_tiny_partitions
 from MoosasPy.transform.stages.convexification import convexify_model
-from MoosasPy.transform.stages.classification import classify_model
-from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_model
+from MoosasPy.transform.stages.classification import (
+    classify_horizontal_surfaces, classify_predefined_walls, classify_vertical_surfaces,
+)
+from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_invalid_elements
+from MoosasPy.transform.stages.glazing import attach_glazing_to_faces
 from MoosasPy.transform.stages.splitting import split_wall_intersections
 from MoosasPy.transform.stages.topology import _normalize_horizontal_faces, build_space_topology
 from MoosasPy.utils import GeometryError, shapely
@@ -199,7 +202,7 @@ def test_partial_shared_walls_are_split_and_linked_before_export(origin, virtual
         model.spaceList.append(space)
         model.wallList.extend(walls)
 
-    build_space_topology(model, False)
+    build_space_topology(model)
 
     shared = [wall for wall in model.wallList if not wall.isOuter]
     assert len(shared) == 1
@@ -211,7 +214,7 @@ def test_partial_shared_walls_are_split_and_linked_before_export(origin, virtual
     assert sum(space.area for space in model.spaceList) == pytest.approx(64)
     assert model.spaceList[0].neighbor.keys() == {"room-1"}
     wall_count = len(model.wallList)
-    build_space_topology(model, False)
+    build_space_topology(model)
     assert len(model.wallList) == wall_count
     assert sum(wall.area for wall in model.wallList if wall.isOuter) == pytest.approx(108)
 
@@ -483,14 +486,13 @@ def test_attach_shading_controls_explicit_shading_faces():
             MoosasGeometry(face, "shade", shapely.points([0.0, 0.0, 1.0]), -1),
         ]
         model.geoId = [geometry.faceId for geometry in model.geometryList]
-        model = classify_model(model, attach_shading=attach_shading)
+        model, ids, walls, _ = classify_horizontal_surfaces(model)
+        model = classify_predefined_walls(model, walls)
+        model = classify_vertical_surfaces(model, ids)
         assert model.shadingList == []
-        model, _ = cleanse_model(
-            model,
-            solve_duplicated=False,
-            solve_redundant=False,
-            solve_overlap=False,
-        )
+        model = cleanse_invalid_elements(model)
+        model = attach_glazing_to_faces(model)
+        model = cleanse_invalid_elements(model)
         if attach_shading:
             model = attach_explicit_shading(model)
         return model

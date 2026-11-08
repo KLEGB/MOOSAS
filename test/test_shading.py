@@ -9,8 +9,11 @@ from MoosasPy.simulation.radiation.calculation import (
 )
 from MoosasPy.transform.geometry.element import MoosasGeometry
 from MoosasPy.transform.geometry.geos import Ray, Vector
-from MoosasPy.transform.stages.classification import classify_model
-from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_model
+from MoosasPy.transform.stages.classification import (
+    classify_horizontal_surfaces, classify_predefined_walls, classify_vertical_surfaces,
+)
+from MoosasPy.transform.stages.cleansing import attach_explicit_shading, cleanse_invalid_elements
+from MoosasPy.transform.stages.glazing import attach_glazing_to_faces
 from MoosasPy.utils import shapely
 
 
@@ -44,13 +47,12 @@ def test_attached_shading_blocks_radiation():
             ),
         ]
         model.geoId = [geometry.faceId for geometry in model.geometryList]
-        model = classify_model(model, attach_shading=attach_shading)
-        model, _ = cleanse_model(
-            model,
-            solve_duplicated=False,
-            solve_redundant=False,
-            solve_overlap=False,
-        )
+        model, ids, walls, _ = classify_horizontal_surfaces(model)
+        model = classify_predefined_walls(model, walls)
+        model = classify_vertical_surfaces(model, ids)
+        model = cleanse_invalid_elements(model)
+        model = attach_glazing_to_faces(model)
+        model = cleanse_invalid_elements(model)
         if attach_shading:
             model = attach_explicit_shading(model)
         return model

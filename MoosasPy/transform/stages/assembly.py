@@ -6,22 +6,35 @@ from ...utils import mixItemListToList, np, shapely
 from ...utils.constant import geom
 from ...utils.tools import searchBy
 from ..geometry.cleanse import solveIntersectionHorizontal
-from ..geometry.contour import overhead_projection, packing_edges
+from ..geometry import contour
+from ..geometry.contour import overhead_projection
 from ...model.space import MoosasSpace
 from ...model.boundary import MoosasEdge, MoosasFloor
 from ..geometry.element import MoosasFace, MoosasSkylight
 from ..geometry.geos import GeometryError, Vector, overlapArea
 
 
+def pack_boundaries(model: MoosasModel) -> MoosasModel:
+    """Pack generated wall boundaries into model edges."""
+    return contour.packing_edges(model)
+
+
+def partition_core(model: MoosasModel) -> MoosasModel:
+    """Partition packed boundaries into core and perimeter zones."""
+    return contour.partition_core_edges(model)
+
+
+def partition_convex(model: MoosasModel) -> MoosasModel:
+    """Partition packed boundaries into convex zones."""
+    return contour.partition_convex_edges(model)
+
+
 def assemble_model(
     model: MoosasModel,
     *,
-    divided_zones: bool,
     solve_overlap: bool,
-    insert_core: bool = False,
 ) -> MoosasModel:
-    """Assemble edges and spaces from a model with generated boundaries."""
-    model = packing_edges(model, divided_zones, insert_core=insert_core)
+    """Assemble spaces from the model's packed and partitioned edges."""
     if solve_overlap:
         model = solveIntersectionHorizontal(model)
     model = pack_model(model, solve_overlap)
