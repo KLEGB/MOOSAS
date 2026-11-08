@@ -300,7 +300,8 @@ class SimulationContractTests(unittest.TestCase):
 
         record = building_templates()["CN/GB55015-2021/3A/Office"]
         settings = {"zone_template": record['id']}
-        space = SimpleNamespace(id="z1", area=100., settings=settings, explicit_settings=set())
+        space = SimpleNamespace(id="z1", area=100., settings=settings, explicit_settings=set(),
+                                conditioned=True)
         coupler = object.__new__(EnergyAirflowCoupler)
         coupler.model = SimpleNamespace(buildingTemplate={record['id']: record},
                                        schedule={"probe": {"type": "Daily", "value": [2.0] * 24}})

@@ -765,12 +765,6 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         lighting = program('zone_lighting')*area
         heat = program('zone_h_temp')
         cool = program('zone_c_temp')
-        heating_available = program('zone_heating_availability')
-        cooling_available = program('zone_cooling_availability')
-        if not np.all(np.isin(heating_available, (0, 1))) or not np.all(np.isin(cooling_available, (0, 1))):
-            raise ValueError(f'{space.id}: heating/cooling availability requires 0 or 1')
-        heat = np.where(heating_available > 0, heat, np.nan)
-        cool = np.where(cooling_available > 0, cool, np.nan)
         controlled = np.isfinite(heat) & np.isfinite(cool)
         if np.any(heat[controlled]>cool[controlled]):
             raise ValueError(f'{space.id}: heating setpoint exceeds cooling')

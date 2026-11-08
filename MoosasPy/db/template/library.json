@@ -35,61 +35,32 @@
     "unspecified_ground_insulation_r": 1.0,
     "unspecified_resistance_m2k_w": 1.0
   },
-  "version": 5,
   "operational_metadata": {
     "room_types": {
+      "Residential": {
+        "bedroom": "卧室",
+        "living_room": "起居室",
+        "kitchen": "厨房",
+        "bathroom": "卫生间",
+        "auxiliary_room": "辅助房间"
+      },
       "other_buildings": {
         "default": "Whole-building standard profile"
+      },
+      "Hospital": {
+        "outpatient": "门诊",
+        "inpatient": "住院"
       }
     },
-    "calendar": {
-      "year": 2021,
-      "timezone": "Asia/Shanghai",
-      "source_url": "https://www.gov.cn/zhengce/zhengceku/2020-11/25/content_5564127.htm",
-      "holiday_ranges": [
-        [
-          "2021-01-01",
-          "2021-01-03"
-        ],
-        [
-          "2021-02-11",
-          "2021-02-17"
-        ],
-        [
-          "2021-04-03",
-          "2021-04-05"
-        ],
-        [
-          "2021-05-01",
-          "2021-05-05"
-        ],
-        [
-          "2021-06-12",
-          "2021-06-14"
-        ],
-        [
-          "2021-09-19",
-          "2021-09-21"
-        ],
-        [
-          "2021-10-01",
-          "2021-10-07"
-        ]
-      ],
-      "makeup_workdays": [
-        "2021-02-07",
-        "2021-02-20",
-        "2021-04-25",
-        "2021-05-08",
-        "2021-09-18",
-        "2021-09-26",
-        "2021-10-09"
-      ],
-      "workday_count": 250,
-      "rule": "Monday-Friday except official holidays; official weekend makeup days are workdays."
-    },
     "building_types": [
-      "Office"
+      "Office",
+      "Hotel",
+      "School",
+      "Hospital",
+      "CommercialLarge",
+      "CommercialSmall",
+      "Residential",
+      "Industrial"
     ]
   }
 }

@@ -81,8 +81,11 @@ Energy and daylight consume the selected template's operating and envelope
 parameters directly. Set `zone_room` on each space before applying a hospital
 or residential template. Occupancy, equipment, and lighting schedules are
 multiplied by their template densities before simulation. Heating and cooling
-setpoints and availability are resolved independently; `null` setpoints disable
-only that mode. AFN internal gains use the same resolved operating values;
+use one `hvac_availability` operating schedule (GB table C.0.6-1) and separate
+setpoints (table C.0.6-2). `null` disables only that mode; the total HVAC
+schedule gates both modes without changing their temperature targets.
+Separate heating/cooling availability fields are not supported.
+AFN internal gains use the same resolved operating values;
 template envelope leakage and opening ratios are not wired to AFN yet.
 
 ## Development

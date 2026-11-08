@@ -65,12 +65,6 @@
           }
         },
         "system": {
-          "cooling_availability": {
-            "mode": "schedule",
-            "file": "schedules/office.sch",
-            "name": "default_cooling_availability",
-            "unit": "1"
-          },
           "cooling_setpoint": {
             "mode": "schedule",
             "file": "schedules/office.sch",
@@ -81,11 +75,6 @@
             "mode": "constant",
             "unit": "1",
             "value": 3.5
-          },
-          "heating_availability": {
-            "mode": "constant",
-            "value": 1,
-            "unit": "1"
           },
           "heating_setpoint": {
             "mode": "schedule",

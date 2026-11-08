@@ -215,6 +215,8 @@ def validate_template_snapshot(settings):
     """Reject obsolete per-space snapshots; templates now belong to the model."""
     if '_thermal_template' in settings or '_building_template' in settings:
         raise ValueError('Per-space template snapshots are unsupported; reapply the building template explicitly')
+    if {'zone_heating_availability', 'zone_cooling_availability'} & settings.keys():
+        raise ValueError('Separate heating/cooling availability is unsupported; use hvac_enabled and setpoints')
 
 
 def _validate_template_snapshot(profile):
@@ -231,7 +233,7 @@ def _validate_template_snapshot(profile):
         'air_exchange': {'infiltration'},
         'internal_gains': {'occupancy_density', 'equipment_power_density', 'lighting_power_density',
                            'occupancy_fraction', 'equipment_usage', 'lighting_usage'},
-        'system': {'heating_availability', 'cooling_availability', 'hvac_availability'},
+        'system': {'hvac_availability'},
     }
     for room, values in space.items():
         if not isinstance(room, str) or not room or not isinstance(values, dict) or set(values) != set(required):
@@ -242,6 +244,8 @@ def _validate_template_snapshot(profile):
                 raise ValueError(f'Space/{room}/{domain}: missing required parameters')
             if domain == 'internal_gains' and 'occupant_heat' in parameters:
                 raise ValueError(f'Space/{room}/internal_gains/occupant_heat is not a template parameter')
+            if domain == 'system' and {'heating_availability', 'cooling_availability'} & parameters.keys():
+                raise ValueError(f'Space/{room}/system: separate heating/cooling availability is unsupported')
             _validate_parameter_sources(parameters, f'Space/{room}/{domain}', resolved=True)
     envelope = template['Envelope']
     expected_groups = {
@@ -453,6 +457,8 @@ def expand_schedule(model, value, label, cache=None, *, allow_nan=False):
 
 def resolve_zone_settings(space, profile, overrides=None, *, template_overrides_model=False):
     """Resolve template values and explicit edits once at the simulation boundary."""
+    validate_template_snapshot(space.settings)
+    validate_template_snapshot(overrides or {})
     settings = dict(space.settings)
     settings.pop('zone_popheat', None)
     if overrides and 'zone_popheat' in overrides:
@@ -468,24 +474,6 @@ def resolve_zone_settings(space, profile, overrides=None, *, template_overrides_
             raise ValueError(f'{space.id}/{key}: explicit parameter has no value')
         if key not in explicit:
             settings[key] = template_parameter(profile, key, room)
-    availability_by_mode = {}
-    for mode in ('heating', 'cooling'):
-        availability = expand_schedule(
-            None, _room_source(profile, room, 'system', f'{mode}_availability'),
-            f'{space.id}/{mode}_availability')
-        source = _room_source(profile, room, 'system', f'{mode}_setpoint')
-        target = expand_schedule(
-            None, source if source is not None else [None] * 8760,
-            f'{space.id}/{mode}_setpoint', allow_nan=True)
-        if not np.all(np.isin(availability, (0, 1))):
-            raise ValueError(f'{space.id}/{mode}_availability: requires 0 or 1')
-        if not np.array_equal(np.isfinite(target), availability.astype(bool)):
-            raise ValueError(f'{space.id}/{mode}: setpoint and availability disagree')
-        key = f'zone_{"h" if mode == "heating" else "c"}_temp'
-        if key not in explicit:
-            settings[key] = source if source is not None else [None] * 8760
-        settings[f'zone_{mode}_availability'] = availability.tolist()
-        availability_by_mode[mode] = availability
     general_availability = expand_schedule(
         None, _room_source(profile, room, 'system', 'hvac_availability'),
         f'{space.id}/hvac_availability')
@@ -493,17 +481,14 @@ def resolve_zone_settings(space, profile, overrides=None, *, template_overrides_
         raise ValueError(f'{space.id}/hvac_availability: requires 0 or 1')
     settings['zone_hvac_availability'] = general_availability.tolist()
     settings.update(overrides or {})
-    for mode, key in (('heating', 'zone_h_temp'), ('cooling', 'zone_c_temp')):
-        if key in explicit or (overrides and key in overrides):
-            if settings[key] is None:
-                raise ValueError(f'{space.id}/{key}: explicit parameter has no value')
-            target = expand_schedule(
-                getattr(space, 'parent', None), settings[key], f'{space.id}/{key}', allow_nan=True)
-            availability_by_mode[mode] = np.isfinite(target).astype(float)
-            settings[f'zone_{mode}_availability'] = availability_by_mode[mode].tolist()
-    if 'hvac_enabled' not in explicit and not (overrides and 'hvac_enabled' in overrides):
-        settings['hvac_enabled'] = np.maximum(
-            availability_by_mode['heating'], availability_by_mode['cooling']).tolist()
+    for key in ('zone_h_temp', 'zone_c_temp', 'hvac_enabled'):
+        if settings[key] is None:
+            raise ValueError(f'{space.id}/{key}: explicit parameter has no value')
+        values = expand_schedule(
+            getattr(space, 'parent', None), settings[key], f'{space.id}/{key}',
+            allow_nan=key != 'hvac_enabled')
+        if key == 'hvac_enabled' and not np.all(np.isin(values, (0, 1))):
+            raise ValueError(f'{space.id}/{key}: requires 0 or 1')
     return settings
 
 

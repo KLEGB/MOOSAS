@@ -228,6 +228,8 @@ class BalanceModel:
             name = str(zone.get('userName', key))
             settings = resolve_zone_settings(spaces[name], space_template(model, spaces[name]))
             self.programs[name] = {**settings, **zone}
+            if not spaces[name].conditioned:
+                self.programs[name]['hvac_enabled'] = 0.
         self.gain_resolver = gain_resolver
         self.prj_order = tuple(p for p, _ in mapping)
         return self
@@ -350,16 +352,13 @@ class BalanceModel:
                     float(q.get('solar_w', 0)), p.mass_surface_heat_transfer_w_m2k,
                     p.surface_air_heat_transfer_w_m2k, p.internal_gain_air_fraction)
                 tm[i], ta[i], ts[i] = self._zone(*args)
-                program = self.programs.get(z, {})
-                if ideal_hvac:
+                if ideal_hvac and self._program_value(z, 'hvac_enabled', hoy, 0.) > 0:
                     setpoint = None
                     heat = self._program_value(z, 'zone_h_temp', hoy, float('nan'))
                     cool = self._program_value(z, 'zone_c_temp', hoy, float('nan'))
-                    heat_available = self._program_value(z, 'zone_heating_availability', hoy, 0.) > 0
-                    cool_available = self._program_value(z, 'zone_cooling_availability', hoy, 0.) > 0
-                    if heat_available and np.isfinite(heat) and ta[i] < heat:
+                    if np.isfinite(heat) and ta[i] < heat:
                         setpoint = heat
-                    elif cool_available and np.isfinite(cool) and ta[i] > cool:
+                    elif np.isfinite(cool) and ta[i] > cool:
                         setpoint = cool
                     if setpoint is not None:
                         probe = self._zone(*args, 10.0 * self.area[i])

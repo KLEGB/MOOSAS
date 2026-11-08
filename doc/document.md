@@ -470,6 +470,7 @@ Important energy-setting fields include:
 | `zone_winU` | Window U-value in W/(m²·K). |
 | `zone_win_SHGC` | Window solar heat-gain coefficient. |
 | `zone_c_temp`, `zone_h_temp` | Cooling and heating set points in °C; `null` disables that mode. |
+| `hvac_enabled` | Total HVAC operating permission, from template `hvac_availability` unless explicitly overridden; 0 off / 1 on. |
 | `zone_collingEER`, `zone_HeatingEER` | Cooling and heating efficiency values. |
 | `zone_ppsm` | Effective hourly occupant density in people/m². |
 | `zone_pfav` | Effective outdoor-air requirement per person after availability schedule. |
@@ -478,7 +479,7 @@ Important energy-setting fields include:
 | `zone_template` | Applied template identifier. |
 | `zone_room` | Room-group key for a multi-room template. |
 
-Building templates use a version 5 catalog maintained in the independent
+Building templates use a catalog maintained in the independent
 [MOOSAS-BuildingTemplate repository](https://github.com/KLEGB/MOOSAS-BuildingTemplate)
 and a shared runtime adapter in `MoosasPy/model/building_templates.py`.
 The package bundles only the version-5 Office 3A template and its required
@@ -511,9 +512,15 @@ values. `null` is allowed only for temperature setpoints and means that mode is
 off. The loader resolves schedules and stores the complete version 5 record in
 the model snapshot. Occupancy density, equipment power density, and lighting
 power density are each multiplied by their own hourly usage schedule. Fresh-air
-rate is multiplied by its availability schedule. Heating and cooling controls
-remain independent; general HVAC availability does not erase their
-mode-specific targets. The catalog files contain direct construction values;
+rate is multiplied by its availability schedule. The single `hvac_availability`
+follows GB table C.0.6-1; heating/cooling setpoints follow table C.0.6-2.
+Both modes require total HVAC permission and a non-null setpoint. Temperature
+targets are preserved outside operating hours, but do not trigger control while
+HVAC is off, including office holiday heating at 5 °C. Explicit `hvac_enabled`
+overrides replace the template permission; changing a setpoint does not change
+it. Separate heating/cooling availability fields and zone overrides are not
+supported; old snapshots must be updated before use.
+The catalog files contain direct construction values;
 Energy maps U-value, R-value, and SHGC into its surface model with the declared
 package assumptions. Visible reflectance/transmittance remain separate from
 solar optics.

@@ -251,6 +251,13 @@ def test_template_drives_energy_inputs_once_per_zone(tmp_path, template_weather,
                            zone_overrides={space.id: {'zone_popheat': 150.}})
     np.testing.assert_array_equal(
         zone.hvac_enabled, resolved['hvac_enabled'])
+    holiday = request.hour(0)[0]
+    assert holiday['heat_setpoint_c'] == 5
+    assert not holiday['hvac_enabled']
+    workday = request.hour(3 * 24 + 6)[0]
+    assert workday['heat_setpoint_c'] == 18
+    assert workday['cool_setpoint_c'] == 28
+    assert workday['hvac_enabled']
     space.settings['zone_equipment'] = 12.
     space.explicit_settings.append('zone_equipment')
     overridden = build_energy_input(model, template_weather, hours=24,

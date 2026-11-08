@@ -57,7 +57,7 @@ class EnergyAirflowCoupler(object):
                     "zone_c_hum", "zone_h_temp",
                     "zone_collingEER", "zone_HeatingEER", "zone_ppsm", "zone_pfav",
                     "zone_equipment", "zone_lighting", "zone_infiltration", "zone_name",
-                    "zone_heating_availability", "zone_cooling_availability", "zone_hvac_availability",
+                    "hvac_enabled", "zone_hvac_availability",
                     "zone_summerrad", "zone_winterrad", "zone_template"
                     ]
     AFN_INDEX = ['userName', 'temperature', 'prjIndex', 'prjName', 'heatLoad', 'volume', 'position_x', 'position_y',
@@ -252,6 +252,8 @@ class EnergyAirflowCoupler(object):
             settings = resolve_zone_settings(space, space_template(self.model, space))
             zone.update({key: deepcopy(settings[key]) for key in self.ENERGY_INDEX
                          if settings.get(key) is not None})
+            if not space.conditioned:
+                zone['hvac_enabled'] = 0.
         return dict(zones=zoneDict, paths=pathDict, schemaVersion=NETWORK_SCHEMA_VERSION,
                     levels=[dict(level) for level in network.levels])
 
@@ -830,7 +832,11 @@ class EnergyAirflowCoupler(object):
             occupied = self._resolve_zone_series_value(zone_dict, hoy, "zone_ppsm") > 0.0
             comfort_signal.append(bool(hvac_on))
             occupancy.append(bool(occupied))
-            availability.append(bool(hvac_on and occupied))
+            enabled = self._resolve_zone_series_value(zone_dict, hoy, "hvac_enabled") > 0
+            heat = self._resolve_zone_series_value(zone_dict, hoy, "zone_h_temp", float('nan'))
+            cool = self._resolve_zone_series_value(zone_dict, hoy, "zone_c_temp", float('nan'))
+            availability.append(bool(hvac_on and occupied and enabled
+                                     and (np.isfinite(heat) or np.isfinite(cool))))
         return comfort_signal, occupancy, availability
 
     def _startup_cooling_schedule(self, zone_dict, hoys, availability, temperatures):
@@ -838,13 +844,13 @@ class EnergyAirflowCoupler(object):
         was_on = False
         for i, hoy in enumerate(hoys):
             now_on = bool(availability[i]) if i < len(availability) else False
+            setpoint = self._resolve_zone_series_value(zone_dict, hoy, "zone_c_temp", float('nan'))
+            now_on = bool(now_on and np.isfinite(setpoint)
+                          and self._resolve_zone_series_value(zone_dict, hoy, "hvac_enabled") > 0)
             startup = now_on and not was_on
             temp = float(temperatures[i]) if i < len(temperatures) else np.nan
-            setpoint = self._resolve_zone_series_value(zone_dict, hoy, "zone_c_temp", float('nan'))
-            cooling_available = self._resolve_zone_series_value(
-                zone_dict, hoy, "zone_cooling_availability", 0.0) > 0
             loads.append(0.0458 * max(temp - setpoint, 0.0)
-                         if startup and cooling_available and np.isfinite(temp) and np.isfinite(setpoint) else 0.0)
+                         if startup and np.isfinite(temp) else 0.0)
             events.append(bool(startup))
             was_on = now_on
         return loads, events

@@ -108,25 +108,27 @@ def test_room_selection_and_usage_multiplication(office_record):
         resolve_zone_settings(_space(), profile)
 
 
-def test_nullable_setpoints_and_independent_mode_availability(office_record):
+def test_nullable_setpoints_and_hvac_operating_hours(office_record):
     values = resolve_zone_settings(_space(), office_record)
     assert np.isnan(np.asarray(values['zone_c_temp'], dtype=float)).any()
-    assert np.any(np.asarray(values['zone_cooling_availability']) == 0)
     assert np.all(np.isfinite(values['zone_h_temp']))
-    assert np.all(np.isin(values['zone_heating_availability'], (0, 1)))
-    assert np.all(np.isin(values['zone_hvac_availability'], (0, 1)))
+    availability = np.asarray(values['hvac_enabled'])
+    np.testing.assert_array_equal(availability, values['zone_hvac_availability'])
+    assert np.all(np.isin(availability, (0, 1)))
+    np.testing.assert_array_equal(availability[:24], np.zeros(24))
+    np.testing.assert_array_equal(values['zone_h_temp'][:24], np.full(24, 5))
 
 
-def test_explicit_setpoint_controls_update_mode_availability(office_record):
+def test_explicit_setpoint_does_not_change_hvac_operating_hours(office_record):
     setpoint = [None] * 8760
     setpoint[12] = 18
     space = _space(settings={'zone_h_temp': setpoint})
     space.explicit_settings = ['zone_h_temp']
     values = resolve_zone_settings(space, office_record)
-    assert values['zone_heating_availability'][12] == 1
-    assert values['zone_heating_availability'][11] == 0
-    assert values['hvac_enabled'][12] == 1
-    assert values['hvac_enabled'][11] == values['zone_cooling_availability'][11]
+    assert values['zone_h_temp'][12] == 18
+    assert values['zone_h_temp'][11] is None
+    np.testing.assert_array_equal(values['hvac_enabled'], values['zone_hvac_availability'])
+    assert values['hvac_enabled'][12] == 0
 
 
 def test_model_snapshot_round_trip_is_self_contained(local_library):

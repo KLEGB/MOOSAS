@@ -318,8 +318,9 @@ def solve_latent_load(*, zone_c, outdoor_c, pressure_pa, outdoor_humidity_ratio,
 
     Volumes are actual outdoor m3/s. Negative outdoor moisture terms are drying
     credits and are combined BEFORE clipping the net dehumidification demand.
-    Control follows the existing hourly hvac_enabled setting; when available
-    it is independent of whether sensible cooling is needed. No humidification demand is supplied.
+    The runner requires hourly HVAC permission and a non-null cooling setpoint.
+    When available, control is independent of sensible cooling demand.
+    No humidification demand is supplied.
     """
     zone_c = _finite(zone_c, 'zone temperature')
     outdoor_c = _finite(outdoor_c, 'outdoor temperature')
@@ -544,12 +545,13 @@ class EnergyRunner:
                                       zone.lighting_w[h]/1000,zone.equipment_w[h]/1000)
                     temperatures[i,hour] = row['zone_c']
                     if latent_arrays is not None:
+                        cooling_enabled = bool(zone.hvac_enabled[h] and np.isfinite(zone.cool_setpoint_c[h]))
                         moisture = solve_latent_load(zone_c=row['zone_c'],outdoor_c=float(request.weather.temperature[h]),
                             pressure_pa=float(request.weather.pressure[h]),outdoor_humidity_ratio=float(request.weather.humidity_ratio[h]),
                             people_moisture_kg_s=float(zone.people_moisture_kg_s[h]),
                             fresh_air_m3_s=float(zone.fresh_air_m3_h[h])/3600,
-                            infiltration_m3_s=float(zone.infiltration_m3_h[h])/3600,rh_max=float(zone.cool_rh_fraction[h]),control_enabled=bool(zone.hvac_enabled[h]))
-                        if moisture['status']=='no_steady_state' or (not zone.hvac_enabled[h] and moisture['free_supersaturated']):
+                            infiltration_m3_s=float(zone.infiltration_m3_h[h])/3600,rh_max=float(zone.cool_rh_fraction[h]),control_enabled=cooling_enabled)
+                        if moisture['status']=='no_steady_state' or (not cooling_enabled and moisture['free_supersaturated']):
                             moisture_issues.add(zone.zone_id)
                         row['latent'] = moisture
                         row['sensible_cooling_w'] = max(-q,0.)
