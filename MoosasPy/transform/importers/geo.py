@@ -302,8 +302,7 @@ def _readGeo(file_path, *, snap_coordinates=True) -> list[MoosasGeometry]:
 
 def _roundPolygons(polygons: np.ndarray[shapely.Geometry], precision: float) -> np.ndarray:
     """
-    round the coordinates of polygons according to precision.
-    graping the next near coordinates (x,y,z) to the past if their distance is less than precision.
+    Round each coordinate to the declared grid without clustering unrelated vertices.
 
         Args:
             polygons(np.ndarray[shapely.Geometry]): polygons in np.ndarray format
@@ -312,23 +311,13 @@ def _roundPolygons(polygons: np.ndarray[shapely.Geometry], precision: float) -> 
         Returns:
             np.ndarray rounded polygons
     """
-    coordinates, coorLengthIndex = [], [0]
-    for p in polygons:
-        coor = shapely.get_coordinates(p, include_z=True)
-        coordinates += list(coor)
-        coorLengthIndex += [coorLengthIndex[-1] + len(coor)]
-    coordinates = np.array(coordinates)
-    for dim in range(3):
-        xIndex = np.argsort(coordinates[:, dim].flatten())
-        xReindex = np.argsort(xIndex)
-        coordinates = coordinates[xIndex]
-        for i in range(1, len(xIndex) - 1):
-            if np.abs(coordinates[i][dim] - coordinates[i + 1][dim]) < precision:
-                coordinates[i + 1][dim] = coordinates[i][dim]
-        coordinates = coordinates[xReindex]
-    coordinates = geom.round(coordinates, precision)
-    coordinates = [coordinates[idxS:idxE] for idxS, idxE in zip(coorLengthIndex[:-1], coorLengthIndex[1:])]
-    return np.array([shapely.polygons(coors) for coors in coordinates])
+    # Global per-axis clustering can join vertices metres apart merely
+    # because their X coordinates differ by one grid unit. Floating-point
+    # .001 comparisons then collapse legitimate short edges and can turn a
+    # valid narrow polygon into a self-crossing ring. Shared coordinates are
+    # already made identical by pointwise grid rounding.
+    return np.asarray([shapely.Polygon(geom.round(
+        shapely.get_coordinates(p,include_z=True),precision)) for p in polygons])
 
 
 def _readGeoLegacy(file_path) -> list[MoosasGeometry]:

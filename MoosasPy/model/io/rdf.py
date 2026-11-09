@@ -320,7 +320,17 @@ class MoosasRDF(Graph):
         self.encodeStorey(model)
         spaces = []
         self.skipped_spaces = []
-        for space in model.spaceList + model.voidList:
+        pending_spaces = list(model.spaceList) + list(model.voidList)
+        seen_spaces = set()
+        while pending_spaces:
+            space = pending_spaces.pop(0)
+            if id(space) in seen_spaces:
+                continue
+            seen_spaces.add(id(space))
+            # Nested unbounded voids need not be in the model's top-level
+            # lists. Omitting their entities leaves dangling containsZone
+            # references and changes the parent's effective footprint.
+            pending_spaces.extend(space.void)
             # A void is intentionally allowed to have no floor or ceiling.  Its
             # boundary topology is still needed by downstream model viewers.
             if self._space_has_complete_topology(space) or self._space_has_void_topology(space):
@@ -1103,11 +1113,27 @@ class MoosasRDF(Graph):
             apply_element_settings(element)
             return element
 
-        offset = float(self.getObject(elementUri, self.moosas.Offset))
-        level = self.getObject(elementUri, self.moosas.hasLevel)
-        level = float(self.getObject(URIRef(str(level)), self.moosas.altitute))
+        # Generated RDF may repeat scalar predicates; tolerate that standard
+        # graph behavior by selecting the first scalar value. Missing offsets
+        # are equivalent to the model default (zero).
+        raw_offset = _first_or_none(self.getObject(elementUri, self.moosas.Offset))
+        offset = float(_literal_to_python(raw_offset)) if raw_offset is not None else 0.0
+        level = _first_or_none(self.getObject(elementUri, self.moosas.hasLevel))
+        raw_altitude = _first_or_none(
+            self.getObject(URIRef(str(level)), self.moosas.altitute)
+        ) if level is not None else None
+        level = float(_literal_to_python(raw_altitude)) if raw_altitude is not None else 0.0
         geoId = mixItemListToList(self.getObject(elementUri, self.moosas.hasFace))
         geoId = mixItemListToObject([str(self.getObject(URIRef(gi), self.moosas.faceId)) for gi in geoId])
+        geo_ids = geoId if isinstance(geoId, (list, tuple, np.ndarray)) else [geoId]
+        missing_geo = [str(gid) for gid in geo_ids if str(gid) not in model.geoId]
+        if missing_geo:
+            import warnings
+            warnings.warn(
+                f"Skipping RDF element {elementUri}: referenced geometry id(s) not found: {missing_geo}",
+                RuntimeWarning, stacklevel=2,
+            )
+            return None
         if surfaceType == self.moosas.Face:
             element = MoosasFace(model, geoId, level=level, uid=Uid, offset=offset)
         elif surfaceType == self.moosas.Wall or surfaceType == self.moosas.AirWall:
@@ -1526,7 +1552,7 @@ def writeRDF(model: MoosasModel, out_path: str, fileFormat="turtle", dumpUseless
     return g
 
 
-def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
+def loadRDF(input_path: str, fileFormat="turtle", *, load_energy_metadata: bool = True) -> MoosasModel:
     """
     Load RDF data from a file and construct a MoosasModel instance.
     
@@ -1536,6 +1562,10 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         Path to the input RDF file.
     fileFormat : str, optional
         Format of the RDF file (default is "turtle").
+    load_energy_metadata : bool, optional
+        Restore stored energy metadata and external thermal-source evidence.
+        Defaults to True. Set False only for an explicitly authorized full
+        replacement of non-geometric parameters after import.
     
     Returns
     -------
@@ -1715,6 +1745,17 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
         if len(edgeElements) == 0 and floorTopo is None and ceilTopo is None:
             print(f'\rLOADING: space {i + 1}/{len(spList)} skipped empty topology', end='')
             continue
+        if len(edgeElements) < 3:
+            # A MoosasEdge boundary is a closed perimeter and cannot be
+            # constructed from fewer than three wall faces.  Some generated
+            # RDF files retain a space record whose edge topology is partial;
+            # skip only that unusable space instead of aborting the whole model.
+            warnings.warn(
+                f"Skipping space {Uid}: incomplete edge topology "
+                f"({len(edgeElements)} wall faces; at least 3 required)",
+                RuntimeWarning,
+            )
+            continue
         boundary_wkt = _first_or_none(
             rdfGraph.getObject(spaceUri, rdfGraph.moosas.boundaryWKT)
         )
@@ -1748,7 +1789,9 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
                 void_uris.add(str(void_uri))
 
     for space_uri, space in loaded_spaces:
-        if str(space_uri) in void_uris or space.is_void():
+        # Containment describes geometry, not the semantic void flag: a
+        # bounded room nested inside another footprint remains a room.
+        if space.is_void():
             model.voidList.append(space)
         else:
             model.spaceList.append(space)
@@ -1777,12 +1820,15 @@ def loadRDF(input_path: str, fileFormat="turtle") -> MoosasModel:
     # Space settings are available only after the topology pass. Apply legacy
     # U/SHGC fallbacks now, while preserving all RDF-supplied element settings.
     _apply_element_parameter_defaults(model, rdfGraph)
-    from ..metadata import apply_energy_metadata
-    metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
-    apply_energy_metadata(model, str(metadata) if metadata is not None else None,
-                          include_settings=False)
-
-    from .gbxml.energy import from_graph
-    from_graph(model, rdfGraph)
+    # Controlled template-replacement workflows may explicitly discard original
+    # thermal evidence, including metadata from unsupported historical versions.
+    # Ordinary import retains its source-authoritative behavior by default.
+    if load_energy_metadata:
+        from ..metadata import apply_energy_metadata
+        metadata = next(rdfGraph.objects(URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata')), None)
+        apply_energy_metadata(model, str(metadata) if metadata is not None else None,
+                              include_settings=False)
+        from .gbxml.energy import from_graph
+        from_graph(model, rdfGraph)
     del rdfGraph._decode_element_cache
     return model

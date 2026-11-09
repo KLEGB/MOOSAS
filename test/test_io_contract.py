@@ -378,6 +378,25 @@ def test_solver_settings_and_model_metadata_round_trip(tmp_path, suffix):
     assert result.space == owners and result.isOuter == outer
 
 
+def test_rdf_full_template_replacement_can_skip_unsupported_energy_metadata(tmp_path):
+    from rdflib import Graph, URIRef, Literal
+    from MoosasPy.model.io.rdf import loadRDF
+
+    model = _single_room_model(tmp_path)
+    path = tmp_path / 'legacy-thermal.ttl'
+    model.save(path)
+    graph = Graph().parse(path, format='turtle')
+    graph.set((URIRef('urn:moosas:energy-model'), URIRef('urn:moosas:energy-metadata'),
+               Literal('{"version": "unsupported-legacy"}')))
+    graph.serialize(destination=str(path), format='turtle')
+    with pytest.raises(ValueError, match='Unsupported energy model metadata version'):
+        loadRDF(str(path))
+    restored = loadRDF(str(path), load_energy_metadata=False)
+    assert [s.id for s in restored.spaceList] == [s.id for s in model.spaceList]
+    assert restored.spaceList[0].area == pytest.approx(model.spaceList[0].area)
+    assert restored.spaceList[0].height == pytest.approx(model.spaceList[0].height)
+
+
 @pytest.mark.parametrize('suffix', ['.ttl', '.xml', '.json'])
 def test_skylight_settings_reach_properties_and_airflow(tmp_path, suffix):
     from MoosasPy.simulation.airflow.network import AfnPath

@@ -402,9 +402,11 @@ class MoosasSpace(object):
             otherwise, the 2D version of the edge is returned directly.
         """
         if len(self.void) > 0:
-            outerRing = shapely.linearrings(shapely.get_coordinates(self.edge.force_2d(top)))
-            innerRing = [shapely.linearrings(shapely.get_coordinates(v.edge.force_2d(top))) for v in self.void]
-            polygon = shapely.polygons(outerRing, holes=innerRing)
+            # Adjacent contained regions share edges; encoding them as
+            # independent interior rings produces an invalid polygon and
+            # falsely exposes the divider between them to the parent room.
+            polygon = shapely.difference(self.edge.force_2d(top), shapely.union_all(
+                [v.edge.force_2d(top) for v in self.void]))
         else:
             polygon = self.edge.force_2d(top)
         return polygon
@@ -594,8 +596,16 @@ class MoosasSpace(object):
             if secondary-set(actual):raise ValueError('Secondary ceiling refers to missing physical wall')
             faces['MoosasCeiling'] += [actual[uid] for uid in sorted(secondary-existing)]
         faces['MoosasWall']: list[MoosasWall] = [w for w in self.edge.wall]
+        inner_boundary = self.force_2d().boundary if self.void else None
         for void in self.void:
-            faces['MoosasWall'] += void.edge.wall
+            for wall in void.edge.wall:
+                line = wall.force_2d()
+                # Only the actual boundary of the surrounding room owns a
+                # nested wall. A divider inside the union of two contained
+                # rooms belongs to those two rooms alone.
+                covered = line.intersection(inner_boundary.buffer(geom.POINT_PRECISION))
+                if covered.length >= line.length - geom.POINT_PRECISION:
+                    faces['MoosasWall'].append(wall)
 
         faces['MoosasSkylight']: list[MoosasSkylight] = []
         faces['MoosasGlazing']: list[MoosasGlazing] = []

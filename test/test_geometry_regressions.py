@@ -885,3 +885,101 @@ def test_template_application_rejects_flat_legacy_templates():
         space.applySettings(template)
     with pytest.raises(ValueError, match="version 5"):
         space.applySettings("test-residential")
+
+
+def test_pointed_bottom_window_has_finite_area_preserving_afn_dimensions():
+    from MoosasPy.simulation.airflow.network import AfnPath
+    model=MoosasModel();model.levelList=[0.,3.]
+    geometry_id=model.includeGeo(shapely.Polygon([(1,0,1),(3,0,3),(-1,0,3)]),[0,-1,0],cat=1)
+    window=MoosasGlazing(model,geometry_id)
+    window.SHGC=.4
+    opening=AfnPath.fromElement(window)
+    assert opening.pathHeight == pytest.approx(2.)
+    assert opening.pathHeight*opening.pathWidth == pytest.approx(4.)
+
+
+def test_valid_mixed_planar_overlay_retains_only_physical_area():
+    from MoosasPy.transform.geometry.polygon import planar_surface
+    source=shapely.GeometryCollection([shapely.box(0,0,2,3),shapely.LineString([(3,0),(4,0)]),shapely.Point(8,8)])
+    region=planar_surface(source)
+    assert region.geom_type=='Polygon'
+    assert region.area==pytest.approx(source.area)
+
+
+def test_geo_grid_rounding_keeps_narrow_simple_source_polygon(tmp_path):
+    xy=[(42.985,37.3),(38.799,32.236),(38.799,32.235),(44.894,39.609),(44.893,39.609),(43.964,38.485)]
+    source=tmp_path/'narrow.geo'
+    source.write_text('f,0,narrow\nfn,0,0,1\n'+'\n'.join(f'fv,{x},{y},11.4' for x,y in xy)+'\n;\n')
+    geometry,=_readGeo(source)
+    assert len(geometry.face.exterior.coords)==7
+    assert geometry.face.is_valid
+    assert geometry.face.area==pytest.approx(shapely.Polygon(xy).area,abs=1e-10)
+
+
+def test_horizontal_wall_cap_does_not_create_floor_or_storey_datum():
+    model=MoosasModel()
+    for uid,z,width in [('floor',0,5),('roof',3,5),('cap',1.5,.001)]:
+        geometry=MoosasGeometry(shapely.Polygon([(0,0,z),(5,0,z),(5,width,z),(0,width,z)]),uid,[0,0,1],0)
+        model.geometryList.append(geometry);model.geoId.append(uid)
+    model,ids,walls,unmatched=classify_horizontal_surfaces(model)
+    assert model.levelList==[0.,3.]
+    assert [g.faceId for g in unmatched]==['cap']
+    assert len(model.faceList)==2
+
+
+def test_open_floor_perimeter_sill_keeps_geometry_and_gets_wall_role():
+    from MoosasPy.transform.stages.topology import classify_floor_ledges
+    model=MoosasModel();model.levelList=[0.,3.]
+    footprint=shapely.box(0,0,5,4);xy=list(footprint.exterior.coords)
+    walls=[MoosasWall.fromProjection(shapely.LineString([a,b]),0,3,model) for a,b in zip(xy[:-1],xy[1:])]
+    edge=MoosasEdge(walls)
+    sill_id=model.includeGeo(shapely.force_3d(shapely.box(0,0,.4,.02),z=0),[0,0,1],cat=0)
+    sill=MoosasFace(model,sill_id)
+    air_id=model.includeGeo(shapely.force_3d(footprint.difference(shapely.box(0,0,.4,.02)),z=0),[0,0,1],cat=2)
+    air=MoosasFace(model,air_id)
+    roof_id=model.includeGeo(shapely.force_3d(footprint,z=3),[0,0,1],cat=0)
+    roof=MoosasFace(model,roof_id)
+    space=MoosasSpace(MoosasFloor([sill,air]),edge,MoosasFloor([roof]))
+    model.spaceList=[space]
+    before=sill.face.wkt
+    classify_floor_ledges(model)
+    assert sill.face.wkt==before
+    assert sill.settings['geometry_surface_role_by_space'][space.id]=='wall'
+    assert space.area==pytest.approx(20)
+    assert space.settings['geometry_physical_floor_coverage_m2']==pytest.approx(.008)
+
+
+def test_near_coplanar_walls_are_not_transitively_merged_into_a_curve():
+    from MoosasPy.transform.geometry.cleanse import _coPlannerCleanse
+    model=MoosasModel();model.levelList=[0.,3.]
+    first=MoosasWall.fromProjection(shapely.LineString([(0,0),(10,0)]),0,3,model)
+    second=MoosasWall.fromProjection(shapely.LineString([(10,0),(20,.5)]),0,3,model)
+    result,redundant=_coPlannerCleanse([first,second])
+    assert len(result)==2
+    assert not redundant
+
+
+def test_horizontal_opening_is_partitioned_before_space_owner_assignment():
+    from MoosasPy.transform.stages.assembly import partition_horizontal_surfaces
+    model=MoosasModel();model.levelList=[0.,3.,6.]
+    regions=[shapely.box(0,0,5,4),shapely.box(5,0,10,4),shapely.box(0,0,10,4)]
+    edges=[]
+    for i,region in enumerate(regions):
+        xy=list(region.exterior.coords)
+        walls=[MoosasWall.fromProjection(shapely.LineString([a,b]),0 if i<2 else 3,3 if i<2 else 6,model)
+               for a,b in zip(xy[:-1],xy[1:])]
+        edges.append(MoosasEdge(walls))
+    geometry_id=model.includeGeo(shapely.force_3d(regions[-1],z=3),[0,0,1],cat=2)
+    face=MoosasFace(model,geometry_id)
+    from MoosasPy.transform.geometry.element import MoosasSkylight
+    aperture=MoosasSkylight(model,geometry_id)
+    face.add_glazing(aperture)
+    model.faceList=[face];model.skylightList=[aperture]
+    floors=[MoosasFloor([face]) for _ in regions]
+    partition_horizontal_surfaces(model,dict(zip(edges,regions)),list(zip(floors,regions)))
+    assert [sum(f.area3d() for f in floor.face) for floor in floors] == pytest.approx([20,20,40])
+    assert len(model.faceList)==2
+    for fragment in model.faceList:
+        users=[i for i,floor in enumerate(floors) if fragment in floor.face]
+        assert len(users)==2
+        assert fragment.glazingElement[0].area3d()==pytest.approx(20)

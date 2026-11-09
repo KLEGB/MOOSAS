@@ -47,7 +47,7 @@ def _calculate_orientation(normal) -> int:
     return orientation
 
 
-def pressureInput(windVector: Vector, glazing: MoosasGlazing):
+def pressureInput(windVector: Vector, glazing: MoosasGlazing, *, model_bounds=None):
     """
         Xgb pressure prediction input
         wind_direction: wind dir in DEGREE
@@ -62,7 +62,7 @@ def pressureInput(windVector: Vector, glazing: MoosasGlazing):
         height: aperture vertical location of the facade, standardize (0..1)
         horizon: aperture horizontal location of the facade, standardize (0..1)
     """
-    buildBoundBox = _modelBoundBox(glazing.parent)
+    buildBoundBox = _modelBoundBox(glazing.parent) if model_bounds is None else model_bounds
     buildingSize3d = [
         buildBoundBox[1][0] - buildBoundBox[0][0],
         buildBoundBox[1][1] - buildBoundBox[0][1],

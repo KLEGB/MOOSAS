@@ -408,7 +408,40 @@ def write_radiation_geometry(model, work_dir=None):
         os.makedirs(work_dir, exist_ok=True)
     geo_dir = tempfile.mkdtemp(prefix="moosas-ray-", dir=work_dir)
     geo_path = os.path.join(geo_dir, "model.geo")
-    writeGeo(geo_path, model)
+    from ...transform.geometry.polygon import triangulate_planar_face
+    from ...utils import shapely
+    # MoosasRad's projected-ring reader is ill-conditioned for nearly
+    # vertical holes. Export physical triangles, with the holes already
+    # removed in each face's own 3D frame, rather than altering the engine.
+    lines, numerical_fragments = [], []
+    referenced = {str(geometry.faceId) for element in model.getAllFaces()
+                  for geometry in element.geometry}
+    for geometry in model.geometryList:
+        if str(geometry.faceId) not in referenced:
+            continue
+        if geometry.category in (2, -2):
+            continue
+        for face in np.asarray(geometry.face,dtype=object).reshape(-1):
+            for index, triangle in enumerate(triangulate_planar_face(face)):
+                xyz = shapely.get_coordinates(triangle,include_z=True)
+                normal = np.cross(xyz[1]-xyz[0],xyz[2]-xyz[0])
+                area = float(np.linalg.norm(normal))/2
+                edges = np.linalg.norm(np.roll(xyz[:3],-1,axis=0)-xyz[:3],axis=1)
+                if np.min(edges) <= 1e-12 or area <= 1e-12:
+                    numerical_fragments.append(dict(face_id=geometry.faceId,area_m2=area,
+                        reason='floating point triangulation remnant below native ring resolution'))
+                    continue
+                normal /= 2*area
+                lines.extend((f'f,{geometry.category},{geometry.faceId}_{index}',
+                              'fn,'+','.join(map(str,normal))))
+                lines.extend('fv,'+','.join(map(str,p)) for p in xyz)
+                lines.append(';')
+    with open(geo_path,'w',encoding='ascii') as stream:
+        stream.write('\n'.join(lines)+'\n')
+    import json
+    with open(geo_path+'.audit.json','w',encoding='utf-8') as stream:
+        json.dump(dict(numerical_fragments=numerical_fragments,
+            omitted_numerical_area_m2=sum(p['area_m2'] for p in numerical_fragments)),stream,indent=2)
     # with open(geoPath,'a') as f:
     #    f.write(
     #        '''

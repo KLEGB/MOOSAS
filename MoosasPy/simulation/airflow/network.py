@@ -670,6 +670,15 @@ class AfnPath(object):
                         minZ - geom.POINT_PRECISION < coor[2] < minZ + geom.POINT_PRECISION]
             sortlist.sort(key=lambda x: (x[0], x[1]))
             self.pathWidth = Vector(np.array(sortlist[-1]) - np.array(sortlist[0])).length()
+            if self.pathWidth <= 1e-12:
+                # A triangular window may have one vertex at its lowest Z.
+                # That is a pointed sill, not a zero-area opening. Use the
+                # physical height and area for its equivalent flow rectangle.
+                area = float(self.geometry.area3d())
+                height = float(np.ptp(coordinates[:,2]))
+                if not np.isfinite(area) or area <= 0:
+                    raise ValueError(f'{self.geometry.Uid}: invalid physical opening area')
+                self.pathWidth = area/height if height > 1e-12 else float(np.sqrt(area))
         return self.pathWidth
 
     @property
@@ -869,7 +878,7 @@ def applyWindPressure(pathList: list[AfnPath], windVector: Vector, speed: float 
         alpha = 0.22
         airDensity = 1.205
     """
-    from .pressure_model import pressureInput, callXgb
+    from .pressure_model import pressureInput, callXgb, _modelBoundBox
     if speed is not None:
         windVector *= speed
     geometry_paths = [path_item for path_item in pathList if path_item.geometry is not None
@@ -879,7 +888,13 @@ def applyWindPressure(pathList: list[AfnPath], windVector: Vector, speed: float 
         for path_item in pathList:
             path_item.pressure = 0.0
         return pathList
-    xgbInput = [pressureInput(windVector, path_item.geometry) for path_item in geometry_paths]
+    bounds = {}
+    for path_item in geometry_paths:
+        model = path_item.geometry.parent
+        if id(model) not in bounds:
+            bounds[id(model)] = _modelBoundBox(model)
+    xgbInput = [pressureInput(windVector, path_item.geometry,
+        model_bounds=bounds[id(path_item.geometry.parent)]) for path_item in geometry_paths]
     Wp = callXgb(xgbInput)
 
     pressure = Wp * airDensity * windVector.length(power=True) * np.power(

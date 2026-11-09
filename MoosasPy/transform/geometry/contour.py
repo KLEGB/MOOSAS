@@ -12,6 +12,13 @@ from .planar_graph import TopoNode, TopoBound, TopoEdge, TopoNetwork
 from ...model.container import MoosasContainer
 
 
+class _WallBoundary(list):
+    """Ordered wall references with their authoritative planar-graph ring."""
+    def __init__(self,walls,geometry=None):
+        super().__init__(walls)
+        self.geometry=geometry
+
+
 def _unique_boundaries(boundaries):
     """Record each closed region once, regardless of loop start/direction."""
     unique = []
@@ -124,7 +131,8 @@ def _documentBoundary(boundaries: Iterable[TopoBound], model: MoosasContainer) -
     for i, bound in enumerate(boundaries):
         if not is_ccw(bound.geometry):
             bound.reverse()
-        model.boundaryList.append([model.wallList[edge.modelId] for edge in bound.edgeLoop])
+        model.boundaryList.append(_WallBoundary(
+            [model.wallList[edge.modelId] for edge in bound.edgeLoop],bound.geometry))
     return model
 
 
@@ -244,7 +252,8 @@ def _replace_one_sided_air_boundaries(boundaries, walls):
             replacements[wall] = replacement
 
     return [
-        [replacements.get(wall, wall) for wall in boundary]
+        _WallBoundary([replacements.get(wall, wall) for wall in boundary],
+                      getattr(boundary,'geometry',None))
         for boundary in boundaries
     ]
 
@@ -274,7 +283,7 @@ def packing_edges(model: MoosasContainer) -> MoosasContainer:
             print("******Warning: TopologyError, boundary less than 3 edges")
             continue
         try:
-            the_edge = MoosasEdge(edge)
+            the_edge = MoosasEdge(edge,boundary=getattr(edge,'geometry',None))
             if the_edge.is_valid():
                 model.edgeList.append(the_edge)
                 faceSet.difference_update(edge)

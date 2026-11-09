@@ -62,6 +62,19 @@ def classify_horizontal_surfaces(model: MoosasModel):
 
     def load_surface(geometry):
         predefined = predefined_faces.get(geometry.faceId)
+        if predefined is None and geometry.category==0 and abs(float(Vector(geometry.normal).array[2]))>=.99:
+            # Millimetre-wide horizontal facade caps/sills are real shading
+            # geometry, not occupied floor slabs or new storey datums. A
+            # tiny cap must not give an otherwise open floor a preferential
+            # share of the entire room's transmitted solar gain.
+            rectangle=shapely.minimum_rotated_rectangle(shapely.force_2d(geometry.face))
+            if rectangle.geom_type=='Polygon':
+                lengths=np.linalg.norm(np.diff(shapely.get_coordinates(rectangle),axis=0),axis=1)
+                width,length=float(lengths.min()),float(lengths.max())
+                if width <= 2*geom.POINT_PRECISION+1e-9 and length > 100*max(width,1e-12):
+                    classified_ids.append(geometry.faceId)
+                    unmatched.append(geometry)
+                    return
         skylight = predefined == 6 if predefined is not None else geometry.category not in (0, 2)
         if predefined is not None:
             geometry.setCategory()

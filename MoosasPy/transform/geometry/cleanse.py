@@ -613,6 +613,25 @@ def cleanseCoplannerLine(model: MoosasContainer) -> MoosasContainer:
     print(f"\t\ttotal merge wall: {total_a - len(model.wallList)}")
     return model
 
+def _coplanar_elements(first, second):
+    """Require every source vertex to lie in one physical face plane.
+
+    The general vector parallel test permits several degrees of rotation.
+    Using it to transitively merge adjacent faces turns a curved facade into
+    a multi-plane wall with a fictitious diagonal bottom projection.
+    """
+    faces = list(np.asarray(first.face, dtype=object).reshape(-1))
+    faces += list(np.asarray(second.face, dtype=object).reshape(-1))
+    reference = shapely.get_coordinates(faces[0], include_z=True)[:-1]
+    normal = np.cross(reference, np.roll(reference, -1, axis=0)).sum(axis=0)
+    magnitude = np.linalg.norm(normal)
+    if magnitude <= 1e-12:
+        return False
+    normal /= magnitude
+    points = shapely.get_coordinates(faces, include_z=True)
+    return bool(np.max(np.abs((points-reference[0]) @ normal)) <= geom.POINT_PRECISION)
+
+
 def _coPlannerCleanse(elements: np.ndarray[MoosasElement]) -> (np.ndarray[MoosasElement],np.ndarray[MoosasElement]):
     """
     Delete coplanar lines by merging adjacent faces that are coplanar.
@@ -675,7 +694,7 @@ def _coPlannerCleanse(elements: np.ndarray[MoosasElement]) -> (np.ndarray[Moosas
         _dissolveFaces = []
         for faces in edgeDict.values():
             if len(faces) == 2:
-                if Vector.parallel(Vector(elements[faces[0]].normal), Vector(elements[faces[1]].normal)):
+                if _coplanar_elements(elements[faces[0]], elements[faces[1]]):
                     coedges = set(elements[faces[0]].getEdgeStr()) & set(elements[faces[1]].getEdgeStr())
                     if len([edge_str for edge_str in list(coedges) if len(edgeDict[edge_str]) > 2]) == 0:
                         _dissolveFaces.append({faces[0],faces[1]})
@@ -688,8 +707,10 @@ def _coPlannerCleanse(elements: np.ndarray[MoosasElement]) -> (np.ndarray[Moosas
         for faces in to_dissolveFaces:
             faces = list(faces)
             parentFace = elements[faces[0]]
-            childFaces = [elements[i] for i in faces[1:]]
-            delfaces = delfaces | set(faces[1:])
+            # Coplanarity is not transitive under a numerical tolerance.
+            child_indices = [i for i in faces[1:] if _coplanar_elements(parentFace, elements[i])]
+            childFaces = [elements[i] for i in child_indices]
+            delfaces = delfaces | set(child_indices)
             redundant += childFaces
             parentFace.dissolve(childFaces)
 
