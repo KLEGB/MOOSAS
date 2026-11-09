@@ -493,11 +493,16 @@ referenced schedules when loading.
 ```text
 MoosasPy/db/template/
   library.json
-  CN_GB55015-2021/
-    Office_3A.json
-    schedules/
-      office.sch
+  CN/
+    GB55015-2021/
+      Office_3A.json
+      schedules/
+        office.sch
 ```
+
+The catalog manifest groups standards by country code. Each standard entry
+contains its own source metadata, template assumptions, and operational
+metadata, and its template files live under `<country>/<standard>/`.
 
 Each record contains room groups directly under `BuildingTemplate.Space`, with
 `air_exchange`, `internal_gains`, and `system` parameters per room; `Envelope`

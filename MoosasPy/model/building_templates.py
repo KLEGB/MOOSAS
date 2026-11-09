@@ -23,34 +23,43 @@ def load_building_template_library(library_path=None):
     folder = DEFAULT_LIBRARY if library_path is None else Path(library_path)
     manifest = _read_catalog_manifest(folder / 'library.json')
     library = dict(schema=manifest['schema'], standards={})
-    for namespace in manifest['standards']:
-        if not isinstance(namespace, str):
-            raise ValueError(f'Invalid template package path {namespace!r}')
-        if not namespace or Path(namespace).name != namespace or namespace in {'.', '..'} or ':' in namespace:
-            raise ValueError(f'Invalid template package path {namespace!r}')
-        standard = manifest.get('standard_metadata')
-        assumptions = manifest.get('template_assumptions')
-        operational = manifest.get('operational_metadata')
-        if not isinstance(standard, dict) or not isinstance(assumptions, dict) or not isinstance(operational, dict):
-            raise ValueError(f'{namespace}: catalog metadata is required')
-        standard_namespace = f"{standard.get('country')}/{standard.get('id')}"
-        if (not standard.get('country') or not standard.get('id') or not standard.get('source_url')
-                or namespace != f"{standard['country']}_{standard['id']}"
-                or standard_namespace in library['standards']):
-            raise ValueError(f'{namespace}: invalid or duplicate standard metadata')
-        package = folder / namespace
-        files = sorted(package.glob('*.json'))
-        if not files:
-            raise ValueError(f'{namespace}: no direct building templates found')
-        templates = {}
-        schedules = {}
-        for filename in files:
-            template_id, record = _read_direct_template(
-                filename, package, standard, assumptions, operational, schedules)
-            if template_id in templates:
-                raise ValueError(f'Duplicate template id {template_id!r}')
-            templates[template_id] = record
-        library['standards'][standard_namespace] = {'templates': templates}
+    countries = manifest.get('countries')
+    if not isinstance(countries, dict) or not countries:
+        raise ValueError('Catalog countries are required')
+    for country, country_data in countries.items():
+        if (not isinstance(country, str) or not country or Path(country).name != country
+                or country in {'.', '..'} or ':' in country or not isinstance(country_data, dict)):
+            raise ValueError(f'Invalid country package {country!r}')
+        standards = country_data.get('standards')
+        if not isinstance(standards, dict) or not standards:
+            raise ValueError(f'{country}: catalog standards are required')
+        for standard_id, registration in standards.items():
+            namespace = f'{country}/{standard_id}'
+            if (not isinstance(standard_id, str) or not standard_id
+                    or Path(standard_id).name != standard_id or standard_id in {'.', '..'}
+                    or ':' in standard_id or not isinstance(registration, dict)):
+                raise ValueError(f'Invalid template package path {namespace!r}')
+            metadata = registration.get('standard_metadata')
+            assumptions = registration.get('template_assumptions')
+            operational = registration.get('operational_metadata')
+            if (not isinstance(metadata, dict) or not isinstance(metadata.get('source_url'), str)
+                    or not metadata['source_url'] or {'country', 'id'} & metadata.keys()
+                    or not isinstance(assumptions, dict) or not isinstance(operational, dict)):
+                raise ValueError(f'{namespace}: catalog metadata is required')
+            standard = {'country': country, 'id': standard_id, **metadata}
+            package = folder / country / standard_id
+            files = sorted(package.glob('*.json'))
+            if not files:
+                raise ValueError(f'{namespace}: no direct building templates found')
+            templates = {}
+            schedules = {}
+            for filename in files:
+                template_id, record = _read_direct_template(
+                    filename, package, standard, assumptions, operational, schedules)
+                if template_id in templates:
+                    raise ValueError(f'Duplicate template id {template_id!r}')
+                templates[template_id] = record
+            library['standards'][namespace] = {'templates': templates}
     return library
 
 

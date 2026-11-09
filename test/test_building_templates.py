@@ -31,8 +31,8 @@ def office_record(templates):
 @pytest.fixture
 def local_library(tmp_path):
     source = DEFAULT_LIBRARY
-    package = source / 'CN_GB55015-2021'
-    target_package = tmp_path / 'CN_GB55015-2021'
+    package = source / 'CN' / 'GB55015-2021'
+    target_package = tmp_path / 'CN' / 'GB55015-2021'
     (target_package / 'schedules').mkdir(parents=True)
     shutil.copyfile(source / 'library.json', tmp_path / 'library.json')
     shutil.copyfile(package / 'Office_3A.json', target_package / 'Office_3A.json')
@@ -54,20 +54,53 @@ def test_bundled_catalog_contains_only_office_3a(templates):
     assert set(library['standards']) == {'CN/GB55015-2021'}
     assert set(templates) == {OFFICE_3A}
     assert DEFAULT_LIBRARY == Path(__file__).parents[1] / 'MoosasPy' / 'db' / 'template'
-    assert [path.name for path in (DEFAULT_LIBRARY / 'CN_GB55015-2021').glob('*.json')] == [
+    assert [path.name for path in (DEFAULT_LIBRARY / 'CN' / 'GB55015-2021').glob('*.json')] == [
         'Office_3A.json']
     assert [path.name for path in (
-        DEFAULT_LIBRARY / 'CN_GB55015-2021' / 'schedules').glob('*.sch')] == ['office.sch']
+        DEFAULT_LIBRARY / 'CN' / 'GB55015-2021' / 'schedules').glob('*.sch')] == ['office.sch']
 
 
 def test_explicit_external_catalog_can_contain_multiple_templates(local_library):
-    package = local_library / 'CN_GB55015-2021'
+    package = local_library / 'CN' / 'GB55015-2021'
     template = json.loads((package / 'Office_3A.json').read_text(encoding='utf-8'))
     template['BuildingTemplate']['metadata']['id'] = 'CN_GB55015-2021_Office_4A'
     template['BuildingTemplate']['metadata']['climate_zone'] = '4A'
     (package / 'Office_4A.json').write_text(json.dumps(template), encoding='utf-8')
     assert set(building_templates(local_library)) == {
         OFFICE_3A, 'CN/GB55015-2021/4A/Office'}
+
+
+def test_catalog_supports_multiple_standards_for_one_country(local_library):
+    manifest_path = local_library / 'library.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    first_standard = manifest['countries']['CN']['standards']['GB55015-2021']
+    manifest['countries']['CN']['standards']['TEST-STD'] = {
+        'standard_metadata': {
+            'title': 'Test standard',
+            'source_url': 'https://example.test/standard',
+        },
+        'template_assumptions': deepcopy(first_standard['template_assumptions']),
+        'operational_metadata': deepcopy(first_standard['operational_metadata']),
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+
+    source_package = local_library / 'CN' / 'GB55015-2021'
+    test_package = local_library / 'CN' / 'TEST-STD'
+    (test_package / 'schedules').mkdir(parents=True)
+    template = json.loads((source_package / 'Office_3A.json').read_text(encoding='utf-8'))
+    metadata = template['BuildingTemplate']['metadata']
+    metadata['id'] = 'CN_TEST-STD_Office_3A'
+    metadata['standard_name'] = 'TEST-STD'
+    metadata['standard_source'] = 'https://example.test/standard'
+    shutil.copyfile(source_package / 'schedules' / 'office.sch',
+                    test_package / 'schedules' / 'office.sch')
+    (test_package / 'Office_3A.json').write_text(json.dumps(template), encoding='utf-8')
+
+    templates = building_templates(local_library)
+    assert set(templates) == {
+        OFFICE_3A, 'CN/TEST-STD/3A/Office'}
+    assert templates['CN/TEST-STD/3A/Office']['standard']['country'] == 'CN'
+    assert templates['CN/TEST-STD/3A/Office']['standard']['id'] == 'TEST-STD'
 
 
 def test_snapshot_uses_room_groups_and_direct_envelope_values(office_record):
@@ -148,7 +181,7 @@ def test_model_snapshot_round_trip_is_self_contained(local_library):
 
 
 def test_applying_multi_room_template_requires_room_selection(local_library):
-    template_file = local_library / 'CN_GB55015-2021' / 'Office_3A.json'
+    template_file = local_library / 'CN' / 'GB55015-2021' / 'Office_3A.json'
     template = json.loads(template_file.read_text(encoding='utf-8'))
     default = template['BuildingTemplate']['Space'].pop('default')
     template['BuildingTemplate']['Space'] = {
@@ -172,7 +205,7 @@ def test_applying_multi_room_template_requires_room_selection(local_library):
     ('schedule_path', 'relative .sch'),
 ])
 def test_invalid_template_catalogs_fail_explicitly(local_library, change, message):
-    package = local_library / 'CN_GB55015-2021'
+    package = local_library / 'CN' / 'GB55015-2021'
     template_file = package / 'Office_3A.json'
     template = json.loads(template_file.read_text(encoding='utf-8'))
     schedule_file = package / 'schedules' / 'office.sch'
@@ -195,7 +228,7 @@ def test_invalid_template_catalogs_fail_explicitly(local_library, change, messag
 
 
 def test_schedule_loader_ignores_version_field(local_library):
-    schedule_file = local_library / 'CN_GB55015-2021' / 'schedules' / 'office.sch'
+    schedule_file = local_library / 'CN' / 'GB55015-2021' / 'schedules' / 'office.sch'
     schedule = json.loads(schedule_file.read_text(encoding='utf-8'))
     schedule['version'] = 'unvalidated'
     schedule_file.write_text(json.dumps(schedule), encoding='utf-8')
@@ -215,7 +248,7 @@ def test_metadata_registry_and_template_selection(local_library):
 
 
 def test_occupant_heat_is_not_a_template_parameter(local_library):
-    template_file = local_library / 'CN_GB55015-2021' / 'Office_3A.json'
+    template_file = local_library / 'CN' / 'GB55015-2021' / 'Office_3A.json'
     template = json.loads(template_file.read_text(encoding='utf-8'))
     template['BuildingTemplate']['Space']['default']['internal_gains']['occupant_heat'] = {
         'mode': 'constant', 'value': 75, 'unit': 'W/person'}

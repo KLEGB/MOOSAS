@@ -1,66 +1,69 @@
 {
   "schema": "moosas.building-template-library",
-  "standards": [
-    "CN_GB55015-2021"
-  ],
-  "standard_metadata": {
-    "country": "CN",
-    "id": "GB55015-2021",
-    "title": "建筑节能与可再生能源利用通用规范",
-    "source_url": "https://zh.wikisource.org/wiki/GB_55015-2021_建筑节能与可再生能源利用通用规范"
-  },
-  "template_assumptions": {
-    "glass_absorptance": 0.1,
-    "glass": {
-      "inside_emissivity": 0.84,
-      "outside_emissivity": 0.84,
-      "solar_reflectance": 0.4,
-      "solar_transmittance": 0.5,
-      "thermal_mass_j_m2k": 0
-    },
-    "wall": {
-      "inside_emissivity": 0.9,
-      "outside_emissivity": 0.9,
-      "solar_reflectance": 0.3,
-      "thermal_mass_j_m2k": 60000
-    },
-    "slab": {
-      "inside_emissivity": 0.9,
-      "outside_emissivity": 0.9,
-      "solar_reflectance": 0.3,
-      "thermal_mass_j_m2k": 120000
-    },
-    "internal_resistance_m2k_w": 0.2,
-    "ground_base_resistance_m2k_w": 0.2,
-    "unspecified_ground_insulation_r": 1.0,
-    "unspecified_resistance_m2k_w": 1.0
-  },
-  "operational_metadata": {
-    "room_types": {
-      "Residential": {
-        "bedroom": "卧室",
-        "living_room": "起居室",
-        "kitchen": "厨房",
-        "bathroom": "卫生间",
-        "auxiliary_room": "辅助房间"
-      },
-      "other_buildings": {
-        "default": "Whole-building standard profile"
-      },
-      "Hospital": {
-        "outpatient": "门诊",
-        "inpatient": "住院"
+  "countries": {
+    "CN": {
+      "standards": {
+        "GB55015-2021": {
+          "standard_metadata": {
+            "title": "建筑节能与可再生能源利用通用规范",
+            "source_url": "https://zh.wikisource.org/wiki/GB_55015-2021_建筑节能与可再生能源利用通用规范"
+          },
+          "template_assumptions": {
+            "glass_absorptance": 0.1,
+            "glass": {
+              "inside_emissivity": 0.84,
+              "outside_emissivity": 0.84,
+              "solar_reflectance": 0.4,
+              "solar_transmittance": 0.5,
+              "thermal_mass_j_m2k": 0
+            },
+            "wall": {
+              "inside_emissivity": 0.9,
+              "outside_emissivity": 0.9,
+              "solar_reflectance": 0.3,
+              "thermal_mass_j_m2k": 60000
+            },
+            "slab": {
+              "inside_emissivity": 0.9,
+              "outside_emissivity": 0.9,
+              "solar_reflectance": 0.3,
+              "thermal_mass_j_m2k": 120000
+            },
+            "internal_resistance_m2k_w": 0.2,
+            "ground_base_resistance_m2k_w": 0.2,
+            "unspecified_ground_insulation_r": 1.0,
+            "unspecified_resistance_m2k_w": 1.0
+          },
+          "operational_metadata": {
+            "room_types": {
+              "Residential": {
+                "bedroom": "卧室",
+                "living_room": "起居室",
+                "kitchen": "厨房",
+                "bathroom": "卫生间",
+                "auxiliary_room": "辅助房间"
+              },
+              "other_buildings": {
+                "default": "Whole-building standard profile"
+              },
+              "Hospital": {
+                "outpatient": "门诊",
+                "inpatient": "住院"
+              }
+            },
+            "building_types": [
+              "Office",
+              "Hotel",
+              "School",
+              "Hospital",
+              "CommercialLarge",
+              "CommercialSmall",
+              "Residential",
+              "Industrial"
+            ]
+          }
+        }
       }
-    },
-    "building_types": [
-      "Office",
-      "Hotel",
-      "School",
-      "Hospital",
-      "CommercialLarge",
-      "CommercialSmall",
-      "Residential",
-      "Industrial"
-    ]
+    }
   }
 }
