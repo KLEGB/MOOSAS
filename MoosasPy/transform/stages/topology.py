@@ -49,6 +49,7 @@ def build_space_topology(model: MoosasModel) -> MoosasModel:
         space.neighbor.clear()
         space.regenerateId()
     _normalize_horizontal_faces(model)
+    classify_floor_ledges(model)
 
     for index, space in enumerate(model.spaceList):
         print(f"\r2LSB: Recording Boundary topology {index}/{len(model.spaceList)}", end="")
@@ -65,6 +66,48 @@ def build_space_topology(model: MoosasModel) -> MoosasModel:
                 space.add_neighbor(neighbor_id, element)
                 model.spaceIdDict[neighbor_id].add_neighbor(space.id, element)
     print()
+    return model
+
+
+def classify_floor_ledges(model):
+    """Distinguish perimeter sills from an occupied floor in an open region.
+
+    A small, narrow strip along a wall is a facade ledge even when it lies
+    on the nominal floor plane. Preserve its geometry/topological incidence,
+    but record its physical role before energy/daylight template resolution.
+    """
+    from ..geometry.polygon import planar_surface
+    for space in model.spaceList:
+        if space.floor is None:
+            continue
+        if space.settings.get('geometry_floor_classification')=='open_floor_with_perimeter_ledges':
+            for face in space.floor.face:
+                roles=face.settings.get('geometry_surface_role_by_space',{})
+                if roles.get(str(space.id))=='wall':roles.pop(str(space.id))
+                if not roles:face.settings.pop('geometry_surface_role_by_space',None)
+            space.settings.pop('geometry_floor_classification',None)
+            space.settings.pop('geometry_physical_floor_coverage_m2',None)
+        region=planar_surface(space.force_2d())
+        candidates=[]
+        for face in space.floor.face:
+            if face.category not in (0,3,4) or abs(float(face.normal[2]))<.99:
+                continue
+            patch=shapely.intersection(shapely.set_precision(face.force_2d(),0),region,grid_size=1e-9)
+            if patch.area>1e-10:candidates.append((face,patch))
+        if not candidates:
+            continue
+        physical=planar_surface(shapely.union_all([p for _,p in candidates]))
+        area=float(physical.area)
+        if (area >= geom.ROOM_MIN_AREA or region.area-area < geom.ROOM_MIN_AREA
+            or not physical.buffer(-geom.PARTITION_SLIVER_MAX_WIDTH/2).is_empty):
+            continue
+        band=region.boundary.buffer(geom.PARTITION_SLIVER_MAX_WIDTH)
+        if physical.difference(band).area > 1e-8:
+            continue
+        for face,_ in candidates:
+            face.settings.setdefault('geometry_surface_role_by_space',{})[str(space.id)]='wall'
+        space.settings['geometry_physical_floor_coverage_m2']=area
+        space.settings['geometry_floor_classification']='open_floor_with_perimeter_ledges'
     return model
 
 

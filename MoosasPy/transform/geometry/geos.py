@@ -1879,7 +1879,9 @@ def splitOnZ(geoBase: shapely.Geometry, level: float, EPS: float = 1e-9) -> list
     uv_rings = [shapely.force_2d(proj.toUV(ring)) for ring in world_rings]
     hole_coordinates = [shapely.get_coordinates(ring) for ring in uv_rings[1:]]
     if len(hole_coordinates) > 0:
-        geo_proj = shapely.polygons(shapely.get_coordinates(uv_rings[0]), hole_coordinates)
+        # Apertures need not have the same vertex count. Construct rings
+        # before Shapely's vectorized constructor coerces a ragged array.
+        geo_proj = shapely.polygons(uv_rings[0], [shapely.linearrings(coords) for coords in hole_coordinates])
     else:
         geo_proj = shapely.polygons(shapely.get_coordinates(uv_rings[0]))
     geo_proj = shapely.set_precision(geo_proj, geom.POINT_PRECISION)

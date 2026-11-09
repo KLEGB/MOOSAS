@@ -219,11 +219,10 @@ class SimulationWorkspaceTests(unittest.TestCase):
                 read_topology(project_path)
 
     def test_radiation_and_vent_defaults_use_unique_workspaces(self):
-        with TemporaryDirectory() as work_dir, patch(
-            "MoosasPy.simulation.radiation.calculation.writeGeo"
-        ) as write_geo:
-            geo_path = Path(write_radiation_geometry(SimpleNamespace(), work_dir=work_dir))
-            write_geo.assert_called_once_with(str(geo_path), unittest.mock.ANY)
+        with TemporaryDirectory() as work_dir:
+            from MoosasPy.model import MoosasModel
+            geo_path = Path(write_radiation_geometry(MoosasModel(), work_dir=work_dir))
+            self.assertTrue(geo_path.is_file())
             self.assertEqual(geo_path.name, "model.geo")
             self.assertEqual(geo_path.parent.parent, Path(work_dir))
 

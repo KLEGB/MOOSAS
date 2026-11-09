@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from typing import TYPE_CHECKING
 
 from .geos import Projection, Vector, faceNormal, is_ccw, simplify, overlapArea, equals, selfIntersect, makeValid, bBox
@@ -147,6 +148,24 @@ class MoosasGeometry(object):
             raise GeometryError(face, "zero-length normal")
         self.__face: np.ndarray = self._treatFace(face)
         self.__holes: list[np.ndarray] = [self._treatFace(hole) for hole in holes]
+        if self.__holes:
+            # Imported outer/opening coordinates have each been rounded to
+            # the millimetre grid. Fit them to the same host plane, rather
+            # than independently leaving a window slightly off its wall.
+            host_normal = faceNormal(shapely.Polygon(self.__face)).array
+            host_origin = self.__face[0]
+            for index, hole in enumerate(self.__holes):
+                distance = (hole-host_origin) @ host_normal
+                if np.max(np.abs(distance)) > 2*geom.POINT_PRECISION:
+                    message='opening is not coplanar with its host face; ignored for this host surface'
+                    if errors != 'ignore':
+                        raise GeometryError(shapely.Polygon(hole),message)
+                    warnings.warn(message,RuntimeWarning,stacklevel=2)
+                    self.__holes[index]=None
+                    continue
+                if np.max(np.abs(distance)) > 1e-9:
+                    self.__holes[index] = hole-distance[:,None]*host_normal
+            self.__holes=[hole for hole in self.__holes if hole is not None]
         self.__normal: Vector = Vector(normal)
         self.flip = False
 

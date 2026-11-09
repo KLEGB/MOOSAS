@@ -6,6 +6,7 @@ from ...transform.geometry.geos import Projection, Vector
 from ...transform.geometry.grid import MoosasGrid
 from ...utils import np, shapely, mixItemListToList
 from datetime import datetime
+import warnings
 
 def _get_sky(*args,**kwargs):
     """Expand the sky command using the packaged native engine."""
@@ -116,29 +117,42 @@ def _triangulate_opaque(moFace:MoosasElement)->list[shapely.Geometry]:
         A list of shapely Geometry objects representing the triangulated opaque regions in world coordinates,
         with glazing areas subtracted as holes and projected back from UV to 3D space.
     """
-    proj = Projection(origin=np.mean(shapely.get_coordinates(moFace.face, include_z=True), axis=0), unitZ=moFace.normal)
-    baseFace = mixItemListToList(moFace.face)
-    baseBrep,holes=[],[]
-    for face in baseFace:
-        baseBrep.append(shapely.get_exterior_ring(face))
-        if len(shapely.get_rings(face))>1:
-            holes+=list(shapely.get_rings(face))[1:]
-    for gls in moFace.glazingElement:
-        actual=getattr(gls,'face',None)
-        if actual is None:actual=gls.representation()
-        holes.extend(p for p in mixItemListToList(actual) if not shapely.is_empty(p))
-    from ...transform.geometry.polygon import planar_surface
-    baseBrep = [planar_surface(shapely.polygons(proj.toUV(face))) for face in baseBrep]
-    baseBrep = shapely.union_all(baseBrep)
-    holes = [proj.toUV(face) for face in holes]
-    for h in holes:
-        if shapely.get_dimensions(h) == 1:
-            h = shapely.polygons(h)
-        baseBrep = shapely.difference(shapely.normalize(baseBrep),planar_surface(h))
-    # Constrain triangles to the boundary, including concavities and window holes.
-    baseBrep = shapely.constrained_delaunay_triangles(planar_surface(baseBrep))
-    baseBrep = [proj.toWorld(tri) for tri in shapely.get_parts(baseBrep)]
-    return baseBrep
+    from ...transform.geometry.polygon import planar_face_region, planar_surface
+    result = []
+    for face in mixItemListToList(moFace.face):
+        origin,u,v,normal,region = planar_face_region(face)
+        if region.is_empty:
+            continue
+        for glazing in moFace.glazingElement:
+            for aperture in mixItemListToList(glazing.face):
+                xyz=shapely.get_coordinates(aperture,include_z=True)
+                if np.max(np.abs((xyz-origin)@normal)) > .001:
+                    continue  # Opening belongs to another physical facet.
+                _,_,_,_,opening_region = planar_face_region(aperture)
+                if opening_region.is_empty:
+                    continue
+                rings=[]
+                for ring in shapely.get_rings(aperture):
+                    delta=shapely.get_coordinates(ring,include_z=True)-origin
+                    rings.append(shapely.LinearRing(np.column_stack((delta@u,delta@v))))
+                try:
+                    opening=planar_surface(shapely.Polygon(rings[0],rings[1:]))
+                except ValueError as exc:
+                    # Malformed imported apertures must not abort every
+                    # daylight result for an otherwise usable model. Keep the
+                    # host opaque patch intact and report the skipped opening;
+                    # energy/AFN retain their independent geometry paths.
+                    import warnings
+                    warnings.warn(
+                        f"Skipping invalid aperture during daylight scene build: {exc}",
+                        RuntimeWarning, stacklevel=2,
+                    )
+                    continue
+                region=region.difference(opening)
+        for triangle in shapely.get_parts(shapely.constrained_delaunay_triangles(planar_surface(region))):
+            xy=shapely.get_coordinates(triangle)
+            result.append(shapely.Polygon(origin+xy[:,0,None]*u+xy[:,1,None]*v))
+    return result
 def _space_to_radiance(space: MoosasSpace, date: datetime, sky_type, lat, lon, diffuse_illuminance=10000,
                        *, rad_path: str):
     """
@@ -247,27 +261,67 @@ def _daylight_scene(model, *, black=False, overrides=None, split_transport=False
     elements = {}
     roles = {}
     template_optics = {}
+    optical_sides = {}
     for space in model.spaceList:
         profile = space_template(model, space)
         faces = space.getAllFaces(to_dict=True)
-        for group, role in [('MoosasWall', 'wall'), ('MoosasFloor', 'floor'),
+        for group, group_role in [('MoosasWall', 'wall'), ('MoosasFloor', 'floor'),
                             ('MoosasCeiling', 'ceiling'), ('MoosasGlazing', 'window'),
                             ('MoosasSkylight', 'skylight'), ('InternalMass', 'wall')]:
             for element in faces.get(group, ()):
+                role=element.settings.get('geometry_surface_role_by_space',{}).get(str(space.id),group_role)
                 uid = str(element.Uid)
                 elements[uid] = element
                 roles[uid] = role
                 if element.category in (2, -2):
                     continue
                 glass = element.category in (1, 5, 6)
+                # Transparent curtain walls may occur in the wall group.
+                optical_role = ('skylight' if role in {'floor', 'ceiling', 'skylight'} else 'window') if glass else role
                 key = 'visible_transmittance' if glass else 'visible_reflectance'
                 if key in overrides.get(uid, {}) or key in getattr(element, 'explicit_settings', ()):
                     continue
                 boundary = element.settings.get('boundary_condition', 'outdoors' if element.isOuter else 'adiabatic')
-                source = surface_template_parameters(profile, role, boundary).get(key)
+                source = surface_template_parameters(profile, optical_role, 'outdoors' if glass else boundary).get(key)
                 if source is None or source['mode'] != 'constant':
                     raise ValueError(f'{space.id}/{uid}: daylight requires constant template {key}')
                 value = source['value']
+                if not glass and group_role == 'wall':
+                    # A shared wall can have different finishes on the two
+                    # room-facing sides.  Resolve the optical property per
+                    # physical side using each owner space's center, just as
+                    # floors and ceilings are handled below.
+                    import shapely
+                    xyz = shapely.get_coordinates(element.face, include_z=True)
+                    normal_xyz = np.asarray(Vector(element.normal).array, dtype=float)
+                    center_xyz = np.asarray(space.getWeightCenter(), dtype=float)
+                    face_center = np.mean(xyz, axis=0)
+                    side = 1 if float(np.dot(center_xyz - face_center, normal_xyz)) >= 0 else -1
+                    sides = optical_sides.setdefault(uid, {})
+                    if side in sides and sides[side] != {key: value}:
+                        warnings.warn(
+                            f'{uid}: conflicting visible properties on the same physical side; '
+                            'keeping the first space-template value', RuntimeWarning)
+                        value = sides[side][key]
+                    else:
+                        sides[side] = {key: value}
+                    template_optics.setdefault(uid, {key: value})
+                    continue
+                if not glass and group_role in {'floor', 'ceiling'}:
+                    inward_z = 1 if group_role == 'floor' else -1
+                    side = 1 if float(element.normal[2]) * inward_z >= 0 else -1
+                    sides = optical_sides.setdefault(uid, {})
+                    if side in sides and sides[side] != {key: value}:
+                        warnings.warn(
+                            f'{uid}: conflicting visible properties on the same physical side; '
+                            'keeping the first space-template value', RuntimeWarning)
+                        value = sides[side][key]
+                    else:
+                        sides[side] = {key: value}
+                    # Floor and ceiling finishes belong to opposite sides
+                    # of one slab, and need not have equal reflectances.
+                    template_optics.setdefault(uid, {key: value})
+                    continue
                 if uid in template_optics and template_optics[uid] != {key: value}:
                     raise ValueError(f'{uid}: conflicting visible properties from adjacent space templates; set an explicit optical override')
                 template_optics[uid] = {key: value}
@@ -284,11 +338,24 @@ def _daylight_scene(model, *, black=False, overrides=None, split_transport=False
         glass = element.category in (1, 5, 6)
         settings = {**getattr(element, 'settings', {}), **template_optics.get(uid, {}), **overrides.get(uid, {})}
         material, record = _visible_material(settings, roles.get(uid, 'wall'), glass, f'mat_{index}', black, split_transport)
+        sides = optical_sides.get(uid, {})
+        if len(sides) == 2 and sides[1] != sides[-1] and uid not in overrides:
+            front, front_record = _visible_material({**settings, **sides[1]}, 'floor', False, f'mat_{index}_front', black, split_transport)
+            back, back_record = _visible_material({**settings, **sides[-1]}, 'ceiling', False, f'mat_{index}_back', black, split_transport)
+            material = front + back + f'void mixfunc mat_{index}\n4 mat_{index}_front mat_{index}_back if(Rdot,1,0) .\n0\n0\n'
+            record = dict(front=front_record, back=back_record, two_sided=True)
         record.update(uid=uid, source='override' if uid in overrides else 'template' if uid in template_optics else 'settings_or_default')
         optics.append(record)
         geometry = element.face if glass else _triangulate_opaque(element)
         if not glass and not geometry:
             continue  # Fully glazed parent: its opening is exported separately.
+        if len(sides) == 2:
+            oriented = []
+            for face in mixItemListToList(geometry):
+                xyz = shapely.get_coordinates(shapely.get_exterior_ring(face), include_z=True)[:-1]
+                area_vector = np.cross(xyz, np.roll(xyz, -1, axis=0)).sum(axis=0)
+                oriented.append(shapely.reverse(face) if np.dot(area_vector, element.normal) < 0 else face)
+            geometry = oriented
         polygons = _mesh_to_radiance_object(geometry, f'mat_{index}', index)
         if ' polygon ' not in polygons:
             raise ValueError(f'No Radiance polygons exported for element {uid}')

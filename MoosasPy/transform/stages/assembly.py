@@ -336,6 +336,13 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
     spaces_by_edge = {space.edge: space for space in spaces}
     for child, parent in parents.items():
         spaces_by_edge[parent].add_void(MoosasSpace(None, child, None))
+    # Caps are generated while floors are matched. Node those generated
+    # openings too, then attach only the portions inside each owner's ring.
+    partition_horizontal_surfaces(model, footprints, [
+        (floor, space.force_2d(top=top)) for space in spaces
+        for top, floor in ((False,space.floor),(True,space.ceiling))
+        if floor is not None
+    ])
     print()
     for space in spaces:
         if shapely.area(shapely.intersection(
@@ -348,4 +355,93 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
             model.spaceList.append(space)
         print(f"\rPACKING: Build a space: {space.id} Bld_level={space.level} Bld_area={space.area:.2f}", end="")
     print()
+    return model
+
+
+def partition_horizontal_surfaces(model, footprints, topologies=()):
+    """Node slab/opening regions against both storeys before assigning owners.
+
+    A whole slab selected by several rooms must not give its whole skylight
+    all of those owners. Persistent face and aperture fragments are generated
+    here, so RDF, energy, radiation and airflow share the same incidence.
+    """
+    # Existing coordinates already use the recognition precision. Drop GEOS
+    # precision metadata so repeated overlays do not snap each successive
+    # cut differently and lose area at oblique intersections.
+    regions = [shapely.set_precision(region,0) for region in footprints.values()]
+    edges = list(footprints)
+    tree = shapely.STRtree(regions) if regions else None
+    result = []
+    replacements = {}
+    for face in list(model.faceList):
+        if not face.glazingElement:
+            # Opaque slabs are clipped to each zone by the energy boundary
+            # builder. Only attached apertures require persistent atomic
+            # fragments to carry binary incidence; keep existing opaque
+            # tessellation and mesh precision intact.
+            result.append(face)
+            continue
+        xyz = shapely.get_coordinates(face.face, include_z=True)
+        if np.ptp(xyz[:, 2]) > geom.POINT_PRECISION:
+            result.append(face)
+            continue
+        elevation = float(np.mean(xyz[:, 2]))
+        source = shapely.set_precision(face.force_2d(),0)
+        cells = [source]
+        for index in tree.query(source, predicate='intersects') if tree else ():
+            edge = edges[index]
+            bottom = min(w.level+w.offset for w in edge.wall)
+            top = max(w.toplevel+w.topoffset for w in edge.wall)
+            if elevation < bottom-geom.POINT_PRECISION or elevation > top+geom.POINT_PRECISION:
+                continue
+            region = regions[index]
+            split = []
+            for cell in cells:
+                inside = shapely.intersection(cell,region,grid_size=1e-9)
+                outside = shapely.difference(cell,region,grid_size=1e-9)
+                if inside.area <= 1e-10 or outside.area <= 1e-10:
+                    split.append(cell)
+                else:
+                    pending = [inside,outside]
+                    while pending:
+                        part=pending.pop()
+                        if part.geom_type == 'Polygon' and part.area > 0:
+                            split.append(part)
+                        elif part.geom_type in {'MultiPolygon','GeometryCollection'}:
+                            pending.extend(shapely.get_parts(part))
+            cells = split
+        if len(cells) == 1:
+            result.append(face)
+            continue
+        from ..geometry.polygon import _validate_partition
+        _validate_partition(cells, source)
+        replacements[id(face)] = []
+        for cell in cells:
+            geometry_id = model.includeGeo(shapely.force_3d(cell, z=elevation), face.normal, cat=face.category)
+            child = MoosasFace(model, geometry_id, level=face.level, offset=face.offset)
+            child.settings = dict(face.settings)
+            child.settings['geometry_source_element_id'] = str(face.Uid)
+            child.explicit_settings = set(face.explicit_settings)
+            for opening in face.glazingElement:
+                clipped = cell.intersection(opening.force_2d())
+                for part in shapely.get_parts(clipped):
+                    if part.geom_type != 'Polygon' or part.area <= 0:
+                        continue
+                    aperture_id = model.includeGeo(shapely.force_3d(part,z=elevation),opening.normal,cat=opening.category)
+                    aperture = MoosasSkylight(model, aperture_id, level=opening.level, offset=opening.offset)
+                    aperture.settings = dict(opening.settings)
+                    aperture.settings['geometry_source_element_id'] = str(opening.Uid)
+                    aperture.explicit_settings = set(opening.explicit_settings)
+                    child.add_glazing(aperture)
+                    model.skylightList.append(aperture)
+            result.append(child)
+            replacements[id(face)].append(child)
+    model.faceList = result
+    for floor, region in topologies:
+        if floor is None:
+            continue
+        floor.face = list(dict.fromkeys(
+            child for face in floor.face for child in replacements.get(id(face), [face])
+            if child.force_2d().intersection(region).area > 1e-9
+        ))
     return model

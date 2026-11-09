@@ -47,15 +47,8 @@ def _mesh_to_radiance_object(geos, material, object_id):
             geoStr.append('')
             continue
         try:
-            proj = Projection.fromPolygon(geo)
-        except IndexError as e:
-            raise ValueError(f"Invalid Radiance projection for {object_id}") from e
-        try:
-            # Project rings separately to retain holes in the input polygon.
-            rings = [proj.toUV(ring) for ring in shapely.get_rings(geo)]
-            geoUV = shapely.polygons(rings[0], holes=rings[1:] or None)
-            triangles = shapely.constrained_delaunay_triangles(planar_surface(geoUV))
-            triangles = [proj.toWorld(tri) for tri in shapely.get_parts(triangles)]
+            from ...transform.geometry.polygon import triangulate_planar_face
+            triangles = triangulate_planar_face(geo)
             if len(triangles) == 0:
                 continue
             for trIdx, tri in enumerate(triangles):

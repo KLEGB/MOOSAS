@@ -318,14 +318,20 @@ def test_double_cuts_report_failed_simple_polygon_split(monkeypatch):
         GeometryConvexifier.convexify_faces_2d([exterior], [[hole]])
 
 
-def test_double_cuts_report_missing_connector_pair(monkeypatch):
+def test_double_cuts_fall_back_to_constrained_partition(monkeypatch):
     monkeypatch.setattr(shapely, "polygonize", lambda lines: shapely.GeometryCollection())
     source = shapely.Polygon(
         [(0, 0), (12, 0), (12, 10), (0, 10)],
         [[(4, 3), (8, 3), (8, 7), (4, 7)]],
     )
-    with pytest.raises(GeometryError, match="No valid pair"):
-        cut_hole(source)
+    assert_partition(cut_hole(source), source)
+
+
+def test_opening_touching_shell_becomes_notch_without_filling_area():
+    shell = shapely.box(0, 0, 12, 10)
+    opening = shapely.box(4, 6, 8, 10)
+    faces, _ = convexify_shape(shell, [opening.exterior])
+    assert_partition(faces, shell.difference(opening))
 
 
 def test_horizontal_face_split_keeps_small_remaining_physical_fragments():

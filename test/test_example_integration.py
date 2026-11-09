@@ -49,7 +49,8 @@ class ExampleIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.model.spaceList), 70)
         self.assertEqual(len(self.model.voidList), 0)
         self.assertEqual(len(self.model.wallList), 257)
-        self.assertEqual(len(self.model.faceList), 153)
+        # Four millimetre-wide facade caps remain shading, not floor slabs.
+        self.assertEqual(len(self.model.faceList), 149)
         self.assertEqual(len(self.model.glazingList), 33)
         self.assertEqual(len(self.model.skylightList), 0)
         self.assertEqual(
@@ -84,13 +85,14 @@ class ExampleIntegrationTests(unittest.TestCase):
     def test_classification_stage_builds_elements_before_topology(self):
         model = _load_geometry_source(str(GEOMETRY_FIXTURE), "geo")
         model = triangulate_horizontal_faces(model)
-        model, ids, walls, _ = classify_horizontal_surfaces(model)
+        model, ids, walls, unmatched = classify_horizontal_surfaces(model)
         model = classify_predefined_walls(model, walls)
         model = split_vertical_walls(model, ids)
         classified_model = classify_vertical_surfaces(model, ids)
 
         self.assertIs(classified_model, model)
-        self.assertEqual(len(model.faceList), 144)
+        self.assertEqual(len(model.faceList), 140)
+        self.assertEqual(len(unmatched), 4)
         self.assertEqual(len(model.wallList), 251)
         self.assertEqual(sum(wall.is_air_boundary for wall in model.wallList), 58)
         self.assertEqual(len(model.glazingList), 33)

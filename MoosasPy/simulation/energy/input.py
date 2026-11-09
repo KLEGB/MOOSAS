@@ -438,10 +438,11 @@ def _adjacency_parts(space, owner_ids, spaces, footprint, projection, normal, ce
     for owner in sorted(owner_ids-{str(space.id)}):
         if owner not in spaces:
             raise ValueError(f'{space.id}: unknown boundary owner {owner}')
-        region=_owner_extent(spaces[owner],projection,normal,center,own,height_bounds=height_bounds)
+        from ...transform.geometry.polygon import planar_surface
+        region=planar_surface(_owner_extent(spaces[owner],projection,normal,center,own,height_bounds=height_bounds))
         if region.area<=1e-7:
             continue
-        overlap = shapely.intersection(covered,region)
+        overlap = shapely.intersection(covered,region) if not covered.is_empty else covered
         # _owner_extent buffers each footprint by 1 micrometre to retain
         # boundary-coincident cuts. Adjacent owners therefore share a thin
         # numerical strip, with area proportional to their perimeter.
@@ -552,6 +553,25 @@ def _construct_surface(element, zone, role, boundary, area, normal, owners, sett
         settings.get('_template_id',''),radiation_geometry)
 
 
+def _surface_projection(center, normal):
+    """Use a metric orthonormal frame even for almost horizontal surfaces.
+
+    Projection's legacy automatic horizontal-plane shortcut can select global
+    X for a tilted normal. That nonorthogonal basis distorts UV area, although
+    inverse-transformed radiation rings retain their true physical area.
+    """
+    normal=np.asarray(normal,dtype=float)
+    projection=Projection(Vector(center),Vector(normal))
+    normal=np.asarray(projection.axisZ,dtype=float)
+    axis_x=np.asarray(projection.axisX,dtype=float)
+    component=float(np.dot(axis_x,normal))
+    if abs(component)<=1e-12:
+        return projection
+    axis_x=axis_x-component*normal
+    axis_x/=np.linalg.norm(axis_x)
+    return Projection(Vector(center),Vector(normal),Vector(axis_x))
+
+
 def _radiation_geometry(geometry, projection):
     def ring(points):
         return tuple(tuple(float(v) for v in shapely.get_coordinates(
@@ -612,7 +632,10 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
     from ...model.io.gbxml.energy import validate as validate_external_thermal_model
     validate_external_thermal_model(model,surface_overrides,zone_overrides,template_overrides_model)
     if ground_level_m is None:
-        ground_level_m = config.get('ground_level_m', min(float(s.level) for s in model.spaceList))
+        # The model's Z=0 datum is also used by basement recognition. The
+        # lowest *recognized room* may be above a pilotis/open podium; its
+        # floor cannot move the soil plane upward and bury real windows.
+        ground_level_m = config.get('ground_level_m', 0.)
     ground_level_m = number(ground_level_m,'ground_level_m',minimum=-10000)
     owners = {}
     owner_height_bounds = {}
@@ -656,8 +679,9 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         room_center = np.asarray(space.getWeightCenter(),dtype=float).reshape(-1)
         groups = space.getAllFaces(to_dict=True)
         mass_ids = {str(e.Uid) for e in groups.get('InternalMass',())}
-        for group, role in [('MoosasWall','wall'),('MoosasFloor','floor'),('MoosasCeiling','ceiling'),('InternalMass','wall')]:
+        for group, group_role in [('MoosasWall','wall'),('MoosasFloor','floor'),('MoosasCeiling','ceiling'),('InternalMass','wall')]:
             for element in groups.get(group,()):
+                role=element.settings.get('geometry_surface_role_by_space',{}).get(str(space.id),group_role)
                 key = (str(element.Uid),role)
                 if key in seen:
                     continue
@@ -682,7 +706,7 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                     after=region.contains(shapely.Point(center[:2]+direction*.001))
                     if after and not before:normal=-normal
                     elif before==after and np.dot(normal,center-room_center)<0:normal=-normal
-                projection = Projection(Vector(center),Vector(normal))
+                projection = _surface_projection(center,normal)
                 from ...transform.geometry.polygon import planar_surface
                 uv=[p for face in np.asarray(element.face).flatten() for p in shapely.get_parts(planar_surface(projection.toUV(face)))]
                 footprint = shapely.union_all([shapely.Polygon(p.exterior) for p in uv])
@@ -737,6 +761,14 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
                         gr = 'wall' if gs.get('opaque_opening') else 'window' if role=='wall' else 'skylight'
                         gs.update(surface_overrides.get(f'{space.id}/{opening.Uid}/{gr}',{}))
                         gs.update(surface_overrides.get(f'{space.id}/{opening.Uid}/{gr}{suffix}',{}))
+                        if bc=='ground' and boundary is None and 'boundary_condition' not in gs and gr=='skylight':
+                            # An explicit skylight on the grade plane is an
+                            # aperture, not an opaque soil-contact slab. Z
+                            # alone cannot close that opening with ground.
+                            z=shapely.get_coordinates(opening.face,include_z=True)[:,2]
+                            if np.max(np.abs(z-ground_level_m))<=.001:
+                                gs['boundary_condition']='outdoors'
+                                notes.append(f'{space.id}/{opening.Uid}: grade-plane skylight remains exposed; ground contact was inferred only for opaque construction.')
                         gs = templated(opening,gs,gr,gs.get('boundary_condition',bc),
                             (f'{space.id}/{opening.Uid}/{gr}',f'{space.id}/{opening.Uid}/{gr}{suffix}'))
                         surfaces.append(_construct_surface(opening,space,gr,gs.get('boundary_condition',bc),ga,normal,owners[str(opening.Uid)],gs,defaults,suffix,
@@ -810,3 +842,40 @@ def build_energy_input(model, weather, *, defaults=None, zone_ids=None, start_ho
         requests.append(zone);irradiation.append(matrix)
     if not requests: raise ValueError('No zones selected')
     return EnergyRequest(tuple(requests),weather,tuple(irradiation),int(start_hour),int(hours),tuple(dict.fromkeys(notes)),latent_enabled=latent_enabled)
+
+
+def compact_adiabatic_surfaces(request):
+    """Reduce redundant thermal nodes while preserving physical input areas.
+
+    Bodies are merged only when every wire parameter, role, normal and hourly
+    forcing per area are identical. They consequently have identical node
+    temperatures under this model's mixed air/radiant enclosure. Exterior
+    receiving surfaces are retained separately for geometric solar shading.
+    """
+    zones,irradiance,lineage=[],[],{}
+    for zone,matrix in zip(request.zones,request.irradiance):
+        groups={}
+        for index,surface in enumerate(zone.surfaces):
+            native=surface.native_model()
+            for key in ('name','source_element_id','area_m2'):native.pop(key,None)
+            key=(json.dumps(native,sort_keys=True),tuple(np.round(surface.normal,12))) if surface.boundary_condition=='adiabatic' else (surface.surface_id,)
+            # Zero irradiance is the usual adiabatic case. Keep any bespoke
+            # nonzero incident schedule separate rather than approximating it.
+            if np.any(matrix[index]):key=(*key,surface.surface_id)
+            groups.setdefault(key,[]).append(index)
+        surfaces=[];values=[]
+        for indices in groups.values():
+            originals=[zone.surfaces[i] for i in indices]
+            first=originals[0]
+            if len(indices)==1:
+                surfaces.append(first);values.append(matrix[indices[0]])
+                continue
+            merged=replace(first,surface_id=first.surface_id+'/equivalent_adiabatic',
+                area_m2=sum(s.area_m2 for s in originals),
+                sources=first.sources+tuple(('equivalent_adiabatic_source',s.surface_id) for s in originals),
+                radiation_geometry=tuple(g for s in originals for g in s.radiation_geometry))
+            surfaces.append(merged);values.append(matrix[indices[0]])
+            lineage[merged.surface_id]=[dict(surface_id=s.surface_id,source_element_id=s.source_element_id,area_m2=s.area_m2) for s in originals]
+        zones.append(replace(zone,surfaces=tuple(surfaces)))
+        values=np.asarray(values);values.setflags(write=False);irradiance.append(values)
+    return replace(request,zones=tuple(zones),irradiance=tuple(irradiance)),lineage

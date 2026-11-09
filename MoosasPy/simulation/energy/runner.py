@@ -458,7 +458,8 @@ class EnergyRunner:
                  executable_path=None, engine=None, timeout_seconds=120.,
                  temporal_scale='monthly', spatial_scale='building',
                  preheat=None, max_preheat=120, warmup_tolerance_k=.1,
-                 initial_state=None, surface_results=False, on_progress=None, on_hour=None, **input_options):
+                 initial_state=None, surface_results=False, on_progress=None, on_hour=None,
+                 warmup_failure_policy='raise', on_zone_hour=None, **input_options):
         if temporal_scale not in {'monthly','daily','hourly'}:
             raise ValueError('temporal_scale must be monthly, daily, or hourly')
         if spatial_scale not in {'building','zone'}:
@@ -488,10 +489,14 @@ class EnergyRunner:
             raise ValueError('Restart/end-of-year windows require preheat=0')
         self.max_preheat = max_preheat
         self.tolerance = warmup_tolerance_k
+        if warmup_failure_policy not in {'raise', 'continue'}:
+            raise ValueError('warmup_failure_policy must be raise or continue')
+        self.warmup_failure_policy = warmup_failure_policy
         self.initial_state = initial_state
         self.surface_results = surface_results
         self.on_progress = on_progress
         self.on_hour = on_hour
+        self.on_zone_hour = on_zone_hour
 
     def run(self):
         request = self.request
@@ -527,8 +532,19 @@ class EnergyRunner:
             if self.preheat:
                 for cycle in range(self.max_preheat):
                     before = states
-                    for hour in range(24):
-                        step(hour)
+                    try:
+                        for hour in range(24):
+                            step(hour)
+                    except ValueError as exc:
+                        if self.warmup_failure_policy != 'continue' or 'surface network failed to converge' not in str(exc):
+                            raise
+                        # evaluate() did not return a candidate: keep the last
+                        # accepted external state, close the failed step, and
+                        # start the requested period. Actual-period failures
+                        # still raise; no missing hour is fabricated.
+                        session.end_step()
+                        warnings.append(f'Warmup cycle {cycle+1}, hour {hour}: {exc}; continuing from last accepted state')
+                        break
                     change = max((max(abs(a-b) for a,b in zip(old,new)) if old else float('inf')) for old,new in zip(before,states))
                     history.append(change)
                     if cycle+1>=self.preheat and change<=self.tolerance:
@@ -565,6 +581,8 @@ class EnergyRunner:
                     surfaces.append(tuple(row['surfaces'] for row in rows))
                 if self.on_hour is not None:
                     self.on_hour(request.start_hour+hour,rows)
+                if self.on_zone_hour is not None:
+                    self.on_zone_hour(request.start_hour+hour,rows)
                 if self.on_progress and ((hour+1)%24==0 or hour+1==request.hours):
                     self.on_progress(hour+1,request.hours)
         if moisture_issues:

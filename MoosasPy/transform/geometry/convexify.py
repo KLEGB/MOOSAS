@@ -1,6 +1,7 @@
-﻿"""
+"""
 Convexification utilities aligned with the current cuger implementation.
 """
+
 
 from ...utils import GeometryError, np, shapely
 from . import polygon as polygon_ops
@@ -49,10 +50,24 @@ def _convex_parts_with_holes(face, holes):
         # passing them to Shapely so NumPy does not coerce ragged coordinates.
         holes=[shapely.linearrings(np.asarray(hole, dtype=float)[:, :2]) for hole in holes],
     )
-    if not polygon.is_valid or polygon.is_empty or polygon.area <= 0:
-        raise GeometryError(polygon, "Double-cut decomposition requires a valid polygon with holes.")
+    if not polygon.is_valid:
+        # A source opening may meet the outer ring along an edge. Such a
+        # region is a notch, not an OGC interior ring. Construct the physical
+        # difference before decomposition, preserving its area exactly.
+        region = shapely.Polygon(face[:, :2])
+        if not region.is_valid:
+            raise GeometryError(polygon, "Invalid outer ring in holed face.")
+        openings = [shapely.Polygon(np.asarray(hole)[:, :2]) for hole in holes]
+        if any(not opening.is_valid for opening in openings):
+            raise GeometryError(polygon, "Invalid opening ring in holed face.")
+        region = region.difference(shapely.union_all(openings))
+        if abs(region.area - polygon.area) > max(1e-8, abs(polygon.area) * 1e-9):
+            raise GeometryError(polygon, "Opening normalization changes source area.")
+        polygon = region
+    if polygon.is_empty or polygon.area <= 0:
+        raise GeometryError(polygon, "Hole decomposition requires positive area.")
 
-    pending = [polygon]
+    pending = list(shapely.get_parts(polygon))
     simple = []
     while pending:
         piece = pending.pop()

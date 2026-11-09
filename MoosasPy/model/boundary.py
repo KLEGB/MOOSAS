@@ -519,12 +519,37 @@ class MoosasEdge:
             # connectors and misaligns every following normal with its wall.
             factors = []
             for wall in self.wall:
-                points = np.unique(
-                    shapely.get_coordinates(wall.face, include_z=True)[:, :2],
-                    axis=0,
-                )
+                owner_normal = wall.settings.get('geometry_owner_normals', {}).get(
+                    getattr(self, '_MoosasEdge__ownerId', None))
+                # The room ring follows the wall's bottom trace. Using the
+                # farthest XY vertices of the full 3D face creates a diagonal
+                # through an inclined wall, or includes an overhanging upper
+                # panel that never touches this ring.
+                points = np.unique(shapely.get_coordinates(wall.force_2d()), axis=0)
                 if len(points) < 2:
-                    raise GeometryError(wall.face, "degenerate explicit wall")
+                    # Millimetre-grid projection can collapse a valid narrow
+                    # wall segment. If the RDF carries the owning space's
+                    # outward normal, preserve its direction with a unit
+                    # orientation vector; the wall's sub-grid length is not
+                    # used as physical boundary area.
+                    if owner_normal is not None:
+                        outward = np.asarray(owner_normal, dtype=float)
+                        if outward.shape == (3,) and np.isfinite(outward).all() and np.linalg.norm(outward[:2]) > 0:
+                            factors.append(Vector(outward / np.linalg.norm(outward[:2])))
+                            continue
+                    # If no owner normal was serialized, recover the actual
+                    # sub-millimetre footprint edge from the 3D wall instead
+                    # of the rounded force_2d projection.
+                    xyz = shapely.get_coordinates(wall.face, include_z=True)
+                    raw_points = np.unique(np.asarray(xyz[:, :2], dtype=float), axis=0)
+                    if len(raw_points) >= 2:
+                        distances = np.linalg.norm(
+                            raw_points[:, None, :] - raw_points[None, :, :], axis=2)
+                        ia, ib = np.unravel_index(np.argmax(distances), distances.shape)
+                        if distances[ia, ib] > 1e-12:
+                            points = raw_points
+                    if len(points) < 2:
+                        raise GeometryError(wall.face, "degenerate explicit wall")
                 distances = np.linalg.norm(
                     points[:, None, :] - points[None, :, :], axis=2)
                 ia, ib = np.unravel_index(np.argmax(distances), distances.shape)
@@ -532,8 +557,6 @@ class MoosasEdge:
                 length = float(np.linalg.norm(vector))
                 if length <= 0:
                     raise GeometryError(wall.face, "degenerate explicit wall")
-                owner_normal = wall.settings.get('geometry_owner_normals', {}).get(
-                    getattr(self, '_MoosasEdge__ownerId', None))
                 if owner_normal is not None:
                     outward = np.asarray(owner_normal, dtype=float)
                     if outward.shape != (3,) or not np.isfinite(outward).all() or np.linalg.norm(outward[:2]) <= 0:
@@ -551,7 +574,10 @@ class MoosasEdge:
                 steps = [epsilon * 10. ** (-power) for power in range(10)]
                 steps.extend((min(.001, length * .01),
                               min(.001, length * .1),
-                              min(.001, length * .25)))
+                              min(.001, length * .25),
+                              min(.01, length * .01),
+                              min(.05, length * .1),
+                              min(.1, length * .25)))
                 sign = None
                 for step in steps:
                     plus = shapely.contains(
@@ -561,6 +587,16 @@ class MoosasEdge:
                     if plus != minus:
                         sign = -1 if plus else 1
                         break
+                if sign is None:
+                    # A probe can fall on both sides of a rounded boundary
+                    # segment for very short/oblique walls. Infer its outward
+                    # side from an interior point of the owning room instead
+                    # of rejecting an otherwise importable RDF space.
+                    interior = self.__botBound.representative_point()
+                    toward_wall = center - np.asarray([interior.x, interior.y], dtype=float)
+                    projection = float(np.dot(normal, toward_wall))
+                    if abs(projection) > max(1e-10, length * 1e-8):
+                        sign = 1 if projection > 0 else -1
                 if sign is None:
                     raise GeometryError(
                         wall.face,

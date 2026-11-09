@@ -21,7 +21,11 @@ def _validate_partition(parts, source, *, convex=False):
         union.symmetric_difference(source).area > tolerance
         or abs(sum(part.area for part in parts) - union.area) > tolerance
     ):
-        raise GeometryError(source, "Double-cut decomposition lost area or produced overlapping faces.")
+        error = GeometryError(source, "Double-cut decomposition lost area or produced overlapping faces. "
+            f"symmetric_difference={union.symmetric_difference(source).area:.12g}, "
+            f"overlap={abs(sum(part.area for part in parts)-union.area):.12g}, tolerance={tolerance:.12g}")
+        error.partition_parts = shapely.to_wkt(parts,rounding_precision=16).tolist()
+        raise error
 
 
 def cut_hole(polygon):
@@ -58,12 +62,32 @@ def cut_hole(polygon):
             continue
         _validate_partition(cells, polygon)
         return cells
-    raise GeometryError(polygon, "No valid pair of double-cut hole connectors found.")
+    # Some concave shells have no two disjoint vertex-to-vertex bridges for
+    # the selected hole (the shortest bridge can block every other bridge).
+    # A constrained triangulation supplies an area-preserving partition
+    # without adding a slit or filling the opening.
+    cells = list(shapely.get_parts(shapely.constrained_delaunay_triangles(polygon)))
+    _validate_partition(cells, polygon, convex=True)
+    return cells
 
 
 def planar_surface(geometry):
     """Preserve planar area while removing invalid nonphysical linework."""
     region = shapely.force_2d(geometry)
+    if region.geom_type == 'GeometryCollection' and region.is_valid:
+        # A valid mixed overlay can still carry detached lines/points. GEOS
+        # may fail when intersecting such a collection with the empty set;
+        # those zero-area pieces are not thermal or optical surfaces.
+        stack, polygons = [region], []
+        while stack:
+            part=stack.pop()
+            if part.geom_type=='Polygon':polygons.append(part)
+            elif part.geom_type in {'GeometryCollection','MultiPolygon'}:
+                stack.extend(shapely.get_parts(part))
+        repaired=shapely.union_all(polygons)
+        if abs(repaired.area-region.area)>max(1e-8,abs(region.area)*1e-8):
+            raise ValueError('Planar collection contains overlapping physical areas')
+        region=repaired
     if not region.is_valid:
         stack = [shapely.make_valid(region)]
         polygons = []
@@ -80,6 +104,51 @@ def planar_surface(geometry):
         region = repaired
     # Drop precision metadata without rounding physical coordinates.
     return shapely.set_precision(region, 0)
+
+
+def planar_face_region(face):
+    """Return a stable orthonormal frame and the actual planar surface region.
+
+    World XY is singular for vertical faces. Derive the plane from physical
+    vertices instead of rounding a nearly vertical supplied normal.
+    """
+    points = shapely.get_coordinates(shapely.get_exterior_ring(face), include_z=True)[:-1]
+    if len(points) < 3 or not np.isfinite(points).all():
+        raise ValueError('A planar face requires three finite vertices')
+    origin = points.mean(axis=0)
+    delta = points-origin
+    area_vector = np.cross(delta, np.roll(delta,-1,axis=0)).sum(axis=0)
+    magnitude = float(np.linalg.norm(area_vector))
+    if magnitude == 0:
+        return origin, None, None, None, shapely.Polygon()
+    normal = area_vector/magnitude
+    edges = np.roll(points,-1,axis=0)-points
+    tangent = edges[np.argmax(np.linalg.norm(edges,axis=1))]
+    tangent -= np.dot(tangent,normal)*normal
+    tangent /= np.linalg.norm(tangent)
+    bitangent = np.cross(normal,tangent)
+    coordinates = shapely.get_coordinates(face,include_z=True)
+    if np.max(np.abs((coordinates-origin)@normal)) > .001:
+        raise ValueError('Radiating face departs from its physical plane by more than 1 mm')
+    def region(ring):
+        d=shapely.get_coordinates(ring,include_z=True)-origin
+        return planar_surface(shapely.Polygon(np.column_stack((d@tangent,d@bitangent))))
+    polygon = region(shapely.get_exterior_ring(face))
+    for hole in face.interiors:
+        polygon = polygon.difference(region(hole))
+    return origin, tangent, bitangent, normal, planar_surface(polygon)
+
+
+def triangulate_planar_face(face):
+    """Triangulate the same 3D areal set, retaining holes and concavities."""
+    origin,u,v,normal,region = planar_face_region(face)
+    if region.is_empty:
+        return []
+    triangles = list(shapely.get_parts(shapely.constrained_delaunay_triangles(region)))
+    _validate_partition(triangles,region,convex=True)
+    return [shapely.Polygon(origin + xy[:,0,None]*u + xy[:,1,None]*v)
+            for triangle in triangles
+            for xy in [shapely.get_coordinates(triangle)]]
 
 
 class GeometryBasic:
