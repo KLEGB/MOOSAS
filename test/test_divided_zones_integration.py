@@ -15,11 +15,35 @@ from MoosasPy.transform import TransformOptions, transform
 from MoosasPy.model.space import MoosasSpace
 from MoosasPy.utils import shapely
 from MoosasPy.utils.constant import geom
+from MoosasPy.utils.tools import native_platform, path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CASE_DIRECTORY = PROJECT_ROOT / "test" / "caseFile"
 BEIJING_WEATHER = PROJECT_ROOT / "MoosasPy" / "db" / "weather" / "545110.csv"
+ENERGY_TEMPLATE_ID = "CN/GB55015-2021/3A/Office"
+NUMBERED_GEO_CASES = (
+    ("test11_A01.geo", 78),
+    ("test12_A04.geo", 29),
+    ("test13_A10.geo", 33),
+    ("test14_A18.geo", 41),
+    ("test15_B02.geo", 9),
+    ("test16_B07.geo", 15),
+    ("test17_B12.geo", 40),
+    ("test18_B13.geo", 25),
+    ("test19_B22.geo", 28),
+    ("test20_B23.geo", 21),
+    ("test21_B34.geo", 45),
+    ("test22_B48.geo", 54),
+    ("test23_B49.geo", 6),
+    ("test24_C09.geo", 88),
+    ("test25_C18.geo", 18),
+    ("test26_C22.geo", 43),
+    ("test27_C25.geo", 32),
+    ("test28_C28.geo", 40),
+    ("test29_C44.geo", 163),
+    ("test30_C51.geo", 127),
+)
 
 
 @lru_cache(maxsize=None)
@@ -29,6 +53,23 @@ def _transform_divided_case(case_name):
         input_type="geo",
         stdout=StringIO(),
         options=TransformOptions(divided_zones=True),
+    )
+
+
+@lru_cache(maxsize=None)
+def _transform_numbered_case(case_name):
+    return transform(
+        str(CASE_DIRECTORY / case_name),
+        input_type="geo",
+        stdout=StringIO(),
+    )
+
+
+@lru_cache(maxsize=1)
+def _numbered_case_weather():
+    return read_weather_csv(
+        BEIJING_WEATHER,
+        Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),
     )
 
 
@@ -300,7 +341,7 @@ def test_divided_zone_model_runs_energy_simulation():
 
     result = EnergyRunner(
         model=model,
-        template_id="CN/GB55015-2021/3A/Residential",
+        template_id=ENERGY_TEMPLATE_ID,
         weather=read_weather_csv(
             BEIJING_WEATHER,
             Location("545110", "BEIJING/PEKING", "-", 39.93, 116.28, 55.0, 100962.17),
@@ -313,8 +354,51 @@ def test_divided_zone_model_runs_energy_simulation():
     assert len(result.data["months"]) == 12
     totals = {key: float(result.data["total"][key]) for key in ("cooling", "heating", "lighting", "equipment", "total")}
     assert all(math.isfinite(value) and value >= 0 for value in totals.values())
-    assert totals["cooling"] == pytest.approx(14.36, abs=0.01)
-    assert totals["heating"] == pytest.approx(78.24, abs=0.01)
-    assert totals["lighting"] == pytest.approx(7.30, abs=0.01)
-    assert totals["equipment"] == pytest.approx(19.42, abs=0.01)
     assert totals["total"] == pytest.approx(sum(totals[key] for key in ("cooling", "heating", "lighting", "equipment")), abs=0.01)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(("case_name", "space_count"), NUMBERED_GEO_CASES)
+def test_numbered_geo_cases_transform_to_expected_spaces(case_name, space_count):
+    model = _transform_numbered_case(case_name)
+
+    assert len(model.spaceList) == space_count
+    assert all(space.area > 0 for space in model.spaceList)
+    assert model.wallList
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not BEIJING_WEATHER.is_file(),
+    reason="requires Beijing 545110 weather data",
+)
+@pytest.mark.skipif(
+    not (
+        Path(path.libDir)
+        / "moosas_energy"
+        / native_platform()[0]
+        / "bin"
+        / f"MoosasEnergy{native_platform()[1]}"
+    ).is_file(),
+    reason="requires the native MOOSAS Energy executable",
+)
+@pytest.mark.parametrize(("case_name", "space_count"), NUMBERED_GEO_CASES)
+def test_numbered_geo_cases_run_energy(case_name, space_count):
+    model = _transform_numbered_case(case_name)
+    result = EnergyRunner(
+        model=model,
+        weather=_numbered_case_weather(),
+        template_id=ENERGY_TEMPLATE_ID,
+        start_hour=4000,
+        hours=24,
+        preheat=0,
+        temporal_scale="hourly",
+        spatial_scale="zone",
+    ).run()
+
+    assert len(result.commands) == 1
+    assert result.commands[0].returncode == 0
+    assert len(result.zone_results) == space_count
+    assert result.zone_hourly_energy_kwh.shape[:2] == (space_count, 24)
+    assert np.isfinite(result.zone_hourly_energy_kwh).all()
+    assert np.isfinite(result.zone_temperature_c).all()

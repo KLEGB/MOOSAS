@@ -1,4 +1,4 @@
-"""Versioned building-template catalogs and their runtime adapters."""
+"""Building-template catalogs and their runtime adapters."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -13,8 +13,8 @@ DEFAULT_LIBRARY = Path(__file__).resolve().parents[1] / 'db' / 'template'
 
 def _read_catalog_manifest(filename):
     data = json.loads(filename.read_text(encoding='utf-8'))
-    if data.get('schema') != 'moosas.building-template-library' or data.get('version') != 5:
-        raise ValueError(f'Unsupported building template catalog schema/version in {filename.name}')
+    if data.get('schema') != 'moosas.building-template-library':
+        raise ValueError(f'Unsupported building template catalog schema in {filename.name}')
     return data
 
 
@@ -22,7 +22,7 @@ def load_building_template_library(library_path=None):
     """Load the bundled default catalog or an explicitly provided local catalog."""
     folder = DEFAULT_LIBRARY if library_path is None else Path(library_path)
     manifest = _read_catalog_manifest(folder / 'library.json')
-    library = dict(schema=manifest['schema'], version=manifest['version'], standards={})
+    library = dict(schema=manifest['schema'], standards={})
     for namespace in manifest['standards']:
         if not isinstance(namespace, str):
             raise ValueError(f'Invalid template package path {namespace!r}')
@@ -32,7 +32,7 @@ def load_building_template_library(library_path=None):
         assumptions = manifest.get('template_assumptions')
         operational = manifest.get('operational_metadata')
         if not isinstance(standard, dict) or not isinstance(assumptions, dict) or not isinstance(operational, dict):
-            raise ValueError(f'{namespace}: version 5 catalog metadata is required')
+            raise ValueError(f'{namespace}: catalog metadata is required')
         standard_namespace = f"{standard.get('country')}/{standard.get('id')}"
         if (not standard.get('country') or not standard.get('id') or not standard.get('source_url')
                 or namespace != f"{standard['country']}_{standard['id']}"
@@ -82,7 +82,6 @@ def _read_direct_template(filename, package, standard, assumptions, operational,
     resolved = _load_schedule_sources(original, package, template_id, schedules=schedules)
     profile = {
         'schema': 'moosas.building-template',
-        'version': 5,
         'id': template_id,
         'standard': deepcopy(standard),
         'BuildingTemplate': {'Space': resolved['Space'], 'Envelope': resolved['Envelope']},
@@ -154,9 +153,10 @@ def _load_schedule_sources(value, package_path, label, *, schedules=None):
             raise ValueError(f'{label}: schedule path escapes its template package')
         if resolved not in schedules:
             document = json.loads(resolved.read_text(encoding='utf-8'))
-            if (not isinstance(document, dict) or set(document) != {'schema', 'version', 'schedules'}
-                    or document.get('schema') != 'moosas.schedule' or document.get('version') != 2):
-                raise ValueError(f'{label}: unsupported .sch schema/version')
+            if (not isinstance(document, dict)
+                    or document.get('schema') != 'moosas.schedule'
+                    or 'schedules' not in document):
+                raise ValueError(f'{label}: unsupported .sch schema')
             document_schedules = document.get('schedules')
             if not isinstance(document_schedules, dict):
                 raise ValueError(f'{label}: .sch schedules must be an object')
@@ -172,7 +172,7 @@ def _load_schedule_sources(value, package_path, label, *, schedules=None):
                                or not isinstance(value, (int, float)) or not math.isfinite(value))
                                for value in values)
                         or (not nullable and any(value is None for value in values))):
-                    raise ValueError(f'{label}: invalid version 2 schedule entry {name!r}')
+                    raise ValueError(f'{label}: invalid schedule entry {name!r}')
             schedules[resolved] = document_schedules
         document_schedules = schedules[resolved]
         if value['name'] not in document_schedules:
@@ -221,8 +221,8 @@ def validate_template_snapshot(settings):
 
 def _validate_template_snapshot(profile):
     if (not isinstance(profile, dict) or profile.get('schema') != 'moosas.building-template'
-            or profile.get('version') != 5 or not isinstance(profile.get('id'), str)):
-        raise ValueError('A version 5 BuildingTemplate record is required')
+            or not isinstance(profile.get('id'), str)):
+        raise ValueError('A BuildingTemplate record with a valid id is required')
     template = profile.get('BuildingTemplate', {})
     if not isinstance(template, dict) or set(template) != {'Space', 'Envelope'}:
         raise ValueError('Direct BuildingTemplate snapshot requires Space and Envelope domains')
@@ -274,7 +274,7 @@ def _validate_template_snapshot(profile):
                 f"{source_metadata.get('climate_zone')}/{source_metadata.get('building_type')}")):
         raise ValueError('Direct BuildingTemplate snapshot id does not match its source metadata')
     if not isinstance(metadata.get('energy_assumptions'), dict) or not isinstance(metadata.get('operational_metadata'), dict):
-        raise ValueError('Version 5 BuildingTemplate snapshot is missing catalog assumptions')
+        raise ValueError('BuildingTemplate snapshot is missing catalog assumptions')
 
 
 def space_template(model, space, template_id=None, *, templates=None):
@@ -370,7 +370,7 @@ def _multiply_values(*values):
 
 
 def template_parameter(profile, key, room='default'):
-    """Resolve a version 5 room parameter into a model simulation setting."""
+    """Resolve a room parameter into a model simulation setting."""
     room_values = profile['BuildingTemplate']['Space'][room]
     if key == 'zone_ppsm':
         return _multiply_values(

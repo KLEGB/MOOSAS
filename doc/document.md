@@ -482,10 +482,10 @@ Important energy-setting fields include:
 Building templates use a catalog maintained in the independent
 [MOOSAS-BuildingTemplate repository](https://github.com/KLEGB/MOOSAS-BuildingTemplate)
 and a shared runtime adapter in `MoosasPy/model/building_templates.py`.
-The package bundles only the version-5 Office 3A template and its required
+The package bundles only the Office 3A template and its required
 office schedule in `MoosasPy/db/template/`. New spaces do not
 automatically select or apply a template. Select the namespaced identifier
-explicitly, or provide another version 5 catalog via `template_path` to
+explicitly, or provide another catalog via `template_path` to
 `apply_building_template` or `library_path` to
 `load_building_template_library`. The catalog loader resolves and validates
 referenced schedules when loading.
@@ -506,11 +506,12 @@ space before applying a multi-room template.
 Single-room templates use `default`; multi-room templates require an explicit
 key such as `outpatient`, `inpatient`, or a residential room type. Parameters
 use `{mode: "constant", value, unit}` or
-`{mode: "schedule", file, name, unit}`. Schedule files are version 2 JSON
-`.sch` documents with named, unit-labelled arrays of exactly 8760 hourly
+`{mode: "schedule", file, name, unit}`. Schedule files are JSON `.sch`
+documents with named, unit-labelled arrays of exactly 8760 hourly
 values. `null` is allowed only for temperature setpoints and means that mode is
-off. The loader resolves schedules and stores the complete version 5 record in
-the model snapshot. Occupancy density, equipment power density, and lighting
+off. The loader resolves schedules and stores the complete template record in
+the model snapshot; catalogs and snapshots do not require a version field.
+Occupancy density, equipment power density, and lighting
 power density are each multiplied by their own hourly usage schedule. Fresh-air
 rate is multiplied by its availability schedule. The single `hvac_availability`
 follows GB table C.0.6-1; heating/cooling setpoints follow table C.0.6-2.
@@ -536,8 +537,9 @@ Construction leakage and opening-ratio properties are preserved in template
 records but are not consumed by AFN yet. Leakage conversion requires a declared
 reference pressure, which the current catalog does not provide; no reference
 pressure is guessed. AFN opening-ratio integration is also deferred. Only
-version 5 catalogs are accepted; old identifiers and earlier catalog formats
-have no aliases or compatibility path.
+direct catalogs with the required metadata and structure are accepted; old
+identifiers and flattened catalog formats have no aliases or compatibility
+path.
 
 The default catalog uses stable IDs of the form
 `CN/GB55015-2021/<climate-zone>/<building-type>`. It does not infer climate
@@ -554,8 +556,8 @@ Replace template resources explicitly and reapply them to affected models.
 The bundled catalog is loaded directly from `MoosasPy/db/template/`; no
 download or user cache is needed. To use another catalog, supply its local
 checkout through `template_path` or `library_path`.
-Version 5 snapshots round-trip through RDF/XML/JSON without the source catalog
-or `.sch` files.
+Versionless template snapshots round-trip through RDF/XML/JSON without the
+source catalog or `.sch` files.
 The shared model metadata payload in `MoosasPy/model/metadata.py` also
 round-trips `model.metadata` alongside energy settings, schedules, and template
 snapshots.

@@ -50,7 +50,7 @@ def _space(space_id='z1', settings=None):
 
 def test_bundled_catalog_contains_only_office_3a(templates):
     library = load_building_template_library()
-    assert library['version'] == 5
+    assert 'version' not in library
     assert set(library['standards']) == {'CN/GB55015-2021'}
     assert set(templates) == {OFFICE_3A}
     assert DEFAULT_LIBRARY == Path(__file__).parents[1] / 'MoosasPy' / 'db' / 'template'
@@ -70,9 +70,9 @@ def test_explicit_external_catalog_can_contain_multiple_templates(local_library)
         OFFICE_3A, 'CN/GB55015-2021/4A/Office'}
 
 
-def test_v5_snapshot_uses_room_groups_and_direct_envelope_values(office_record):
+def test_snapshot_uses_room_groups_and_direct_envelope_values(office_record):
     record = office_record
-    assert record['version'] == 5
+    assert 'version' not in record
     assert set(record['BuildingTemplate']) == {'Space', 'Envelope'}
     assert set(record['BuildingTemplate']['Space']) == {'default'}
     assert set(record['BuildingTemplate']['Envelope']) == {
@@ -144,7 +144,7 @@ def test_model_snapshot_round_trip_is_self_contained(local_library):
     apply_energy_metadata(restored, payload)
     assert restored.spaceList[0].settings == space.settings
     assert restored.metadata == model.metadata
-    assert space_template(restored, restored.spaceList[0])['version'] == 5
+    assert 'version' not in space_template(restored, restored.spaceList[0])
 
 
 def test_applying_multi_room_template_requires_room_selection(local_library):
@@ -165,29 +165,19 @@ def test_applying_multi_room_template_requires_room_selection(local_library):
 
 
 @pytest.mark.parametrize('change, message', [
-    ('manifest_version', 'schema/version'),
-    ('schedule_version', 'schema/version'),
     ('metadata', 'metadata does not match'),
     ('envelope', 'invalid Envelope construction groups'),
-    ('schedule_length', 'invalid version 2 schedule entry'),
+    ('schedule_length', 'invalid schedule entry'),
     ('schedule_unit', 'unit does not match'),
     ('schedule_path', 'relative .sch'),
 ])
-def test_invalid_v5_catalogs_fail_explicitly(local_library, change, message):
+def test_invalid_template_catalogs_fail_explicitly(local_library, change, message):
     package = local_library / 'CN_GB55015-2021'
     template_file = package / 'Office_3A.json'
     template = json.loads(template_file.read_text(encoding='utf-8'))
     schedule_file = package / 'schedules' / 'office.sch'
     schedule = json.loads(schedule_file.read_text(encoding='utf-8'))
-    if change == 'manifest_version':
-        manifest_file = local_library / 'library.json'
-        manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
-        manifest['version'] = 4
-        manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
-    elif change == 'schedule_version':
-        schedule['version'] = 1
-        schedule_file.write_text(json.dumps(schedule), encoding='utf-8')
-    elif change == 'metadata':
+    if change == 'metadata':
         template['BuildingTemplate']['metadata']['country'] = 'US'
     elif change == 'envelope':
         del template['BuildingTemplate']['Envelope']['ground']
@@ -202,6 +192,14 @@ def test_invalid_v5_catalogs_fail_explicitly(local_library, change, message):
     template_file.write_text(json.dumps(template), encoding='utf-8')
     with pytest.raises(ValueError, match=message):
         building_templates(local_library)
+
+
+def test_schedule_loader_ignores_version_field(local_library):
+    schedule_file = local_library / 'CN_GB55015-2021' / 'schedules' / 'office.sch'
+    schedule = json.loads(schedule_file.read_text(encoding='utf-8'))
+    schedule['version'] = 'unvalidated'
+    schedule_file.write_text(json.dumps(schedule), encoding='utf-8')
+    assert set(building_templates(local_library)) == {OFFICE_3A}
 
 
 def test_metadata_registry_and_template_selection(local_library):
@@ -226,13 +224,11 @@ def test_occupant_heat_is_not_a_template_parameter(local_library):
         building_templates(local_library)
 
 
-def test_old_version_and_per_space_snapshots_are_not_accepted(office_record):
-    old = deepcopy(office_record)
-    old['version'] = 4
+def test_template_snapshot_does_not_require_version_and_rejects_per_space_snapshots(office_record):
     space = _space(settings={'zone_template': OFFICE_3A})
-    model = SimpleNamespace(buildingTemplate={OFFICE_3A: old})
-    with pytest.raises(ValueError, match='version 5'):
-        space_template(model, space)
+    model = SimpleNamespace(buildingTemplate={OFFICE_3A: deepcopy(office_record)})
+    model.buildingTemplate[OFFICE_3A].pop('version', None)
+    assert space_template(model, space)['id'] == OFFICE_3A
     space.settings['_building_template'] = {}
     with pytest.raises(ValueError, match='Per-space'):
         space_template(model, space)

@@ -1,6 +1,5 @@
 {
   "schema": "moosas.schedule",
-  "version": 2,
   "schedules": {
     "default_fresh_air_availability": {
       "unit": "1",

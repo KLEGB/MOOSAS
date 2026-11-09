@@ -883,7 +883,7 @@ def test_template_application_rejects_flat_legacy_templates():
 
     with pytest.raises(ValueError, match="namespaced id"):
         space.applySettings(template)
-    with pytest.raises(ValueError, match="version 5"):
+    with pytest.raises(ValueError, match="BuildingTemplate record"):
         space.applySettings("test-residential")
 
 
