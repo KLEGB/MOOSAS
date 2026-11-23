@@ -51,7 +51,7 @@ class ExampleIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.model.voidList), 0)
         self.assertEqual(len(self.model.wallList), 257)
         # Four millimetre-wide facade caps remain shading, not floor slabs.
-        self.assertEqual(len(self.model.faceList), 149)
+        self.assertEqual(len(self.model.faceList), 134)
         self.assertEqual(len(self.model.glazingList), 33)
         self.assertEqual(len(self.model.skylightList), 0)
         self.assertEqual(

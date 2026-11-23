@@ -19,8 +19,10 @@ from MoosasPy.transform.geometry.element import (
     MoosasFace,
     MoosasGlazing,
     MoosasGeometry,
+    MoosasSkylight,
     MoosasWall,
 )
+from MoosasPy.transform.geometry.cleanse import cleanseOverlapFace
 from MoosasPy.transform.geometry.geos import Projection, ccwNormal, is_ccw, simplify
 from MoosasPy.transform.geometry.grid import MoosasGrid
 from MoosasPy.transform.geometry.planar_graph import TopoNetwork
@@ -173,6 +175,75 @@ def test_wall_split_preserves_thermal_and_glazing_settings(air_boundary):
     assert len(windows) == 2
     assert sum(window.area for window in windows) == pytest.approx(glazing.area)
     assert all(window.U_Value == 1.4 and window.SHGC == 0.28 and window.operable == 0.4 for window in windows)
+
+
+@pytest.mark.parametrize("boundaries", [(0, 4, 8), (0, 3, 5, 8)])
+@pytest.mark.parametrize("vertical", [False, True])
+def test_glazing_crossing_existing_walls_is_split_and_attached(boundaries, vertical):
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    def point(value):
+        return (0, value) if vertical else (value, 0)
+    walls = [
+        MoosasWall.fromProjection(shapely.LineString([point(start), point(end)]), 0, 3, model)
+        for start, end in zip(boundaries[:-1], boundaries[1:])
+    ]
+    window = MoosasGlazing.fromProjection(shapely.LineString([point(2), point(6)]), 1, 2, model)
+    window.setCategory(1)
+    window.U_Value = 1.4
+    window.SHGC = 0.28
+    window.operable = 0.4
+    model.wallList = walls.copy()
+    model.glazingList = [window]
+
+    attach_glazing_to_faces(model)
+
+    assert model.wallList == walls
+    fragments = [glazing for wall in walls for glazing in wall.glazingElement]
+    assert len(fragments) == len(model.glazingList) == len(walls)
+    assert sum(glazing.area for glazing in fragments) == pytest.approx(window.area)
+    assert all(glazing.category == 1 for glazing in fragments)
+    assert all(glazing.U_Value == 1.4 and glazing.SHGC == 0.28 and glazing.operable == 0.4
+               for glazing in fragments)
+    assert all(glazing.parentFace is wall for wall in walls for glazing in wall.glazingElement)
+
+
+def test_glazing_crossing_a_wall_gap_puts_only_the_gap_on_a_curtain():
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    walls = [
+        MoosasWall.fromProjection(shapely.LineString([(0, 0), (3, 0)]), 0, 3, model),
+        MoosasWall.fromProjection(shapely.LineString([(5, 0), (8, 0)]), 0, 3, model),
+    ]
+    window = MoosasGlazing.fromProjection(shapely.LineString([(2, 0), (6, 0)]), 1, 2, model)
+    model.wallList = walls.copy()
+    model.glazingList = [window]
+
+    attach_glazing_to_faces(model)
+
+    assert [glazing.area for glazing in walls[0].glazingElement] == pytest.approx([1])
+    assert [glazing.area for glazing in walls[1].glazingElement] == pytest.approx([1])
+    assert len(model.wallList) == 3
+    assert [glazing.area for glazing in model.wallList[-1].glazingElement] == pytest.approx([2])
+    assert len(model.glazingList) == 3
+
+
+def test_glazing_crossing_overlapping_walls_attaches_every_piece():
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0]
+    walls = [
+        MoosasWall.fromProjection(shapely.LineString([(0, 0), (5, 0)]), 0, 3, model),
+        MoosasWall.fromProjection(shapely.LineString([(3, 0), (8, 0)]), 0, 3, model),
+    ]
+    model.wallList = walls.copy()
+    model.glazingList = [
+        MoosasGlazing.fromProjection(shapely.LineString([(2, 0), (6, 0)]), 1, 2, model)
+    ]
+
+    attach_glazing_to_faces(model)
+
+    assert model.wallList == walls
+    assert sum(glazing.area for wall in walls for glazing in wall.glazingElement) == pytest.approx(4)
 
 
 @pytest.mark.parametrize("origin", [(0, 0), (1026.912, 84.523)])
@@ -600,6 +671,158 @@ def test_shared_horizontal_faces_are_collapsed_and_ordered_by_storey():
     assert upper_floor.face == [lower_face]
     assert lower_face.space == ["lower", "upper"]
     assert lower_face.isOuter is False
+
+
+def test_horizontal_cleanup_preserves_openings_and_distinct_surfaces():
+    model = MoosasModel()
+    shape = shapely.force_3d(shapely.box(0, 0, 1, 0.5), z=3)
+    first = MoosasFace(model, model.includeGeo(shape, [0, 0, 1], cat=0))
+    duplicate = MoosasFace(model, model.includeGeo(shape, [0, 0, -1], cat=0))
+    partial = MoosasFace(
+        model, model.includeGeo(shapely.force_3d(shapely.box(0.5, 0, 1.5, 0.5), z=3), cat=0),
+    )
+    other_level = MoosasFace(
+        model, model.includeGeo(shapely.force_3d(shapely.force_2d(shape), z=6), cat=0),
+    )
+    opening = MoosasSkylight(
+        model, model.includeGeo(shapely.force_3d(shapely.box(0.1, 0.1, 0.3, 0.3), z=3), cat=1),
+    )
+    duplicate.add_glazing(opening)
+    model.faceList = [first, duplicate, partial, other_level]
+    model.skylightList = [opening]
+
+    cleanseOverlapFace(model)
+
+    assert list(model.faceList) == [first, partial, other_level]
+    assert first.glazingElement == [opening]
+    assert opening.parentFace is first
+    assert model.skylightList == [opening]
+
+
+def test_horizontal_cleanup_rejects_conflicting_coincident_faces():
+    model = MoosasModel()
+    shape = shapely.force_3d(shapely.box(0, 0, 1, 0.5), z=3)
+    first = MoosasFace(model, model.includeGeo(shape, [0, 0, 1], cat=0))
+    duplicate = MoosasFace(model, model.includeGeo(shape, [0, 0, -1], cat=2))
+    model.faceList = [first, duplicate]
+
+    with pytest.raises(ValueError, match="coincident horizontal faces"):
+        cleanseOverlapFace(model)
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_horizontal_cleanup_handles_coincident_openings(conflict):
+    model = MoosasModel()
+    shape = shapely.force_3d(shapely.box(0, 0, 1, 1), z=3)
+    faces = [MoosasFace(model, model.includeGeo(shape, [0, 0, normal], cat=0))
+             for normal in (1, -1)]
+    window_shape = shapely.force_3d(shapely.box(0.1, 0.1, 0.3, 0.3), z=3)
+    openings = [MoosasSkylight(model, model.includeGeo(window_shape, cat=1))
+                for _ in faces]
+    for face, opening in zip(faces, openings):
+        face.add_glazing(opening)
+    if conflict:
+        openings[1].settings["shgc"] = 0.2
+    model.faceList = faces
+    model.skylightList = openings
+
+    if conflict:
+        with pytest.raises(ValueError, match="Conflicting openings"):
+            cleanseOverlapFace(model)
+    else:
+        cleanseOverlapFace(model)
+        assert model.faceList == faces[:1]
+        assert model.skylightList == openings[:1]
+        assert faces[0].glazingElement == openings[:1]
+        assert openings[0].parentFace is faces[0]
+
+
+def test_horizontal_cleanup_preserves_distinct_sloped_surfaces():
+    model = MoosasModel()
+    faces = [
+        MoosasFace(model, model.includeGeo(shapely.Polygon(points), normal, cat=0))
+        for points, normal in (
+            ([(0, 0, 3), (4, 0, 3), (4, 4, 3.1), (0, 4, 3.1)], [0, -0.025, 1]),
+            ([(0, 0, 3.1), (4, 0, 3.1), (4, 4, 3), (0, 4, 3)], [0, 0.025, 1]),
+        )
+    ]
+    model.faceList = faces
+
+    cleanseOverlapFace(model)
+
+    assert model.faceList == faces
+
+
+def test_pack_model_excludes_small_duplicate_floor_and_ceiling():
+    from MoosasPy.transform.stages.assembly import pack_model
+
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0, 6.0]
+    footprint = shapely.box(0, 0, 4, 4)
+    xy = list(footprint.exterior.coords)
+    model.edgeList = [
+        MoosasEdge([
+            MoosasWall.fromProjection(shapely.LineString([a, b]), level, level + 3, model)
+            for a, b in zip(xy[:-1], xy[1:])
+        ])
+        for level in (0, 3)
+    ]
+    triangle = shapely.Polygon([(0, 0), (1, 0), (0, 1)])
+    regions = [
+        (footprint, 0),
+        (footprint.difference(triangle), 3),
+        (triangle, 3),
+        (triangle, 3),
+        (footprint, 6),
+    ]
+    model.faceList = [
+        MoosasFace(model, model.includeGeo(shapely.force_3d(region, z=level), cat=0))
+        for region, level in regions
+    ]
+
+    pack_model(model, solve_overlap=True)
+
+    lower, upper = sorted(model.spaceList, key=lambda space: space.level)
+    assert len(lower.ceiling.face) == len(upper.floor.face) == 2
+    assert lower.ceiling.face == upper.floor.face
+    assert sum(face.area for face in lower.ceiling.face) == pytest.approx(16)
+    assert sum(face.area for face in upper.floor.face) == pytest.approx(16)
+    assert model.faceList[3] not in model.shadingList
+
+
+def test_pack_model_keeps_new_part_of_overlapping_slab_and_caps_gap():
+    from MoosasPy.transform.stages.assembly import pack_model
+
+    model = MoosasModel()
+    model.levelList = [0.0, 3.0, 6.0]
+    footprint = shapely.box(0, 0, 4, 4)
+    xy = list(footprint.exterior.coords)
+    model.edgeList = [
+        MoosasEdge([
+            MoosasWall.fromProjection(shapely.LineString([a, b]), level, level + 3, model)
+            for a, b in zip(xy[:-1], xy[1:])
+        ])
+        for level in (0, 3)
+    ]
+    regions = [
+        (footprint, 0),
+        (shapely.box(0, 0, 3.5, 4), 3),
+        (shapely.box(3, 0, 3.7, 4), 3),
+        (footprint, 6),
+    ]
+    model.faceList = [
+        MoosasFace(model, model.includeGeo(shapely.force_3d(region, z=level), cat=0))
+        for region, level in regions
+    ]
+    second_slab = model.faceList[2]
+
+    pack_model(model, solve_overlap=True)
+
+    upper = next(space for space in model.spaceList if space.level == 3)
+    assert second_slab in upper.floor.face
+    caps = [face for face in upper.floor.face if face.category == 2]
+    assert len(caps) == 1
+    assert caps[0].area == pytest.approx(1.2)
 
 
 def test_topology_node_keys_normalize_signed_zero():

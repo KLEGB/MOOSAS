@@ -166,6 +166,18 @@ The current transformation options are:
 | `insert_core` | `False` | Generate offset perimeter/core thermal zones with opaque core/perimeter interfaces; automatically enables spatial division. Other calculation partitions remain AirBoundary surfaces. |
 | `standardize` | `False` | Standardize the finalized model geometry. |
 
+With `solve_overlap=True`, fully coincident horizontal faces at the same
+elevation are merged before space assembly, including faces smaller than
+1 m². Attached openings are retained; conflicting face properties or
+overlapping incompatible openings raise an error. Partially overlapping faces
+are not removed as duplicates.
+
+With `divided_zones=True` or `insert_core=True`, small or slender pieces
+produced by convexifying a horizontal face are merged back into an
+edge-sharing piece of the same source face. A piece without such a neighbor is
+preserved and reported in the transformation log; generated face IDs can
+change.
+
 With `insert_core=True`, boundaries between actual core regions and perimeter
 regions are opaque, paired interzone walls using the existing wall thermal
 settings. They do not use AirBoundary `SimpleMixing`. Convex subdivisions
@@ -173,6 +185,12 @@ inside either region and zero-width centerlines from collapsed narrow cores
 remain air boundaries. This changes boundary physics, not zoning geometry or
 space-type recognition. Existing cached models and IDFs retain their old
 categories; regenerate from source geometry to apply this rule.
+
+Generated core-ring and centerline segments up to 0.01 m are merged before
+partitioning. A standalone centerline no longer than 0.01 m collapses and is
+omitted from the line constraints. Source boundaries are unchanged; if merging would invalidate the
+generated geometry or create a new intersection, transformation raises an
+error. This may change generated partitions and their IDs.
 
 Example with explicit processing choices:
 
@@ -223,7 +241,11 @@ adjacent spaces, rather than exported as two outdoor walls. Physical walls take
 precedence over coincident virtual cuts. Wall splitting retains thermal settings,
 categories and glazing settings. The projected union of an element's source
 faces determines its area, so dissolved duplicate faces do not inflate
-area-based infiltration. Source geometry IDs are retained for alignment.
+area-based infiltration. Unsplit source geometry IDs are retained for alignment.
+A window is split at the ends of collinear walls lying inside its span. Each
+piece is attached to a matching wall; a piece without one, such as a piece
+over a gap between walls, gets its own curtain wall. Split pieces receive new
+geometry IDs.
 
 ### Building Model
 
@@ -393,6 +415,10 @@ point out of the zone, windows follow their host surface, and paired interzone
 surfaces have opposite normals. The geometry projection basis is right-handed;
 rebuild models from source geometry rather than reusing caches made with the
 previous projection convention.
+
+An open space is excluded from IDF zones. If an exported zone shares a boundary
+with an excluded space, export raises an error naming the affected faces and
+spaces rather than inventing an exterior or adiabatic boundary condition.
 
 Ground floors retain the mapped template's ground method, construction, and
 matching site ground-temperature object, rather than using the generic wall

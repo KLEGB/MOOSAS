@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from MoosasPy.model import MoosasModel
+from MoosasPy.model.space import MoosasSpace
 from MoosasPy.model.io.idf import exportIDF
 from MoosasPy.model.io.idf.adapter import IDFtoXml, _idf_build_artifacts
 from MoosasPy.model.io.idf.input import createThermalSurface, encodeFace
@@ -289,7 +290,8 @@ def test_daylight_uses_template_optics_and_explicit_overrides(tmp_path):
     assert optics(overrides={uid: {'visible_transmittance': .63}})['visible_transmittance'] == .63
 
 
-def test_daylight_shared_surface_conflict_requires_explicit_optics(tmp_path):
+@pytest.mark.parametrize('opposite', [False, True])
+def test_daylight_shared_wall_optics_resolve_per_side(tmp_path, opposite):
     from MoosasPy.model import apply_building_template
     from MoosasPy.simulation.radiation.scene import _daylight_scene
     model = _single_room_model(tmp_path)
@@ -302,13 +304,34 @@ def test_daylight_shared_surface_conflict_requires_explicit_optics(tmp_path):
     for role in ('exterior_wall', 'interior_wall'):
         other['BuildingTemplate']['Envelope'][role]['visible_reflectance']['value'] = .15
     model.buildingTemplate[other['id']] = other
-    model.spaceList.append(SimpleNamespace(id='adjacent', settings={'zone_template': other['id']},
-        explicit_settings=[], getAllFaces=model.spaceList[0].getAllFaces))
-    with pytest.raises(ValueError, match='conflicting visible properties'):
-        _daylight_scene(model)
-    overrides = {str(w.Uid): {'visible_reflectance': .44} for w in model.wallList}
-    _, optics = _daylight_scene(model, overrides=overrides)
-    assert all(r['visible_reflectance'] == .44 for r in optics if r['uid'] in overrides)
+    room = model.spaceList[0]
+    wall = next(w for w in room.getAllFaces(to_dict=True)['MoosasWall'] if w.category not in (1, 5, 6))
+    center = np.asarray(room.getWeightCenter(), dtype=float)
+    if opposite:
+        normal = np.asarray(Vector(wall.normal).array, dtype=float)
+        offset = center - np.mean(shapely.get_coordinates(wall.face, include_z=True), axis=0)
+        center = center - 2 * np.dot(offset, normal) / np.dot(normal, normal) * normal
+    model.spaceList.append(SimpleNamespace(
+        id='adjacent', settings={'zone_template': other['id']}, explicit_settings=[],
+        getAllFaces=lambda to_dict=True: {'MoosasWall': [wall]}, getWeightCenter=lambda: center,
+    ))
+
+    uid = str(wall.Uid)
+    if opposite:
+        _, optics = _daylight_scene(model)
+        record = next(r for r in optics if r['uid'] == uid)
+        assert record['two_sided']
+        sides = {record['front']['visible_reflectance'], record['back']['visible_reflectance']}
+        assert len(sides) == 2 and .15 in sides
+    else:
+        with pytest.warns(RuntimeWarning, match='conflicting visible properties on the same physical side'):
+            _, optics = _daylight_scene(model)
+        record = next(r for r in optics if r['uid'] == uid)
+        assert 'two_sided' not in record
+        assert record['visible_reflectance'] != .15
+
+    _, optics = _daylight_scene(model, overrides={uid: {'visible_reflectance': .44}})
+    assert next(r for r in optics if r['uid'] == uid)['visible_reflectance'] == .44
 
 
 @pytest.mark.slow
@@ -761,6 +784,27 @@ def test_idf_interzone_wall_and_windows_have_opposite_outward_normals(reverse):
         paired_window = windows[window.Outside_Boundary_Condition_Object]
         assert paired_window.Outside_Boundary_Condition_Object == window.Name
         assert _idf_vertex_normal(paired_window) == pytest.approx(-_idf_vertex_normal(window))
+
+
+@pytest.mark.parametrize("excluded_index", [0, 1])
+def test_idf_export_rejects_boundary_to_excluded_open_space(
+    semantic_model, tmp_path, monkeypatch, excluded_index,
+):
+    wall = next(w for w in semantic_model.wallList if len(w.space) == 2)
+    excluded = wall.space[excluded_index]
+    original_is_open = MoosasSpace.is_open
+    monkeypatch.setattr(
+        MoosasSpace, "is_open",
+        lambda space: space.id == excluded or original_is_open(space),
+    )
+    target = tmp_path / "open-neighbor.idf"
+
+    with pytest.raises(ValueError, match="excluded.*open") as error:
+        exportIDF(semantic_model, str(target))
+
+    assert excluded in str(error.value)
+    assert wall.Uid in str(error.value)
+    assert not target.exists()
 
 
 @pytest.mark.parametrize("vertex_direction", ["Counterclockwise", "Clockwise", None])

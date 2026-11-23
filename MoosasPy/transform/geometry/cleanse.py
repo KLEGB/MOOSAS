@@ -261,68 +261,60 @@ def cleanseDuplicatedLevel(model: MoosasContainer) -> MoosasContainer:
 
 
 def cleanseOverlapFace(model: MoosasContainer) -> MoosasContainer:
-    """
-    Identify and remove duplicated faces in the model using geometric overlap analysis.
-    
-    Parameters
-    ----------
-    model : MoosasContainer
-        The input model container containing levels, faces, and walls. The function modifies 
-        `model.faceList` in place by removing or splitting overlapping faces. One of each pair 
-        of duplicated faces is removed, and differences are added as new faces.
-    
-    Returns
-    -------
-    MoosasContainer
-        The modified model with duplicated faces removed or split to resolve overlaps. 
-        The operation is performed level by level, and face containment is addressed 
-        during the process.
-    """
-    """
-        Identify the duplicated faces with shapely
-        you must solve duplication before solving containment
+    """Merge fully coincident horizontal faces without discarding openings."""
+    groups = {}
+    for face in model.faceList:
+        z = shapely.get_coordinates(face.face, include_z=True)[:, 2]
+        if abs(float(face.normal[2])) >= 0.99 and np.ptp(z) <= 1e-9:
+            groups.setdefault(round(float(face.elevation), 6), []).append(face)
 
-        *** One of the duplicated walls would be removed from MoosasContainer.wallList.
-    """
-
-    for bld_level in model.levelList:
-        print(f'\rCLEANSE: Duplicated face checking on {bld_level}', end='')
-        completed = False
-        while not completed:
-            completed = True
-            faceId = searchBy('face', bld_level, model.faceList)
-            faces = np.array(model.faceList)[faceId]
-
-            # sort the faces based on the face area, to solve the containment at the same time.
-            area = [ - shapely.area(face) for face in faces] # sort from bigger faces to smaller faces
-            argIdx = np.argsort(area)
-            faces = faces[argIdx]
-            faceId = np.array(faceId)[argIdx]
-            faces = [f.force_2d() for f in faces]
-
-            delId = []
-            for fid,face in enumerate(faces[:-1]):
-                for otherId in range(fid+1,len(faces)):
-                    other = faces[otherId]
-                    overArea = overlapArea(face,other)
-                    if overArea>geom.AREA_PRECISION:
-                        # check if face is redundant
-                        if abs(overArea - shapely.area(face))<geom.AREA_PRECISION:
-                            delId.append(faceId[fid])
-                            break
-
-                        # boolean difference
-                        else:
-                            delId.append(faceId[fid])
-                            face = shapely.force_3d(shapely.difference(face, other),z=bld_level)
-                            moFace = MoosasFace(model,faceId=model.includeGeo(face, Vector([0, 0, 1]).geometry, cat=0),level=bld_level)
-                            model.faceList = np.append(model.faceList, moFace)
-
-            # recursively divided
-            if len(delId)>0:
-                model.faceList = np.delete(model.faceList, delId)
-                completed = False
-
+    removed_faces = set()
+    removed_openings = set()
+    for faces in groups.values():
+        regions = [face.force_2d() for face in faces]
+        tree = shapely.STRtree(regions)
+        for index, face in enumerate(faces):
+            if face in removed_faces:
+                continue
+            for other_index in tree.query(regions[index], predicate="intersects"):
+                if other_index <= index:
+                    continue
+                other = faces[other_index]
+                if other is face or other in removed_faces or not shapely.equals(regions[index], regions[other_index]):
+                    continue
+                if face.category != other.category or any(
+                    key in face.settings and face.settings[key] != value
+                    for key, value in other.settings.items()
+                ):
+                    raise ValueError(f"Conflicting coincident horizontal faces: {face.Uid}, {other.Uid}")
+                face.settings.update(other.settings)
+                face.explicit_settings.update(other.explicit_settings)
+                for opening in other.glazingElement:
+                    if opening in face.glazingElement:
+                        opening.parentFace = face
+                        continue
+                    for existing in face.glazingElement:
+                        same_geometry = shapely.equals(opening.force_2d(), existing.force_2d())
+                        if not same_geometry and shapely.intersection(
+                            opening.force_2d(), existing.force_2d()
+                        ).area <= geom.POINT_PRECISION ** 2:
+                            continue
+                        if (
+                            not same_geometry
+                            or opening.category != existing.category
+                            or opening.settings != existing.settings
+                        ):
+                            raise ValueError(
+                                f"Conflicting openings on coincident horizontal faces: {face.Uid}, {other.Uid}"
+                            )
+                        existing.explicit_settings.update(opening.explicit_settings)
+                        removed_openings.add(opening)
+                        break
+                    else:
+                        face.add_glazing(opening)
+                removed_faces.add(other)
+    model.faceList = [face for face in model.faceList if face not in removed_faces]
+    model.skylightList = [opening for opening in model.skylightList if opening not in removed_openings]
     return model
 
 def cleanseDuplicatedWall(model: MoosasContainer) -> MoosasContainer:

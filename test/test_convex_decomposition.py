@@ -13,6 +13,8 @@ from MoosasPy.transform.geometry.element import MoosasFace, MoosasSkylight
 from MoosasPy.transform.geometry.polygon import GeometryOperator, cut_hole
 from MoosasPy.model import MoosasModel
 from MoosasPy.transform.stages.assembly import cap_floor_simple
+from MoosasPy.transform.stages.classification import classify_horizontal_surfaces
+from MoosasPy.transform.stages.convexification import convexify_model
 from MoosasPy.utils import GeometryError, TopologyError
 from MoosasPy.utils.constant import geom
 
@@ -345,6 +347,25 @@ def test_horizontal_face_split_keeps_small_remaining_physical_fragments():
     parts = [item.force_2d() for item in [inside] + outside]
     assert_partition(parts, shapely.box(0, 0, 10, 10))
     assert min(part.area for part in parts) == pytest.approx(0.5)
+
+
+def test_convexified_floor_reabsorbs_thin_fragments():
+    model = MoosasModel()
+    footprint = shapely.Polygon([
+        (0, 0), (10, 0), (10, 4), (0, 4), (0, 0.001), (-4, 0.001), (-4, 0),
+    ])
+    geometry_id = model.includeGeo(shapely.force_3d(footprint, z=3), [0, 0, 1], cat=0)
+    model.faceList = [MoosasFace(model, geometry_id)]
+
+    convexified = convexify_model(model)
+    convexified, _, _, unmatched = classify_horizontal_surfaces(convexified)
+
+    assert not unmatched
+    assert len(convexified.faceList) == 1
+    face = convexified.faceList[0]
+    assert face.faceId == geometry_id
+    assert face.elevation == pytest.approx(3)
+    assert face.force_2d().symmetric_difference(footprint).area == pytest.approx(0, abs=1e-10)
 
 
 @pytest.mark.parametrize("bounds,inside_areas,outside_areas", [

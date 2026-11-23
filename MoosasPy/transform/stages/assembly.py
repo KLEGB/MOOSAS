@@ -259,10 +259,11 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
                         # Coincident slabs (e.g. a podium roof under a tower
                         # floor) duplicate coverage; keep the first cover only.
                         new_area = shapely.area(shapely.difference(region, covered, grid_size=geom.POINT_PRECISION))
-                        if new_area <= geom.AREA_PRECISION < intersection_area - new_area:
+                        if new_area <= geom.POINT_PRECISION ** 2:
+                            remaining_faces.discard(model.faceList[face_index])
                             continue
                         covered = shapely.union_all([covered, region])
-                        shadow_area += intersection_area
+                        shadow_area += new_area
                         matched_faces.append(model.faceList[face_index])
                 floor = MoosasFloor(matched_faces)
                 if solve_overlap and shadow_area < footprints[model.edgeList[edge_index]].area - geom.POINT_PRECISION ** 2:
@@ -313,10 +314,11 @@ def pack_model(model: MoosasModel, solve_overlap: bool) -> MoosasModel:
                     if intersection_area > geom.POINT_PRECISION ** 2:
                         # Coincident slabs duplicate coverage; keep the first cover only.
                         new_area = shapely.area(shapely.difference(region, covered, grid_size=geom.POINT_PRECISION))
-                        if new_area <= geom.AREA_PRECISION < intersection_area - new_area:
+                        if new_area <= geom.POINT_PRECISION ** 2:
+                            remaining_faces.discard(model.faceList[face_index])
                             continue
                         covered = shapely.union_all([covered, region])
-                        shadow_area += intersection_area
+                        shadow_area += new_area
                         matched_faces.append(model.faceList[face_index])
                 if matched_faces:
                     ceiling = MoosasFloor(matched_faces)

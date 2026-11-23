@@ -14,6 +14,7 @@ from .polygon import _validate_partition
 _GRID = 1e-9
 _SAMPLE_STEP = 0.1
 _LINE_TOLERANCE = 1e-7
+_MIN_GENERATED_EDGE = 0.01
 
 
 def _polygons(geometry):
@@ -28,6 +29,107 @@ def _lines(geometry):
     if geometry.geom_type in ("MultiLineString", "GeometryCollection"):
         return [line for part in shapely.get_parts(geometry) for line in _lines(part)]
     return []
+
+
+def _short_edge(first, second):
+    return np.linalg.norm(np.asarray(first) - np.asarray(second)) <= _MIN_GENERATED_EDGE + 1e-12
+
+
+def _merge_short_core_edges(wide, core):
+    """Remove short generated core-ring edges while retaining valid core geometry."""
+    polygons = []
+    for polygon in _polygons(wide):
+        while True:
+            rings = [
+                list(ring.coords)[:-1] for ring in [polygon.exterior, *polygon.interiors]
+            ]
+            short = next((
+                (ring_index, index)
+                for ring_index, ring in enumerate(rings)
+                for index in range(len(ring))
+                if _short_edge(ring[index], ring[(index + 1) % len(ring)])
+            ), None)
+            if short is None:
+                break
+            ring_index, index = short
+            ring = rings[ring_index]
+            candidates = []
+            if len(ring) > 3:
+                for vertex in (index, (index + 1) % len(ring)):
+                    changed = [list(points) for points in rings]
+                    del changed[ring_index][vertex]
+                    candidate = shapely.Polygon(changed[0], changed[1:])
+                    if not candidate.is_valid or candidate.area <= 0:
+                        continue
+                    if candidate.difference(core).area > polygon.difference(core).area + 1e-8:
+                        continue
+                    candidates.append((polygon.symmetric_difference(candidate).area, vertex, candidate))
+            if not candidates:
+                raise GeometryError(polygon, "Cannot merge a short core edge without changing topology.")
+            polygon = min(candidates, key=lambda item: item[:2])[2]
+        polygons.append(polygon)
+    merged = shapely.union_all(polygons)
+    if abs(sum(polygon.area for polygon in polygons) - merged.area) > 1e-8:
+        raise GeometryError(wide, "Merging short core edges creates overlapping core regions.")
+    return merged
+
+
+def _merge_short_cut_segments(cuts, removed, wide):
+    """Contract short centerline edges in their shared, noded graph."""
+    graph = nx.Graph()
+    for line in _lines(shapely.union_all(cuts)):
+        coordinates = list(line.coords)
+        graph.add_edges_from(zip(coordinates[:-1], coordinates[1:]))
+    allowed = removed.buffer(_LINE_TOLERANCE)
+    while True:
+        short = sorted(
+            (min(first, second), max(first, second))
+            for first, second in graph.edges if _short_edge(first, second)
+        )
+        if not short:
+            break
+        first, second = short[0]
+        if graph.degree[first] == graph.degree[second] == 1:
+            graph.remove_nodes_from((first, second))
+            continue
+        anchored = [
+            node for node in (first, second)
+            if not wide.is_empty and wide.boundary.distance(shapely.Point(node)) <= _LINE_TOLERANCE
+        ]
+        if len(anchored) == 2 or set(graph[first]) & set(graph[second]):
+            raise GeometryError(shapely.LineString([first, second]),
+                                "Cannot merge a short centerline without changing topology.")
+        if anchored:
+            target = anchored[0]
+        elif graph.degree[first] >= 3 or graph.degree[second] >= 3:
+            target = max((first, second), key=lambda node: (graph.degree[node], node))
+        elif graph.degree[first] == 1 or graph.degree[second] == 1:
+            target = first if graph.degree[first] == 1 else second
+        else:
+            target = second
+        source = second if target == first else first
+        neighbors = [node for node in graph[source] if node != target]
+        graph.remove_node(source)
+        graph.add_edges_from((target, node) for node in neighbors)
+        for neighbor in neighbors:
+            changed = shapely.LineString([target, neighbor])
+            if not allowed.covers(changed):
+                raise GeometryError(changed, "Merged centerline leaves the collapsed core region.")
+            for start, end in graph.edges:
+                if {start, end} == {target, neighbor}:
+                    continue
+                intersection = changed.intersection(shapely.LineString([start, end]))
+                shared = {target, neighbor} & {start, end}
+                if shared:
+                    intersection = intersection.difference(
+                        shapely.MultiPoint(list(shared)).buffer(_LINE_TOLERANCE)
+                    )
+                if not intersection.is_empty:
+                    raise GeometryError(changed, "Merging short centerline segments creates an intersection.")
+    if graph.number_of_edges() == 0:
+        return []
+    network = shapely.union_all([shapely.LineString(edge) for edge in graph.edges])
+    return _lines(shapely.line_merge(network))
 
 
 def _medial_lines(polygon):
@@ -82,6 +184,7 @@ def _collapse_narrow_core(source, core, minimum_width):
     ]).intersection(core)
     wide = wide.simplify(0.005, preserve_topology=True)
     wide = shapely.set_precision(shapely.snap(wide, core, 1e-6).intersection(source), _GRID)
+    wide = _merge_short_core_edges(wide, core)
     removed = shapely.union_all(_polygons(
         shapely.set_precision(core.difference(wide), _GRID)
     ))
@@ -129,7 +232,7 @@ def _collapse_narrow_core(source, core, minimum_width):
         ).intersection(removed))
         if segment.length > _GRID * 10
     ]
-    return wide, cuts
+    return wide, _merge_short_cut_segments(cuts, removed, wide)
 
 
 def validate_partition_lines(parts, cuts):

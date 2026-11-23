@@ -262,6 +262,18 @@ def _writeIDF_default(model: MoosasModel, outputPath: str, idfTemplatePath=None,
     idfSpaces = [space for space in model.spaceList if not space.is_open()]
     idfSpaceById = {str(space.id): space for space in idfSpaces}
     validSpaceIds = set(idfSpaceById)
+    invalidBoundaries = sorted(
+        (str(element.Uid), tuple(str(spaceId) for spaceId in element.space))
+        for group in ('MoosasWall', 'MoosasFace')
+        for element in moElements[group]
+        if len(element.space) == 2
+        and sum(str(spaceId) in validSpaceIds for spaceId in element.space) == 1
+    )
+    if invalidBoundaries:
+        details = ', '.join(
+            f"{uid} ({', '.join(spaceIds)})" for uid, spaceIds in invalidBoundaries
+        )
+        raise ValueError(f"IDF boundaries reference excluded or open spaces: {details}")
     zoneMap = {
         zoneName: (
             list(idfSpaceById)
