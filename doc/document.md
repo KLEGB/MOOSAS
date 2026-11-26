@@ -521,14 +521,16 @@ MoosasPy/db/template/
   library.json
   CN/
     GB55015-2021/
+      assumptions.json
       Office_3A.json
       schedules/
         office.sch
 ```
 
-The catalog manifest groups standards by country code. Each standard entry
-contains its own source metadata, template assumptions, and operational
-metadata, and its template files live under `<country>/<standard>/`.
+The catalog manifest (`library.json`) groups standards by country code and lists
+each standard's supported `climate_zones` and `building_types`. Each standard's
+`assumptions.json` holds its `standard_metadata`, `template_assumptions`, and
+`operational_metadata`, and its template files live under `<country>/<standard>/`.
 
 Each record contains room groups directly under `BuildingTemplate.Space`, with
 `air_exchange`, `internal_gains`, and `system` parameters per room; `Envelope`

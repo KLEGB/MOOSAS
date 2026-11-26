@@ -35,6 +35,7 @@ def local_library(tmp_path):
     target_package = tmp_path / 'CN' / 'GB55015-2021'
     (target_package / 'schedules').mkdir(parents=True)
     shutil.copyfile(source / 'library.json', tmp_path / 'library.json')
+    shutil.copyfile(package / 'assumptions.json', target_package / 'assumptions.json')
     shutil.copyfile(package / 'Office_3A.json', target_package / 'Office_3A.json')
     shutil.copyfile(package / 'schedules' / 'office.sch',
                     target_package / 'schedules' / 'office.sch')
@@ -55,7 +56,7 @@ def test_bundled_catalog_contains_only_office_3a(templates):
     assert set(templates) == {OFFICE_3A}
     assert DEFAULT_LIBRARY == Path(__file__).parents[1] / 'MoosasPy' / 'db' / 'template'
     assert [path.name for path in (DEFAULT_LIBRARY / 'CN' / 'GB55015-2021').glob('*.json')] == [
-        'Office_3A.json']
+        'Office_3A.json', 'assumptions.json']
     assert [path.name for path in (
         DEFAULT_LIBRARY / 'CN' / 'GB55015-2021' / 'schedules').glob('*.sch')] == ['office.sch']
 
@@ -74,19 +75,17 @@ def test_catalog_supports_multiple_standards_for_one_country(local_library):
     manifest_path = local_library / 'library.json'
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     first_standard = manifest['countries']['CN']['standards']['GB55015-2021']
-    manifest['countries']['CN']['standards']['TEST-STD'] = {
-        'standard_metadata': {
-            'title': 'Test standard',
-            'source_url': 'https://example.test/standard',
-        },
-        'template_assumptions': deepcopy(first_standard['template_assumptions']),
-        'operational_metadata': deepcopy(first_standard['operational_metadata']),
-    }
+    manifest['countries']['CN']['standards']['TEST-STD'] = deepcopy(first_standard)
     manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
 
     source_package = local_library / 'CN' / 'GB55015-2021'
     test_package = local_library / 'CN' / 'TEST-STD'
     (test_package / 'schedules').mkdir(parents=True)
+    assumptions = json.loads((source_package / 'assumptions.json').read_text(encoding='utf-8'))
+    assumptions['standard_metadata'] = {
+        'title': 'Test standard',
+    }
+    (test_package / 'assumptions.json').write_text(json.dumps(assumptions), encoding='utf-8')
     template = json.loads((source_package / 'Office_3A.json').read_text(encoding='utf-8'))
     metadata = template['BuildingTemplate']['metadata']
     metadata['id'] = 'CN_TEST-STD_Office_3A'
@@ -265,3 +264,23 @@ def test_template_snapshot_does_not_require_version_and_rejects_per_space_snapsh
     space.settings['_building_template'] = {}
     with pytest.raises(ValueError, match='Per-space'):
         space_template(model, space)
+
+
+def test_numeric_values_are_limited_to_3_significant_digits(local_library):
+    template_file = local_library / 'CN' / 'GB55015-2021' / 'Office_3A.json'
+    template = json.loads(template_file.read_text(encoding='utf-8'))
+    template['BuildingTemplate']['Envelope']['exterior_wall']['u']['value'] = 0.6123
+    template_file.write_text(json.dumps(template), encoding='utf-8')
+    with pytest.raises(ValueError, match='3 significant digits'):
+        building_templates(local_library)
+
+    template['BuildingTemplate']['Envelope']['exterior_wall']['u']['value'] = 0.612
+    template_file.write_text(json.dumps(template), encoding='utf-8')
+    assert building_templates(local_library)[OFFICE_3A]['BuildingTemplate']['Envelope']['exterior_wall']['u']['value'] == 0.612
+
+    assumptions_file = local_library / 'CN' / 'GB55015-2021' / 'assumptions.json'
+    assumptions = json.loads(assumptions_file.read_text(encoding='utf-8'))
+    assumptions['template_assumptions']['glass_absorptance'] = 0.1234
+    assumptions_file.write_text(json.dumps(assumptions), encoding='utf-8')
+    with pytest.raises(ValueError, match='3 significant digits'):
+        building_templates(local_library)

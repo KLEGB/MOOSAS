@@ -39,16 +39,30 @@ def load_building_template_library(library_path=None):
                     or Path(standard_id).name != standard_id or standard_id in {'.', '..'}
                     or ':' in standard_id or not isinstance(registration, dict)):
                 raise ValueError(f'Invalid template package path {namespace!r}')
-            metadata = registration.get('standard_metadata')
-            assumptions = registration.get('template_assumptions')
-            operational = registration.get('operational_metadata')
-            if (not isinstance(metadata, dict) or not isinstance(metadata.get('source_url'), str)
-                    or not metadata['source_url'] or {'country', 'id'} & metadata.keys()
+            climate_zones = registration.get('climate_zones')
+            building_types = registration.get('building_types')
+            if (not isinstance(climate_zones, list) or not climate_zones
+                    or not all(isinstance(z, str) and z for z in climate_zones)
+                    or not isinstance(building_types, list) or not building_types
+                    or not all(isinstance(b, str) and b for b in building_types)):
+                raise ValueError(f'{namespace}: climate_zones and building_types are required')
+            package = folder / country / standard_id
+            assumptions_path = package / 'assumptions.json'
+            if not assumptions_path.is_file():
+                raise ValueError(f'{namespace}: assumptions.json is required')
+            assumptions_data = json.loads(assumptions_path.read_text(encoding='utf-8'))
+            if assumptions_data.get('schema') != 'moosas.building-template-assumptions':
+                raise ValueError(f'{namespace}: unsupported assumptions.json schema')
+            metadata = assumptions_data.get('standard_metadata')
+            assumptions = assumptions_data.get('template_assumptions')
+            operational = assumptions_data.get('operational_metadata')
+            if (not isinstance(metadata, dict) or {'country', 'id'} & metadata.keys()
                     or not isinstance(assumptions, dict) or not isinstance(operational, dict)):
                 raise ValueError(f'{namespace}: catalog metadata is required')
+            _validate_assumptions_precision(assumptions, f'{namespace}/assumptions.json')
             standard = {'country': country, 'id': standard_id, **metadata}
-            package = folder / country / standard_id
-            files = sorted(package.glob('*.json'))
+            operational = {**operational, 'climate_zones': list(climate_zones), 'building_types': list(building_types)}
+            files = sorted(path for path in package.glob('*.json') if path.name != 'assumptions.json')
             if not files:
                 raise ValueError(f'{namespace}: no direct building templates found')
             templates = {}
@@ -75,7 +89,8 @@ def _read_direct_template(filename, package, standard, assumptions, operational,
             or metadata.get('schema') != 'moosas.building-template'
             or metadata.get('country') != standard.get('country')
             or metadata.get('standard_name') != standard.get('id')
-            or metadata.get('standard_source') != standard.get('source_url')
+            or not isinstance(metadata.get('standard_source'), str)
+            or not metadata['standard_source']
             or not isinstance(metadata.get('building_type'), str)
             or not isinstance(metadata.get('climate_zone'), str)):
         raise ValueError(f'{filename.name}: standard metadata does not match the registered package')
@@ -105,6 +120,23 @@ def _read_direct_template(filename, package, standard, assumptions, operational,
     return template_id, profile
 
 
+def _within_significant_digits(value, max_digits=3):
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and value == float(f'{value:.{max_digits}g}'))
+
+
+def _validate_assumptions_precision(value, label):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _validate_assumptions_precision(item, f'{label}/{key}')
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_assumptions_precision(item, f'{label}[{index}]')
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not _within_significant_digits(value):
+            raise ValueError(f'{label}: numeric value exceeds 3 significant digits')
+
+
 def _nullable_schedule(label):
     return label.endswith('/heating_setpoint') or label.endswith('/cooling_setpoint')
 
@@ -117,9 +149,9 @@ def _validate_value_source(value, label, *, resolved=False):
         if set(value) != {'mode', 'value', 'unit'}:
             raise ValueError(f'{label}: constant values require mode, value, and unit')
         numeric = value['value']
-        if (isinstance(numeric, bool) or not isinstance(numeric, (int, float)) or not math.isfinite(numeric)
+        if (not _within_significant_digits(numeric)
                 or not isinstance(value['unit'], str) or not value['unit']):
-            raise ValueError(f'{label}: constant value must be finite and have a unit')
+            raise ValueError(f'{label}: constant value must be finite with <= 3 significant digits and have a unit')
     elif mode == 'schedule':
         expected = {'mode', 'file', 'name', 'unit'}
         if resolved:
@@ -133,10 +165,9 @@ def _validate_value_source(value, label, *, resolved=False):
                 or not isinstance(value['unit'], str) or not value['unit']):
             raise ValueError(f'{label}: invalid relative .sch schedule reference')
         if resolved and (not isinstance(value['values'], list) or len(value['values']) != 8760
-                         or any(v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
-                                                   or not math.isfinite(v)) for v in value['values'])
+                         or any(v is not None and not _within_significant_digits(v) for v in value['values'])
                          or (not _nullable_schedule(label) and any(v is None for v in value['values']))):
-            raise ValueError(f'{label}: resolved schedule must contain exactly 8760 finite values')
+            raise ValueError(f'{label}: resolved schedule must contain exactly 8760 finite values with <= 3 significant digits')
     else:
         raise ValueError(f'{label}: mode must be constant or schedule')
 
@@ -277,7 +308,8 @@ def _validate_template_snapshot(profile):
             or source_metadata.get('schema') != 'moosas.building-template'
             or source_metadata.get('country') != standard.get('country')
             or source_metadata.get('standard_name') != standard.get('id')
-            or source_metadata.get('standard_source') != standard.get('source_url')
+            or not isinstance(source_metadata.get('standard_source'), str)
+            or not source_metadata['standard_source']
             or profile['id'] != (
                 f"{standard['country']}/{standard['id']}/"
                 f"{source_metadata.get('climate_zone')}/{source_metadata.get('building_type')}")):

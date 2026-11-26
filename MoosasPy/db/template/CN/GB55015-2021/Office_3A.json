@@ -178,11 +178,6 @@
           "value": 0.7,
           "unit": "1"
         },
-        "opening_ratio": {
-          "mode": "constant",
-          "value": 0,
-          "unit": "1"
-        },
         "air_leakage_per_area": {
           "mode": "constant",
           "value": 0.5,
@@ -203,11 +198,6 @@
         "visible_transmittance": {
           "mode": "constant",
           "value": 0.7,
-          "unit": "1"
-        },
-        "opening_ratio": {
-          "mode": "constant",
-          "value": 0,
           "unit": "1"
         },
         "air_leakage_per_area": {
